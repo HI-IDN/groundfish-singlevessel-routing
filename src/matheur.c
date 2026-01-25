@@ -751,6 +751,14 @@ static double min_pair_dist(const double *dist, int n, int a, int b) {
   return d;
 }
 
+static int count_segments(const Visit *visits, int n_visits) {
+  int port_count = 0;
+  for (int i = 0; i < n_visits; i++) {
+    if (visits[i].type == tPORT) port_count++;
+  }
+  return port_count + 1;
+}
+
 static int *collect_port_ex(const ExData *ex, int *out_count) {
   int count = 0;
   for (int i = 0; i < ex->Size; i++) {
@@ -878,13 +886,14 @@ static int merge_segments_by_capacity(Visit *visits, int *n_visits_io,
 
 static int move_one_station(Visit *visits, int n_visits, const ExData *ex,
                             const double *dist, int Size, double ship_cap,
-                            double tau_scale, int *out_src_seg, int *out_dst_seg,
-                            int *out_attempts) {
+                            double tau_scale, const int *allowed_src, int allowed_len,
+                            int *out_src_seg, int *out_dst_seg, int *out_attempts) {
   int port_count = 0;
   for (int i = 0; i < n_visits; i++) {
     if (visits[i].type == tPORT) port_count++;
   }
   int seg_count = port_count + 1;
+  int use_allowed = (allowed_src && allowed_len == seg_count);
   if (seg_count < 2) {
     printf("Hillclimb: only one segment, skipping move.\n");
     return 0;
@@ -917,6 +926,7 @@ static int move_one_station(Visit *visits, int n_visits, const ExData *ex,
   for (int attempt = 0; attempt < max_attempts; attempt++) {
     int cand_count = 0;
     for (int i = 0; i < seg_count; i++) {
+      if (use_allowed && !allowed_src[i]) continue;
       if (seg_station_count[i] == 0) continue;
       int has = 0;
       for (int j = seg_first[i]; j < ((seg_end[i] >= 0) ? seg_end[i] : n_visits); j++) {
@@ -2345,6 +2355,9 @@ int main(int argc, char **argv) {
         visits_trial = (Visit*)xmalloc((size_t)n_visits * sizeof(Visit));
         memcpy(visits_trial, visits, (size_t)n_visits * sizeof(Visit));
         n_visits_trial = n_visits;
+        int seg_count = count_segments(visits_trial, n_visits_trial);
+        int *touched = (int*)xcalloc((size_t)seg_count, sizeof(int));
+        int touched_any = 0;
 
         src_seg = -1;
         dst_seg = -1;
@@ -2356,8 +2369,9 @@ int main(int argc, char **argv) {
           int src = -1;
           int dst = -1;
           int att = 0;
-          moved = move_one_station(visits_trial, n_visits, &ex, dist, Size, ShipCap,
-                                   tau_scale, &src, &dst, &att);
+          moved = move_one_station(visits_trial, n_visits_trial, &ex, dist, Size, ShipCap,
+                                   tau_scale, touched_any ? touched : NULL, seg_count,
+                                   &src, &dst, &att);
           attempts += att;
           if (!moved) {
             break;
@@ -2368,6 +2382,9 @@ int main(int argc, char **argv) {
             dst_seg = dst;
             moved_any = 1;
           }
+          if (src >= 0 && src < seg_count) touched[src] = 1;
+          if (dst >= 0 && dst < seg_count) touched[dst] = 1;
+          touched_any = 1;
           if (move_count >= mutations) {
             break;
           }
@@ -2395,6 +2412,7 @@ int main(int argc, char **argv) {
             }
           }
         }
+        free(touched);
         if (moved_any) {
           break;
         }

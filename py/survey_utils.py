@@ -14,17 +14,23 @@ if current_directory not in sys.path:
     sys.path.append(current_directory)
 (tSHIP,tSTAT,tWAYP,tENDP,tPORT) = (1,2,3,4,5)
 here = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(here, os.pardir))
+lib_dir = os.path.join(repo_root, "lib")
+bin_dir = os.path.join(repo_root, "bin")
 # Detect the platform
 if platform.system() == "Windows":
-    script_dir = here
-    os.add_dll_directory(script_dir)
-    lib_path = os.path.join(script_dir, "lib", "utils.dll")  # or libutils.dll depending on what you built
+    os.add_dll_directory(lib_dir)
+    lib_path = os.path.join(lib_dir, "utils.dll")
+    if not os.path.exists(lib_path):
+        alt_path = os.path.join(lib_dir, "libutils.dll")
+        if os.path.exists(alt_path):
+            lib_path = alt_path
     lib = ctypes.WinDLL(lib_path)
 elif platform.system() == "Darwin":  # macOS
-    lib_path = os.path.join(here, "lib", "libutils.dylib")
+    lib_path = os.path.join(lib_dir, "libutils.dylib")
     lib = ctypes.CDLL(lib_path)
 else:  # Linux
-    lib_path = os.path.join(here, "lib", "libutils.so")
+    lib_path = os.path.join(lib_dir, "libutils.so")
     lib = ctypes.CDLL(lib_path)
 
 def arcdist(lat1, lon1, lat2, lon2):
@@ -117,7 +123,10 @@ def drawTour(tour, LatLonRad, Type, Amount, DistMtrx, FsbleMtrx,
     pi180 = 180.0/np.pi
     StartEnd = LatLonRad[0,:]
     # Draw Iceland
-    with open('island.bin', 'rb') as f:
+    island_path = os.path.join(bin_dir, "island.bin")
+    if not os.path.exists(island_path):
+        island_path = os.path.join(os.getcwd(), "island.bin")
+    with open(island_path, 'rb') as f:
         landata = np.fromfile(f, dtype=np.float32)
     LandDeg = np.vstack((landata[:int(landata.size/2)],landata[int(landata.size/2):])).T
     (x,y) = deg2point(LandDeg[:,0],LandDeg[:,1],1000)
@@ -158,14 +167,14 @@ def drawTour(tour, LatLonRad, Type, Amount, DistMtrx, FsbleMtrx,
             #print(path,[idx[it]/2 for it in path])
             colrs = colors[c_tour]
             lstyle = 'dotted'
+            (x1,y1) = deg2point([pi180*LatLonRad[ilast,jlast]],[-pi180*LatLonRad[ilast,jlast+1]],1000)
             for i_ in [int(idx[it]/2) for it in path]:
                 #print("plotting: ", ilast, i_)
-                (x1,y1) = deg2point([pi180*LatLonRad[ilast,jlast]],[-pi180*LatLonRad[ilast,jlast+1]],1000)
                 (x2,y2) = deg2point([pi180*LatLonRad[i_,0]],[-pi180*LatLonRad[i_,1]],1000)
                 jlast = 0
                 ilast = i_
                 ax.plot([x1[0],x2[0]],[y1[0],y2[0]],color=colrs,linestyle=lstyle, linewidth=.6)
-            (x1,y1) = (x2,y2)
+                (x1,y1) = (x2,y2)
             if (i > 0):
                 (x2,y2) = deg2point([pi180*LatLonRad[i,0]],[-pi180*LatLonRad[i,1]],1000)
                 ilast = i
@@ -477,7 +486,16 @@ def DistanceLink(Type, LatLon, StartEnd, Size, SelectedSize):
     SelectedSize_ = ctypes.c_int(SelectedSize)
         
     lib.DistanceLink.argtypes = ctypes.POINTER(ctypes.c_double),ctypes.POINTER(ctypes.c_int),ctypes.POINTER(ctypes.c_int),ctypes.POINTER(ctypes.POINTER(ctypes.c_double)),ctypes.POINTER(ctypes.c_double),ctypes.c_int,ctypes.c_int
-    lib.DistanceLink(DistrMtrx_,FsbleMtrx_,Type_,LatLon_,StartEnd_,Size_,SelectedSize_)
+    cwd = os.getcwd()
+    island_here = os.path.exists(os.path.join(cwd, "island.bin"))
+    island_in_bin = os.path.exists(os.path.join(bin_dir, "island.bin"))
+    if island_in_bin and not island_here:
+        os.chdir(bin_dir)
+    try:
+        lib.DistanceLink(DistrMtrx_,FsbleMtrx_,Type_,LatLon_,StartEnd_,Size_,SelectedSize_)
+    finally:
+        if os.getcwd() != cwd:
+            os.chdir(cwd)
     
     # now extract the tour
     DistMtrx = np.ctypeslib.as_array(DistrMtrx_, shape = ((SelectedSize*2*SelectedSize*2)))

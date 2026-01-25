@@ -42,6 +42,11 @@ For convergence monitoring and hill-climb diagnostics:
 python3 py/plot_hillclimb.py
 ```
 
+Remark: the land mask `island.bin` is loaded relative to the current working directory. If plotting with `--recompute`, run from `bin/` so `island.bin` is found:
+```sh
+cd bin && ../py/plot_solution.py --sol ../sol/all_res_1.txt --recompute
+```
+
 For reproducibility, record solver versions and any run flags (e.g., time limits) in your experiment notes.
 
 ## Notes

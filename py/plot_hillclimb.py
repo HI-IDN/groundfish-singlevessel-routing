@@ -32,6 +32,16 @@ def smooth_series_mean(y, window):
     window = min(window, len(y))
     pad_left = window // 2
     pad_right = window - 1 - pad_left
+    if np.isnan(y).any():
+        ypad = np.pad(y, (pad_left, pad_right), mode="edge")
+        out = np.empty_like(y, dtype=float)
+        for i in range(len(y)):
+            window_vals = ypad[i:i + window]
+            if np.all(np.isnan(window_vals)):
+                out[i] = np.nan
+            else:
+                out[i] = np.nanmean(window_vals)
+        return out
     ypad = np.pad(y, (pad_left, pad_right), mode="edge")
     kernel = np.ones(window, dtype=float) / float(window)
     return np.convolve(ypad, kernel, mode="valid")
@@ -46,7 +56,11 @@ def smooth_series_median(y, window):
     ypad = np.pad(y, (pad_left, pad_right), mode="edge")
     out = np.empty_like(y, dtype=float)
     for i in range(len(y)):
-        out[i] = np.median(ypad[i:i + window])
+        window_vals = ypad[i:i + window]
+        if np.all(np.isnan(window_vals)):
+            out[i] = np.nan
+        else:
+            out[i] = np.nanmedian(window_vals)
     return out
 
 
@@ -71,15 +85,24 @@ def main():
     dist_cols = data[:, 1::3]
     station_cols = data[:, 2::3]
     amount_cols = data[:, 3::3]
-    total_dist = dist_cols.sum(axis=1)
+    outlier_threshold = 100000.0
+    outlier_mask = dist_cols > outlier_threshold
+    dist_cols_plot = dist_cols.copy()
+    dist_cols_plot[outlier_mask] = np.nan
+    outlier_rows = np.any(outlier_mask, axis=1)
+    total_dist = np.nansum(dist_cols, axis=1)
+    all_nan = np.all(np.isnan(dist_cols), axis=1)
+    total_dist[all_nan] = np.nan
+    total_dist_plot = total_dist.copy()
+    total_dist_plot[outlier_rows] = np.nan
 
     if args.smooth == "median":
         smoother = smooth_series_median
     else:
         smoother = smooth_series_mean
 
-    total_dist_s = smoother(total_dist, args.window)
-    dist_cols_s = np.vstack([smoother(dist_cols[:, s], args.window)
+    total_dist_s = smoother(total_dist_plot, args.window)
+    dist_cols_s = np.vstack([smoother(dist_cols_plot[:, s], args.window)
                              for s in range(seg_count)])
     amount_cols_s = np.vstack([smoother(amount_cols[:, s], args.window)
                                for s in range(seg_count)])
@@ -88,31 +111,36 @@ def main():
     colors = plt.get_cmap("tab20", max(seg_count, 1))
     dot_size = 2.0
     dot_alpha = 0.35
-    best_idx = int(np.argmin(total_dist))
-    best_iter = iterations[best_idx]
+    best_idx = None
+    if np.isfinite(total_dist_plot).any():
+        best_idx = int(np.nanargmin(total_dist_plot))
+        best_iter = iterations[best_idx]
 
     fig, axes = plt.subplots(4, 1, figsize=(10, 12), sharex=True)
 
-    axes[0].plot(iterations, total_dist, color="black", marker=".", linestyle="None",
+    axes[0].plot(iterations, total_dist_plot, color="black", marker=".", linestyle="None",
                  markersize=dot_size, alpha=dot_alpha)
     axes[0].plot(iterations, total_dist_s, color="black", linewidth=1.4)
-    axes[0].hlines(total_dist[best_idx], best_iter, iterations[-1],
-                   color="gray", linewidth=0.9, alpha=0.6)
-    trans0 = blended_transform_factory(axes[0].transData, axes[0].transAxes)
-    axes[0].plot([best_iter - 0.4, best_iter + 0.4], [0, 1], transform=trans0,
-                 color="gray", linewidth=0.9, alpha=0.6)
+    if best_idx is not None:
+        axes[0].hlines(total_dist_plot[best_idx], best_iter, iterations[-1],
+                       color="gray", linewidth=0.9, alpha=0.6)
+        trans0 = blended_transform_factory(axes[0].transData, axes[0].transAxes)
+        axes[0].plot([best_iter - 0.4, best_iter + 0.4], [0, 1], transform=trans0,
+                     color="gray", linewidth=0.9, alpha=0.6)
     axes[0].set_ylabel("Total distance (nm)")
     axes[0].grid(True, linestyle=":", linewidth=0.5, alpha=0.6)
 
     for s in range(seg_count):
-        axes[1].plot(iterations, dist_cols[:, s], color=colors(s), marker=".",
+        axes[1].plot(iterations, dist_cols_plot[:, s], color=colors(s), marker=".",
                      linestyle="None", markersize=dot_size, alpha=dot_alpha)
         axes[1].plot(iterations, dist_cols_s[s], color=colors(s), linewidth=1.0)
-        axes[1].hlines(dist_cols[best_idx, s], best_iter, iterations[-1],
-                       color="gray", linewidth=0.7, alpha=0.45)
-    trans1 = blended_transform_factory(axes[1].transData, axes[1].transAxes)
-    axes[1].plot([best_iter - 0.4, best_iter + 0.4], [0, 1], transform=trans1,
-                 color="gray", linewidth=0.9, alpha=0.6)
+        if best_idx is not None:
+            axes[1].hlines(dist_cols_plot[best_idx, s], best_iter, iterations[-1],
+                           color="gray", linewidth=0.7, alpha=0.45)
+    if best_idx is not None:
+        trans1 = blended_transform_factory(axes[1].transData, axes[1].transAxes)
+        axes[1].plot([best_iter - 0.4, best_iter + 0.4], [0, 1], transform=trans1,
+                     color="gray", linewidth=0.9, alpha=0.6)
     axes[1].set_ylabel("Segment distance (nm)")
     axes[1].grid(True, linestyle=":", linewidth=0.5, alpha=0.6)
 
@@ -120,20 +148,23 @@ def main():
         axes[2].plot(iterations, amount_cols[:, s], color=colors(s), marker=".",
                      linestyle="None", markersize=dot_size, alpha=dot_alpha)
         axes[2].plot(iterations, amount_cols_s[s], color=colors(s), linewidth=1.0)
-        axes[2].hlines(amount_cols[best_idx, s], best_iter, iterations[-1],
-                       color="gray", linewidth=0.7, alpha=0.45)
-    trans2 = blended_transform_factory(axes[2].transData, axes[2].transAxes)
-    axes[2].plot([best_iter - 0.4, best_iter + 0.4], [0, 1], transform=trans2,
-                 color="gray", linewidth=0.9, alpha=0.6)
+        if best_idx is not None:
+            axes[2].hlines(amount_cols[best_idx, s], best_iter, iterations[-1],
+                           color="gray", linewidth=0.7, alpha=0.45)
+    if best_idx is not None:
+        trans2 = blended_transform_factory(axes[2].transData, axes[2].transAxes)
+        axes[2].plot([best_iter - 0.4, best_iter + 0.4], [0, 1], transform=trans2,
+                     color="gray", linewidth=0.9, alpha=0.6)
     axes[2].set_ylabel("Segment amount")
     axes[2].grid(True, linestyle=":", linewidth=0.5, alpha=0.6)
 
     axes[3].plot(iterations, attempts, color="black", marker=".", linestyle="None",
                  markersize=dot_size, alpha=dot_alpha)
     axes[3].plot(iterations, attempts_s, color="black", linewidth=1.2)
-    trans3 = blended_transform_factory(axes[3].transData, axes[3].transAxes)
-    axes[3].plot([best_iter - 0.4, best_iter + 0.4], [0, 1], transform=trans3,
-                 color="gray", linewidth=0.9, alpha=0.6)
+    if best_idx is not None:
+        trans3 = blended_transform_factory(axes[3].transData, axes[3].transAxes)
+        axes[3].plot([best_iter - 0.4, best_iter + 0.4], [0, 1], transform=trans3,
+                     color="gray", linewidth=0.9, alpha=0.6)
     axes[3].set_ylabel("Attempts")
     axes[3].set_xlabel("Iteration")
     axes[3].grid(True, linestyle=":", linewidth=0.5, alpha=0.6)
