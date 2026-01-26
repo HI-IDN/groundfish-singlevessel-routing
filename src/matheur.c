@@ -721,6 +721,8 @@ static SegmentEval eval_one_segment(GRBenv *env, const ExData *ex,
   return eval;
 }
 
+static int *build_tour_from_eval(const SegmentEval *evals, int nseg, int *out_len);
+
 static int evaluate_visits(const Visit *visits, int n_visits, const ExData *ex,
                            const SegmentEval *seg_eval_ref, int nseg_ref,
                            double timelimit, const double *dist, int Size,
