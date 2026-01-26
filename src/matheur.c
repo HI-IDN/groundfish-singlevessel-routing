@@ -903,6 +903,7 @@ static int move_one_station(Visit *visits, int n_visits, const ExData *ex,
   }
   int seg_count = port_count + 1;
   int use_allowed = (allowed_src && allowed_len == seg_count);
+  const double INF = 1e300;
   if (seg_count < 2) {
     printf("Hillclimb: only one segment, skipping move.\n");
     return 0;
@@ -929,6 +930,46 @@ static int move_one_station(Visit *visits, int n_visits, const ExData *ex,
     }
   }
 
+  int *seg_station_offsets = (int*)xcalloc((size_t)seg_count + 1, sizeof(int));
+  for (int i = 0; i < seg_count; i++) {
+    seg_station_offsets[i + 1] = seg_station_offsets[i] + seg_station_count[i];
+  }
+  int total_stations = seg_station_offsets[seg_count];
+  int *seg_station_ex = NULL;
+  int *seg_station_pos = NULL;
+  if (total_stations > 0) {
+    seg_station_ex = (int*)xmalloc((size_t)total_stations * sizeof(int));
+    seg_station_pos = (int*)xcalloc((size_t)seg_count, sizeof(int));
+    for (int i = 0; i < n_visits; i++) {
+      if (visits[i].type != tSTAT) continue;
+      int s = seg_of_idx[i];
+      int pos = seg_station_offsets[s] + seg_station_pos[s]++;
+      seg_station_ex[pos] = visits[i].ex_idx;
+    }
+  }
+
+  double *seg_tol = (double*)xmalloc((size_t)seg_count * sizeof(double));
+  for (int s = 0; s < seg_count; s++) {
+    int cnt = seg_station_count[s];
+    if (cnt <= 1) {
+      seg_tol[s] = INF;
+      continue;
+    }
+    double sum = 0.0;
+    int off = seg_station_offsets[s];
+    for (int i = 0; i < cnt; i++) {
+      double min_d = INF;
+      int ex_i = seg_station_ex[off + i];
+      for (int j = 0; j < cnt; j++) {
+        if (i == j) continue;
+        double d = min_pair_dist(dist, 2 * Size, ex_i, seg_station_ex[off + j]);
+        if (d < min_d) min_d = d;
+      }
+      sum += min_d;
+    }
+    seg_tol[s] = sum / (double)cnt;
+  }
+
   int *cand = (int*)xmalloc((size_t)seg_count * sizeof(int));
   double min_amt = 0.0;
   int max_attempts = 5;
@@ -953,17 +994,49 @@ static int move_one_station(Visit *visits, int n_visits, const ExData *ex,
 
     int src_seg = cand[rand() % cand_count];
 
-    int dir = rand() % 2; /* 0 left, 1 right */
-    int dst_seg = (src_seg + (dir ? 1 : -1) + seg_count) % seg_count;
+    int *dest_cand = (int*)xmalloc((size_t)seg_count * sizeof(int));
+    int dest_count = 0;
+    for (int j = 0; j < seg_count; j++) {
+      if (j == src_seg) continue;
+      double tol = seg_tol[src_seg] > seg_tol[j] ? seg_tol[src_seg] : seg_tol[j];
+      int ok = 0;
+      if (tol >= INF * 0.5) {
+        ok = 1;
+      } else {
+        int cnt_src = seg_station_count[src_seg];
+        int cnt_dst = seg_station_count[j];
+        if (cnt_src == 0 || cnt_dst == 0) {
+          ok = 1;
+        } else {
+          double min_cross = INF;
+          int off_src = seg_station_offsets[src_seg];
+          int off_dst = seg_station_offsets[j];
+          for (int a = 0; a < cnt_src; a++) {
+            int ex_a = seg_station_ex[off_src + a];
+            for (int b = 0; b < cnt_dst; b++) {
+              double d = min_pair_dist(dist, 2 * Size, ex_a, seg_station_ex[off_dst + b]);
+              if (d < min_cross) min_cross = d;
+              if (min_cross <= tol) break;
+            }
+            if (min_cross <= tol) break;
+          }
+          if (min_cross <= tol) ok = 1;
+        }
+      }
+      if (ok) dest_cand[dest_count++] = j;
+    }
+    if (dest_count == 0) {
+      free(dest_cand);
+      continue;
+    }
+
+    int dst_seg = dest_cand[rand() % dest_count];
+    free(dest_cand);
     if (dst_seg == src_seg) continue;
+    int dir = rand() % 2; /* 0 end, 1 start */
 
     int dest_has = 0;
-    for (int j = seg_first[dst_seg]; j < ((seg_end[dst_seg] >= 0) ? seg_end[dst_seg] : n_visits); j++) {
-      if (seg_of_idx[j] != dst_seg) continue;
-      if (visits[j].type != tSTAT) continue;
-      dest_has = 1;
-      break;
-    }
+    if (seg_station_count[dst_seg] > 0) dest_has = 1;
     int dest_ex = 0;
     if (!dest_has) {
       if (seg_end[dst_seg] >= 0) dest_ex = visits[seg_end[dst_seg]].ex_idx;
@@ -984,10 +1057,10 @@ static int move_one_station(Visit *visits, int n_visits, const ExData *ex,
       double dmin = 0.0;
       if (dest_has) {
         dmin = 1e100;
-        for (int j = seg_first[dst_seg]; j < ((seg_end[dst_seg] >= 0) ? seg_end[dst_seg] : n_visits); j++) {
-          if (seg_of_idx[j] != dst_seg) continue;
-          if (visits[j].type != tSTAT) continue;
-          double d = min_pair_dist(dist, 2 * Size, visits[i].ex_idx, visits[j].ex_idx);
+        int off_dst = seg_station_offsets[dst_seg];
+        int cnt_dst = seg_station_count[dst_seg];
+        for (int j = 0; j < cnt_dst; j++) {
+          double d = min_pair_dist(dist, 2 * Size, visits[i].ex_idx, seg_station_ex[off_dst + j]);
           if (d < dmin) dmin = d;
         }
       } else {
@@ -1071,13 +1144,15 @@ static int move_one_station(Visit *visits, int n_visits, const ExData *ex,
     visits[insert_idx] = moved;
 
     printf("Hillclimb move: STAT-%d (amt=%.0f) seg %d -> seg %d (%s)\n",
-           moved.ex_idx, amt, src_seg + 1, dst_seg + 1, dir ? "right" : "left");
+           moved.ex_idx, amt, src_seg + 1, dst_seg + 1, dir ? "start" : "end");
     if (out_src_seg) *out_src_seg = src_seg;
     if (out_dst_seg) *out_dst_seg = dst_seg;
     if (out_attempts) *out_attempts = attempt + 1;
 
     free(seg_first); free(seg_end); free(seg_station_count);
     free(seg_amount); free(seg_of_idx); free(cand);
+    free(seg_station_offsets); free(seg_station_ex);
+    free(seg_station_pos); free(seg_tol);
     return 1;
   }
 
@@ -1085,6 +1160,8 @@ static int move_one_station(Visit *visits, int n_visits, const ExData *ex,
   printf("Hillclimb: no feasible move after %d attempts.\n", max_attempts);
   free(seg_first); free(seg_end); free(seg_station_count);
   free(seg_amount); free(seg_of_idx); free(cand);
+  free(seg_station_offsets); free(seg_station_ex);
+  free(seg_station_pos); free(seg_tol);
   return 0;
 }
 
