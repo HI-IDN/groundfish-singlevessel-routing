@@ -1987,21 +1987,25 @@ static int closest_port_ex(const ExData *ex, const double *full_dist, int full_m
 static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
                                     const double *full_dist, int full_m,
                                     const int *station_order, int n_station,
-                                    double target_cap, double ship_cap,
-                                    int *out_n) {
+                                    double total_amount, int target_segments,
+                                    double ship_cap, int *out_n) {
   int cap = n_station * 2 + 8;
   int n = 0;
   Visit *visits = (Visit*)xmalloc((size_t)cap * sizeof(Visit));
   double load = 0.0;
   int last_stat = -1;
+  double remaining_amount = total_amount;
+  int remaining_segments = target_segments;
 
   if (ship_cap <= 0.0) ship_cap = 1.0;
-  if (target_cap <= 0.0) target_cap = ship_cap;
-  if (target_cap > ship_cap) target_cap = ship_cap;
+  if (remaining_segments < 1) remaining_segments = 1;
 
   for (int i = 0; i < n_station; i++) {
     int st = station_order[i];
     double amt = ex->Amount[st];
+    double target_cap = remaining_amount / (double)remaining_segments;
+    if (target_cap <= 0.0) target_cap = ship_cap;
+    if (target_cap > ship_cap) target_cap = ship_cap;
 
     if (load > 0.0 && load + amt > target_cap) {
       double best_dist = 0.0;
@@ -2015,6 +2019,8 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
         printf("Insert port before STAT-%d: PORT-%d", st, port_ex);
         if (pt->Name) printf("(%s)", pt->Name);
         printf(" load=%.0f dist=%.3f\n", load, best_dist);
+        remaining_amount -= load;
+        if (remaining_segments > 1) remaining_segments--;
         load = 0.0;
         last_stat = -1;
       } else {
@@ -2033,6 +2039,10 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
       printf("Warning: STAT-%d amount=%.0f exceeds ship capacity %.0f\n", st, amt, ship_cap);
     }
 
+    target_cap = remaining_amount / (double)remaining_segments;
+    if (target_cap <= 0.0) target_cap = ship_cap;
+    if (target_cap > ship_cap) target_cap = ship_cap;
+
     if (load >= target_cap) {
       double best_dist = 0.0;
       int port_ex = closest_port_ex(ex, full_dist, full_m, st, &best_dist);
@@ -2048,6 +2058,8 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
       printf("Insert port after STAT-%d: PORT-%d", st, port_ex);
       if (pt->Name) printf("(%s)", pt->Name);
       printf(" load=%.0f dist=%.3f\n", load, best_dist);
+      remaining_amount -= load;
+      if (remaining_segments > 1) remaining_segments--;
       load = 0.0;
       last_stat = -1;
     }
@@ -2417,7 +2429,8 @@ int main(int argc, char **argv) {
   int n_visits = 0;
   Visit *visits = build_capacity_visits(&ex, &items, full_dist, full_m,
                                         station_order, n_station,
-                                        target_cap, ShipCap, &n_visits);
+                                        total_amount, init_segments,
+                                        ShipCap, &n_visits);
   free(station_order);
 
   print_visit_list(&ex, &items, visits, n_visits);
