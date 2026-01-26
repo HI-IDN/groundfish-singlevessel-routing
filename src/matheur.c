@@ -721,6 +721,75 @@ static SegmentEval eval_one_segment(GRBenv *env, const ExData *ex,
   return eval;
 }
 
+static int evaluate_visits(const Visit *visits, int n_visits, const ExData *ex,
+                           const SegmentEval *seg_eval_ref, int nseg_ref,
+                           double timelimit, const double *dist, int Size,
+                           SegmentEval **out_eval, int *out_nseg,
+                           int **out_tour, int *out_tour_len,
+                           double *out_total) {
+  if (out_eval) *out_eval = NULL;
+  if (out_nseg) *out_nseg = 0;
+  if (out_tour) *out_tour = NULL;
+  if (out_tour_len) *out_tour_len = 0;
+  if (out_total) *out_total = -1.0;
+
+  int nseg2 = 0;
+  SegmentInfo *info = build_segment_info(visits, n_visits, ex, &nseg2);
+  if (!info) return 0;
+
+  GRBenv *seg_env = NULL;
+  if (GRBloadenv(&seg_env, NULL) != 0) {
+    free(info);
+    return 0;
+  }
+  GRBsetintparam(seg_env, "OutputFlag", 0);
+  GRBsetintparam(seg_env, "LogToConsole", 0);
+
+  SegmentEval *trial_eval = (SegmentEval*)xcalloc((size_t)nseg2, sizeof(SegmentEval));
+  int seg_count_changed = (nseg2 != nseg_ref) || !seg_eval_ref;
+  for (int s = 0; s < nseg2; s++) {
+    if (!seg_count_changed &&
+        info[s].total_amount == seg_eval_ref[s].res.total_amount &&
+        info[s].n_stations == seg_eval_ref[s].res.n_stations &&
+        info[s].start_ex == seg_eval_ref[s].res.start_ex &&
+        info[s].end_ex == seg_eval_ref[s].res.end_ex &&
+        info[s].start_type == seg_eval_ref[s].res.start_type &&
+        info[s].end_type == seg_eval_ref[s].res.end_type) {
+      trial_eval[s].res = seg_eval_ref[s].res;
+      trial_eval[s].order_len = seg_eval_ref[s].order_len;
+      if (trial_eval[s].order_len > 0) {
+        trial_eval[s].order = (int*)xmalloc((size_t)trial_eval[s].order_len * sizeof(int));
+        memcpy(trial_eval[s].order, seg_eval_ref[s].order,
+               (size_t)trial_eval[s].order_len * sizeof(int));
+      }
+    } else {
+      trial_eval[s] = eval_one_segment(seg_env, ex, &info[s], visits, timelimit);
+    }
+  }
+  GRBfreeenv(seg_env);
+  free(info);
+
+  int valid = 1;
+  for (int s = 0; s < nseg2; s++) {
+    if (trial_eval[s].res.distance < 0.0) { valid = 0; break; }
+  }
+
+  int *trial_tour = NULL;
+  int trial_tour_len = 0;
+  double trial_total = -1.0;
+  if (valid) {
+    trial_tour = build_tour_from_eval(trial_eval, nseg2, &trial_tour_len);
+    trial_total = letour_distance_total(trial_tour, trial_tour_len, dist, Size);
+  }
+
+  if (out_eval) *out_eval = trial_eval;
+  if (out_nseg) *out_nseg = nseg2;
+  if (out_tour) *out_tour = trial_tour;
+  if (out_tour_len) *out_tour_len = trial_tour_len;
+  if (out_total) *out_total = trial_total;
+  return valid;
+}
+
 static int *build_tour_from_eval(const SegmentEval *evals, int nseg, int *out_len) {
   int cap = 1;
   for (int i = 0; i < nseg; i++) cap += evals[i].order_len + 1;
@@ -2450,9 +2519,8 @@ int main(int argc, char **argv) {
       int attempts = 0;
       int moved = 0;
       int moved_any = 0;
+      int station_moved_any = 0;
       int move_count = 0;
-      int port_move_kind = 0;
-      int port_move_seg = -1;
       for (int restart = 0; restart <= restart_limit; restart++) {
         if (visits_trial) {
           free(visits_trial);
@@ -2470,6 +2538,7 @@ int main(int argc, char **argv) {
         attempts = 0;
         moved = 0;
         moved_any = 0;
+        station_moved_any = 0;
         move_count = 0;
         for (;;) {
           int src = -1;
@@ -2487,6 +2556,7 @@ int main(int argc, char **argv) {
             src_seg = src;
             dst_seg = dst;
             moved_any = 1;
+            station_moved_any = 1;
           }
           if (src >= 0 && src < seg_count) touched[src] = 1;
           if (dst >= 0 && dst < seg_count) touched[dst] = 1;
@@ -2496,32 +2566,6 @@ int main(int argc, char **argv) {
           }
           if (((double)rand() / (double)RAND_MAX) >= mut_prob) {
             break;
-          }
-        }
-        {
-          const double port_total = port_swap_prob + port_merge_prob;
-          int do_port_move = !moved_any;
-          double r = (double)rand() / (double)RAND_MAX;
-          if (port_total > 0.0 && r < port_total) do_port_move = 1;
-          if (do_port_move && port_total > 0.0) {
-            double r2 = (double)rand() / (double)RAND_MAX;
-            double swap_cut = port_swap_prob / port_total;
-            attempts += 1;
-            if (r2 < swap_cut) {
-              int seg_idx = -1;
-              if (swap_port_visit(visits_trial, n_visits_trial, &ex, &seg_idx)) {
-                moved_any = 1;
-                port_move_kind = 1;
-                port_move_seg = seg_idx;
-              }
-            } else {
-              int seg_idx = -1;
-              if (merge_segments_by_capacity(visits_trial, &n_visits_trial, &ex, ShipCap, &seg_idx)) {
-                moved_any = 1;
-                port_move_kind = 2;
-                port_move_seg = seg_idx;
-              }
-            }
           }
         }
         free(touched);
@@ -2549,85 +2593,108 @@ int main(int argc, char **argv) {
         goto ADAPT;
       }
 
+      SegmentEval *trial_eval = NULL;
       int nseg2 = 0;
-      SegmentInfo *info = build_segment_info(visits_trial, n_visits_trial, &ex, &nseg2);
-      int seg_count_changed = (nseg2 != nseg);
-
-      GRBenv *seg_env = NULL;
-      if (GRBloadenv(&seg_env, NULL) != 0) {
-        free(info);
-        free(visits_trial);
-        goto ADAPT;
-      }
-      GRBsetintparam(seg_env, "OutputFlag", 0);
-      GRBsetintparam(seg_env, "LogToConsole", 0);
-
-      SegmentEval *trial_eval = (SegmentEval*)xcalloc((size_t)nseg2, sizeof(SegmentEval));
-      for (int s = 0; s < nseg2; s++) {
-        if (!seg_count_changed &&
-            info[s].total_amount == seg_eval[s].res.total_amount &&
-            info[s].n_stations == seg_eval[s].res.n_stations &&
-            info[s].start_ex == seg_eval[s].res.start_ex &&
-            info[s].end_ex == seg_eval[s].res.end_ex &&
-            info[s].start_type == seg_eval[s].res.start_type &&
-            info[s].end_type == seg_eval[s].res.end_type) {
-          trial_eval[s].res = seg_eval[s].res;
-          trial_eval[s].order_len = seg_eval[s].order_len;
-          if (trial_eval[s].order_len > 0) {
-            trial_eval[s].order = (int*)xmalloc((size_t)trial_eval[s].order_len * sizeof(int));
-            memcpy(trial_eval[s].order, seg_eval[s].order,
-                   (size_t)trial_eval[s].order_len * sizeof(int));
-          }
-        } else {
-          trial_eval[s] = eval_one_segment(seg_env, &ex, &info[s], visits_trial, timelimit);
-        }
-      }
-      GRBfreeenv(seg_env);
-      free(info);
-
-      int valid = 1;
-      for (int s = 0; s < nseg2; s++) {
-        if (trial_eval[s].res.distance < 0.0) { valid = 0; break; }
-      }
-      if (valid && port_move_kind != 0) {
-        double before = -1.0;
-        double after = -1.0;
-        if (port_move_kind == 1) {
-          if (port_move_seg >= 0 && port_move_seg + 1 < nseg &&
-              port_move_seg + 1 < nseg2) {
-            double b0 = seg_eval[port_move_seg].res.distance;
-            double b1 = seg_eval[port_move_seg + 1].res.distance;
-            double a0 = trial_eval[port_move_seg].res.distance;
-            double a1 = trial_eval[port_move_seg + 1].res.distance;
-            if (b0 >= 0.0 && b1 >= 0.0 && a0 >= 0.0 && a1 >= 0.0) {
-              before = b0 + b1;
-              after = a0 + a1;
-            }
-          }
-        } else if (port_move_kind == 2) {
-          if (port_move_seg >= 0 && port_move_seg + 1 < nseg &&
-              port_move_seg < nseg2) {
-            double b0 = seg_eval[port_move_seg].res.distance;
-            double b1 = seg_eval[port_move_seg + 1].res.distance;
-            double a0 = trial_eval[port_move_seg].res.distance;
-            if (b0 >= 0.0 && b1 >= 0.0 && a0 >= 0.0) {
-              before = b0 + b1;
-              after = a0;
-            }
-          }
-        }
-        if (!(before >= 0.0 && after >= 0.0 && after < before)) {
-          valid = 0;
-          printf("Hillclimb iter %d: port move rejected (local %.3f -> %.3f)\n",
-                 it + 1, before, after);
-        }
-      }
-
+      int *trial_tour = NULL;
       int trial_tour_len = 0;
-      int *trial_tour = valid ? build_tour_from_eval(trial_eval, nseg2, &trial_tour_len) : NULL;
-      double trial_total = valid
-                             ? letour_distance_total(trial_tour, trial_tour_len, dist, Size)
-                             : -1.0;
+      double trial_total = -1.0;
+      int valid = evaluate_visits(visits_trial, n_visits_trial, &ex, seg_eval, nseg,
+                                  timelimit, dist, Size,
+                                  &trial_eval, &nseg2, &trial_tour, &trial_tour_len,
+                                  &trial_total);
+
+      const double port_prob_total = port_swap_prob + port_merge_prob;
+      if (station_moved_any && port_prob_total > 0.0) {
+        double r = (double)rand() / (double)RAND_MAX;
+        if (r < port_prob_total) {
+          Visit *visits_port = (Visit*)xmalloc((size_t)n_visits_trial * sizeof(Visit));
+          memcpy(visits_port, visits_trial, (size_t)n_visits_trial * sizeof(Visit));
+          int n_visits_port = n_visits_trial;
+          int port_move_kind = 0;
+          int port_move_seg = -1;
+          double r2 = (double)rand() / (double)RAND_MAX;
+          double swap_cut = port_swap_prob / port_prob_total;
+          attempts += 1;
+          if (r2 < swap_cut) {
+            if (swap_port_visit(visits_port, n_visits_port, &ex, &port_move_seg)) {
+              port_move_kind = 1;
+            }
+          } else {
+            if (merge_segments_by_capacity(visits_port, &n_visits_port, &ex, ShipCap, &port_move_seg)) {
+              port_move_kind = 2;
+            }
+          }
+
+          if (port_move_kind != 0) {
+            SegmentEval *port_eval = NULL;
+            int nseg_port = 0;
+            int *port_tour = NULL;
+            int port_tour_len = 0;
+            double port_total = -1.0;
+            int port_valid = evaluate_visits(visits_port, n_visits_port, &ex, seg_eval, nseg,
+                                             timelimit, dist, Size,
+                                             &port_eval, &nseg_port, &port_tour, &port_tour_len,
+                                             &port_total);
+            int use_port = 0;
+            if (port_valid && valid) {
+              double before = -1.0;
+              double after = -1.0;
+              if (port_move_kind == 1) {
+                if (port_move_seg >= 0 && port_move_seg + 1 < nseg2 &&
+                    port_move_seg + 1 < nseg_port) {
+                  double b0 = trial_eval[port_move_seg].res.distance;
+                  double b1 = trial_eval[port_move_seg + 1].res.distance;
+                  double a0 = port_eval[port_move_seg].res.distance;
+                  double a1 = port_eval[port_move_seg + 1].res.distance;
+                  if (b0 >= 0.0 && b1 >= 0.0 && a0 >= 0.0 && a1 >= 0.0) {
+                    before = b0 + b1;
+                    after = a0 + a1;
+                  }
+                }
+              } else if (port_move_kind == 2) {
+                if (port_move_seg >= 0 && port_move_seg + 1 < nseg2 &&
+                    port_move_seg < nseg_port) {
+                  double b0 = trial_eval[port_move_seg].res.distance;
+                  double b1 = trial_eval[port_move_seg + 1].res.distance;
+                  double a0 = port_eval[port_move_seg].res.distance;
+                  if (b0 >= 0.0 && b1 >= 0.0 && a0 >= 0.0) {
+                    before = b0 + b1;
+                    after = a0;
+                  }
+                }
+              }
+              if (before >= 0.0 && after >= 0.0 && after < before) {
+                use_port = 1;
+              } else {
+                printf("Hillclimb iter %d: port tweak skipped (local %.3f -> %.3f)\n",
+                       it + 1, before, after);
+              }
+            } else if (port_valid && !valid) {
+              use_port = 1;
+            }
+
+            if (use_port) {
+              free_segment_eval(trial_eval, nseg2);
+              free(trial_tour);
+              free(visits_trial);
+              visits_trial = visits_port;
+              n_visits_trial = n_visits_port;
+              trial_eval = port_eval;
+              nseg2 = nseg_port;
+              trial_tour = port_tour;
+              trial_tour_len = port_tour_len;
+              trial_total = port_total;
+              valid = port_valid;
+            } else {
+              free_segment_eval(port_eval, nseg_port);
+              free(port_tour);
+              free(visits_port);
+            }
+          } else {
+            free(visits_port);
+          }
+        }
+      }
       printf("Hillclimb iter %d total distance: %.3f (mut_prob=%.3f tau=%.4f)\n",
              it + 1, trial_total, mut_prob, tau_scale);
       if (csv) {
