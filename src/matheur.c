@@ -2483,7 +2483,8 @@ int main(int argc, char **argv) {
       double trial_total = valid
                              ? letour_distance_total(trial_tour, trial_tour_len, dist, Size)
                              : -1.0;
-      printf("Hillclimb iter %d total distance: %.3f\n", it + 1, trial_total);
+      printf("Hillclimb iter %d total distance: %.3f (mut_prob=%.3f tau=%.4f)\n",
+             it + 1, trial_total, mut_prob, tau_scale);
       if (csv) {
         fprintf(csv, "%d", attempts);
         if (nseg_max > 0) fputc(',', csv);
@@ -2503,7 +2504,8 @@ int main(int argc, char **argv) {
       }
 
       if (base_total < 0.0 || (trial_total >= 0.0 && trial_total < base_total)) {
-        printf("Hillclimb iter %d accepted.\n", it + 1);
+        printf("Hillclimb iter %d accepted. (mut_prob=%.3f tau=%.4f)\n",
+               it + 1, mut_prob, tau_scale);
         success = 1;
         free_segment_eval(seg_eval, nseg);
         seg_eval = trial_eval;
@@ -2517,7 +2519,8 @@ int main(int argc, char **argv) {
         seg_tour_len = trial_tour_len;
         use_segment_plot = (seg_tour && seg_tour_len > 0);
       } else {
-        printf("Hillclimb iter %d rejected.\n", it + 1);
+        printf("Hillclimb iter %d rejected. (mut_prob=%.3f tau=%.4f)\n",
+               it + 1, mut_prob, tau_scale);
         free_segment_eval(trial_eval, nseg2);
         free(trial_tour);
         free(visits_trial);
