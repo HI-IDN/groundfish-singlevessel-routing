@@ -47,6 +47,11 @@ Remark: the land mask `island.bin` is loaded relative to the current working dir
 cd bin && ../py/plot_solution.py --sol ../sol/all_res_1.txt --recompute
 ```
 
+## Algorithm Overview (ES(1+1) Hillclimb)
+- **Initialization**: solve a no-port TSP to get a station order, compute the number of segments as `ceil(total_amount / ship_capacity)`, set `target_cap = total_amount / segments`, then insert ports greedily so each segment load stays near `target_cap`.
+- **Mutation**: apply a chain of station moves between adjacent segments; after the first move, only segments already touched in this chain can supply stations. Optionally attempt a port swap or port merge (both only kept if the stitched pair distance improves; merge also requires combined load within capacity).
+- **Evaluation & selection**: re-solve each segment TSP, stitch the tour, and accept the offspring only if the total distance improves.
+
 For reproducibility, record solver versions and any run flags (e.g., time limits) in your experiment notes.
 
 ## Notes

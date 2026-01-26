@@ -774,7 +774,7 @@ static int *collect_port_ex(const ExData *ex, int *out_count) {
   return ports;
 }
 
-static int swap_port_visit(Visit *visits, int n_visits, const ExData *ex) {
+static int swap_port_visit(Visit *visits, int n_visits, const ExData *ex, int *out_seg) {
   int port_visit_count = 0;
   for (int i = 0; i < n_visits; i++) {
     if (visits[i].type == tPORT) port_visit_count++;
@@ -817,6 +817,13 @@ static int swap_port_visit(Visit *visits, int n_visits, const ExData *ex) {
   }
 
   visits[pick_vis].ex_idx = new_ex;
+  if (out_seg) {
+    int seg = 0;
+    for (int i = 0; i < pick_vis; i++) {
+      if (visits[i].type == tPORT) seg++;
+    }
+    *out_seg = seg;
+  }
   printf("Hillclimb port swap: PORT-%d -> PORT-%d\n", current_ex, new_ex);
 
   free(port_vis_idx);
@@ -825,7 +832,8 @@ static int swap_port_visit(Visit *visits, int n_visits, const ExData *ex) {
 }
 
 static int merge_segments_by_capacity(Visit *visits, int *n_visits_io,
-                                      const ExData *ex, double ship_cap) {
+                                      const ExData *ex, double ship_cap,
+                                      int *out_seg) {
   int n_visits = *n_visits_io;
   int port_count = 0;
   for (int i = 0; i < n_visits; i++) {
@@ -874,6 +882,7 @@ static int merge_segments_by_capacity(Visit *visits, int *n_visits_io,
   memmove(&visits[pick_idx], &visits[pick_idx + 1],
           (size_t)(n_visits - pick_idx - 1) * sizeof(Visit));
   (*n_visits_io)--;
+  if (out_seg) *out_seg = pick_seg;
   printf("Hillclimb merge: removed PORT-%d (combined load=%.0f)\n",
          port_ex, seg_amount[pick_seg] + seg_amount[pick_seg + 1]);
 
@@ -1830,7 +1839,8 @@ static int closest_port_ex(const ExData *ex, const double *full_dist, int full_m
 static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
                                     const double *full_dist, int full_m,
                                     const int *station_order, int n_station,
-                                    double ship_cap, int *out_n) {
+                                    double target_cap, double ship_cap,
+                                    int *out_n) {
   int cap = n_station * 2 + 8;
   int n = 0;
   Visit *visits = (Visit*)xmalloc((size_t)cap * sizeof(Visit));
@@ -1838,12 +1848,14 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
   int last_stat = -1;
 
   if (ship_cap <= 0.0) ship_cap = 1.0;
+  if (target_cap <= 0.0) target_cap = ship_cap;
+  if (target_cap > ship_cap) target_cap = ship_cap;
 
   for (int i = 0; i < n_station; i++) {
     int st = station_order[i];
     double amt = ex->Amount[st];
 
-    if (load > 0.0 && load + amt > ship_cap) {
+    if (load > 0.0 && load + amt > target_cap) {
       double best_dist = 0.0;
       int port_ex = closest_port_ex(ex, full_dist, full_m, last_stat, &best_dist);
       if (port_ex >= 0) {
@@ -1873,7 +1885,7 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
       printf("Warning: STAT-%d amount=%.0f exceeds ship capacity %.0f\n", st, amt, ship_cap);
     }
 
-    if (load >= ship_cap) {
+    if (load >= target_cap) {
       double best_dist = 0.0;
       int port_ex = closest_port_ex(ex, full_dist, full_m, st, &best_dist);
       if (port_ex < 0) {
@@ -2240,9 +2252,24 @@ int main(int argc, char **argv) {
   free(fsb_np);
   free_exdata(&ex_np);
 
+  double total_amount = 0.0;
+  for (int i = 0; i < ex.SelectedSize; i++) {
+    if (ex.Type[i] == tSTAT) total_amount += ex.Amount[i];
+  }
+  int init_segments = 1;
+  if (ShipCap > 0.0) {
+    init_segments = (int)ceil(total_amount / ShipCap);
+    if (init_segments < 1) init_segments = 1;
+  }
+  double target_cap = (init_segments > 0) ? (total_amount / (double)init_segments) : ShipCap;
+  if (target_cap <= 0.0) target_cap = ShipCap;
+  printf("Init segments: %d target_cap=%.1f (total=%.1f, ship_cap=%.1f)\n",
+         init_segments, target_cap, total_amount, ShipCap);
+
   int n_visits = 0;
   Visit *visits = build_capacity_visits(&ex, &items, full_dist, full_m,
-                                        station_order, n_station, ShipCap, &n_visits);
+                                        station_order, n_station,
+                                        target_cap, ShipCap, &n_visits);
   free(station_order);
 
   print_visit_list(&ex, &items, visits, n_visits);
@@ -2347,6 +2374,8 @@ int main(int argc, char **argv) {
       int moved = 0;
       int moved_any = 0;
       int move_count = 0;
+      int port_move_kind = 0;
+      int port_move_seg = -1;
       for (int restart = 0; restart <= restart_limit; restart++) {
         if (visits_trial) {
           free(visits_trial);
@@ -2402,12 +2431,18 @@ int main(int argc, char **argv) {
             double swap_cut = port_swap_prob / port_total;
             attempts += 1;
             if (r2 < swap_cut) {
-              if (swap_port_visit(visits_trial, n_visits_trial, &ex)) {
+              int seg_idx = -1;
+              if (swap_port_visit(visits_trial, n_visits_trial, &ex, &seg_idx)) {
                 moved_any = 1;
+                port_move_kind = 1;
+                port_move_seg = seg_idx;
               }
             } else {
-              if (merge_segments_by_capacity(visits_trial, &n_visits_trial, &ex, ShipCap)) {
+              int seg_idx = -1;
+              if (merge_segments_by_capacity(visits_trial, &n_visits_trial, &ex, ShipCap, &seg_idx)) {
                 moved_any = 1;
+                port_move_kind = 2;
+                port_move_seg = seg_idx;
               }
             }
           }
@@ -2476,6 +2511,39 @@ int main(int argc, char **argv) {
       int valid = 1;
       for (int s = 0; s < nseg2; s++) {
         if (trial_eval[s].res.distance < 0.0) { valid = 0; break; }
+      }
+      if (valid && port_move_kind != 0) {
+        double before = -1.0;
+        double after = -1.0;
+        if (port_move_kind == 1) {
+          if (port_move_seg >= 0 && port_move_seg + 1 < nseg &&
+              port_move_seg + 1 < nseg2) {
+            double b0 = seg_eval[port_move_seg].res.distance;
+            double b1 = seg_eval[port_move_seg + 1].res.distance;
+            double a0 = trial_eval[port_move_seg].res.distance;
+            double a1 = trial_eval[port_move_seg + 1].res.distance;
+            if (b0 >= 0.0 && b1 >= 0.0 && a0 >= 0.0 && a1 >= 0.0) {
+              before = b0 + b1;
+              after = a0 + a1;
+            }
+          }
+        } else if (port_move_kind == 2) {
+          if (port_move_seg >= 0 && port_move_seg + 1 < nseg &&
+              port_move_seg < nseg2) {
+            double b0 = seg_eval[port_move_seg].res.distance;
+            double b1 = seg_eval[port_move_seg + 1].res.distance;
+            double a0 = trial_eval[port_move_seg].res.distance;
+            if (b0 >= 0.0 && b1 >= 0.0 && a0 >= 0.0) {
+              before = b0 + b1;
+              after = a0;
+            }
+          }
+        }
+        if (!(before >= 0.0 && after >= 0.0 && after < before)) {
+          valid = 0;
+          printf("Hillclimb iter %d: port move rejected (local %.3f -> %.3f)\n",
+                 it + 1, before, after);
+        }
       }
 
       int trial_tour_len = 0;
