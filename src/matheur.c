@@ -904,7 +904,8 @@ static int swap_port_visit(Visit *visits, int n_visits, const ExData *ex, int *o
 
 static int merge_segments_by_capacity(Visit *visits, int *n_visits_io,
                                       const ExData *ex, double ship_cap,
-                                      int *out_seg) {
+                                      int *out_seg, int *out_port_ex,
+                                      double *out_combined_load) {
   int n_visits = *n_visits_io;
   int port_count = 0;
   for (int i = 0; i < n_visits; i++) {
@@ -954,8 +955,8 @@ static int merge_segments_by_capacity(Visit *visits, int *n_visits_io,
           (size_t)(n_visits - pick_idx - 1) * sizeof(Visit));
   (*n_visits_io)--;
   if (out_seg) *out_seg = pick_seg;
-  printf("Hillclimb merge: removed PORT-%d (combined load=%.0f)\n",
-         port_ex, seg_amount[pick_seg] + seg_amount[pick_seg + 1]);
+  if (out_port_ex) *out_port_ex = port_ex;
+  if (out_combined_load) *out_combined_load = seg_amount[pick_seg] + seg_amount[pick_seg + 1];
 
   free(seg_amount);
   free(boundary_idx);
@@ -2627,6 +2628,8 @@ int main(int argc, char **argv) {
           int n_visits_port = n_visits_trial;
           int port_move_kind = 0;
           int port_move_seg = -1;
+          int port_move_ex = -1;
+          double port_move_load = 0.0;
           double r2 = (double)rand() / (double)RAND_MAX;
           double swap_cut = port_swap_prob / port_prob_total;
           attempts += 1;
@@ -2635,7 +2638,8 @@ int main(int argc, char **argv) {
               port_move_kind = 1;
             }
           } else {
-            if (merge_segments_by_capacity(visits_port, &n_visits_port, &ex, ShipCap, &port_move_seg)) {
+            if (merge_segments_by_capacity(visits_port, &n_visits_port, &ex, ShipCap,
+                                           &port_move_seg, &port_move_ex, &port_move_load)) {
               port_move_kind = 2;
             }
           }
@@ -2700,6 +2704,10 @@ int main(int argc, char **argv) {
               trial_tour_len = port_tour_len;
               trial_total = port_total;
               valid = port_valid;
+              if (port_move_kind == 2) {
+                printf("Hillclimb merge applied: removed PORT-%d (combined load=%.0f)\n",
+                       port_move_ex, port_move_load);
+              }
             } else {
               free_segment_eval(port_eval, nseg_port);
               free(port_tour);
