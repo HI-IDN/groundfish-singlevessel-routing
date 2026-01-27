@@ -1988,15 +1988,14 @@ static int closest_port_ex(const ExData *ex, const double *full_dist, int full_m
 static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
                                     const double *full_dist, int full_m,
                                     const int *station_order, int n_station,
-                                    double total_amount, int target_segments,
-                                    double ship_cap, int *out_n) {
+                                    int max_segments, double ship_cap,
+                                    int *out_n) {
   int cap = n_station * 2 + 8;
   int n = 0;
   Visit *visits = (Visit*)xmalloc((size_t)cap * sizeof(Visit));
   double load = 0.0;
   int last_stat = -1;
-  double remaining_amount = total_amount;
-  int remaining_segments = target_segments;
+  int remaining_segments = max_segments;
 
   if (ship_cap <= 0.0) ship_cap = 1.0;
   if (remaining_segments < 1) remaining_segments = 1;
@@ -2004,11 +2003,8 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
   for (int i = 0; i < n_station; i++) {
     int st = station_order[i];
     double amt = ex->Amount[st];
-    double target_cap = remaining_amount / (double)remaining_segments;
-    if (target_cap <= 0.0) target_cap = ship_cap;
-    if (target_cap > ship_cap) target_cap = ship_cap;
 
-    if (load > 0.0 && load + amt > target_cap) {
+    if (load > 0.0 && load + amt > ship_cap && remaining_segments > 1) {
       double best_dist = 0.0;
       int port_ex = closest_port_ex(ex, full_dist, full_m, last_stat, &best_dist);
       if (port_ex >= 0) {
@@ -2020,13 +2016,16 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
         printf("Insert port before STAT-%d: PORT-%d", st, port_ex);
         if (pt->Name) printf("(%s)", pt->Name);
         printf(" load=%.0f dist=%.3f\n", load, best_dist);
-        remaining_amount -= load;
         if (remaining_segments > 1) remaining_segments--;
         load = 0.0;
         last_stat = -1;
       } else {
         printf("Insert port: none available before STAT-%d (load=%.0f)\n", st, load);
       }
+    }
+    if (load > 0.0 && load + amt > ship_cap && remaining_segments <= 1) {
+      printf("Init warning: segment limit reached; load %.0f + next %.0f exceeds ship cap %.0f\n",
+             load, amt, ship_cap);
     }
 
     if (n == cap) { cap *= 2; visits = (Visit*)realloc(visits, (size_t)cap * sizeof(Visit)); if(!visits) die("OOM"); }
@@ -2040,11 +2039,7 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
       printf("Warning: STAT-%d amount=%.0f exceeds ship capacity %.0f\n", st, amt, ship_cap);
     }
 
-    target_cap = remaining_amount / (double)remaining_segments;
-    if (target_cap <= 0.0) target_cap = ship_cap;
-    if (target_cap > ship_cap) target_cap = ship_cap;
-
-    if (load >= target_cap) {
+    if (load >= ship_cap && remaining_segments > 1) {
       double best_dist = 0.0;
       int port_ex = closest_port_ex(ex, full_dist, full_m, st, &best_dist);
       if (port_ex < 0) {
@@ -2059,10 +2054,13 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
       printf("Insert port after STAT-%d: PORT-%d", st, port_ex);
       if (pt->Name) printf("(%s)", pt->Name);
       printf(" load=%.0f dist=%.3f\n", load, best_dist);
-      remaining_amount -= load;
       if (remaining_segments > 1) remaining_segments--;
       load = 0.0;
       last_stat = -1;
+    }
+    if (load >= ship_cap && remaining_segments <= 1) {
+      printf("Init warning: last segment load %.0f exceeds ship cap %.0f\n",
+             load, ship_cap);
     }
   }
 
@@ -2422,16 +2420,13 @@ int main(int argc, char **argv) {
     init_segments = (int)ceil(total_amount / ShipCap);
     if (init_segments < 1) init_segments = 1;
   }
-  double target_cap = (init_segments > 0) ? (total_amount / (double)init_segments) : ShipCap;
-  if (target_cap <= 0.0) target_cap = ShipCap;
-  printf("Init segments: %d target_cap=%.1f (total=%.1f, ship_cap=%.1f)\n",
-         init_segments, target_cap, total_amount, ShipCap);
+  printf("Init segments limit: %d (total=%.1f, ship_cap=%.1f)\n",
+         init_segments, total_amount, ShipCap);
 
   int n_visits = 0;
   Visit *visits = build_capacity_visits(&ex, &items, full_dist, full_m,
                                         station_order, n_station,
-                                        total_amount, init_segments,
-                                        ShipCap, &n_visits);
+                                        init_segments, ShipCap, &n_visits);
   free(station_order);
 
   print_visit_list(&ex, &items, visits, n_visits);
@@ -2513,6 +2508,14 @@ int main(int argc, char **argv) {
     printf("Initial segmented total distance: %.3f\n", base_total);
   }
   seg_eval = build_segment_eval_from_tour(segs, nseg, seg_tour, seg_tour_len, &ex);
+  double best_total = base_total;
+  int *best_tour = NULL;
+  int best_tour_len = 0;
+  if (seg_tour && seg_tour_len > 0) {
+    best_tour = (int*)xmalloc((size_t)seg_tour_len * sizeof(int));
+    memcpy(best_tour, seg_tour, (size_t)seg_tour_len * sizeof(int));
+    best_tour_len = seg_tour_len;
+  }
   if (iterations > 0) {
     clock_t hc_start = clock();
     int iter_done = 0;
@@ -2525,6 +2528,11 @@ int main(int argc, char **argv) {
     const int restart_limit = 3;
     const double port_swap_prob = 0.15;
     const double port_merge_prob = 0.10;
+    const int kick_interval = 50;
+    const int kick_moves = 4;
+    double sa_temp = 50.0;
+    const double sa_decay = 0.995;
+    int stagnation = 0;
     for (int it = 0; it < iterations; it++) {
       iter_done++;
       int success = 0;
@@ -2556,6 +2564,8 @@ int main(int argc, char **argv) {
         moved_any = 0;
         station_moved_any = 0;
         move_count = 0;
+        int kick_mode = (stagnation >= kick_interval);
+        int max_moves = kick_mode ? kick_moves : mutations;
         for (;;) {
           int src = -1;
           int dst = -1;
@@ -2577,11 +2587,13 @@ int main(int argc, char **argv) {
           if (src >= 0 && src < seg_count) touched[src] = 1;
           if (dst >= 0 && dst < seg_count) touched[dst] = 1;
           touched_any = 1;
-          if (move_count >= mutations) {
+          if (move_count >= max_moves) {
             break;
           }
-          if (((double)rand() / (double)RAND_MAX) >= mut_prob) {
-            break;
+          if (!kick_mode) {
+            if (((double)rand() / (double)RAND_MAX) >= mut_prob) {
+              break;
+            }
           }
         }
         free(touched);
@@ -2738,10 +2750,29 @@ int main(int argc, char **argv) {
         fflush(csv);
       }
 
+      int accept = 0;
+      int accepted_worse = 0;
       if (base_total < 0.0 || (trial_total >= 0.0 && trial_total < base_total)) {
-        printf("Hillclimb iter %d accepted. (mut_prob=%.3f tau=%.4f)\n",
-               it + 1, mut_prob, tau_scale);
-        success = 1;
+        accept = 1;
+      } else if (trial_total >= 0.0 && base_total >= 0.0 && sa_temp > 1e-9) {
+        double delta = trial_total - base_total;
+        double p = exp(-delta / sa_temp);
+        double r = (double)rand() / (double)RAND_MAX;
+        if (r < p) {
+          accept = 1;
+          accepted_worse = 1;
+        }
+      }
+
+      if (accept) {
+        if (accepted_worse) {
+          printf("Hillclimb iter %d accepted worse. (mut_prob=%.3f tau=%.4f sa=%.3f)\n",
+                 it + 1, mut_prob, tau_scale, sa_temp);
+        } else {
+          printf("Hillclimb iter %d accepted. (mut_prob=%.3f tau=%.4f)\n",
+                 it + 1, mut_prob, tau_scale);
+          success = 1;
+        }
         free_segment_eval(seg_eval, nseg);
         seg_eval = trial_eval;
         free(visits);
@@ -2759,6 +2790,25 @@ int main(int argc, char **argv) {
         free_segment_eval(trial_eval, nseg2);
         free(trial_tour);
         free(visits_trial);
+      }
+
+      if (trial_total >= 0.0 && (best_total < 0.0 || trial_total < best_total)) {
+        best_total = trial_total;
+        free(best_tour);
+        best_tour = NULL;
+        best_tour_len = 0;
+        if (seg_tour && seg_tour_len > 0) {
+          best_tour = (int*)xmalloc((size_t)seg_tour_len * sizeof(int));
+          memcpy(best_tour, seg_tour, (size_t)seg_tour_len * sizeof(int));
+          best_tour_len = seg_tour_len;
+        }
+        stagnation = 0;
+      } else {
+        stagnation++;
+      }
+
+      if (sa_temp > 1e-9) {
+        sa_temp *= sa_decay;
       }
 
 ADAPT:
@@ -2791,6 +2841,18 @@ ADAPT:
     double hc_secs = (double)(clock() - hc_start) / (double)CLOCKS_PER_SEC;
     double mean_secs = (iter_done > 0) ? (hc_secs / (double)iter_done) : 0.0;
     printf("Hillclimb time: total=%.3f sec, mean=%.3f sec/iter\n", hc_secs, mean_secs);
+  }
+
+  if (best_tour) {
+    if (base_total < 0.0 || (best_total >= 0.0 && best_total < base_total)) {
+      free(seg_tour);
+      seg_tour = best_tour;
+      seg_tour_len = best_tour_len;
+      base_total = best_total;
+      use_segment_plot = (seg_tour && seg_tour_len > 0);
+    } else {
+      free(best_tour);
+    }
   }
 
   printf("SelectedSize=%d  Size=%d\n", ex.SelectedSize, ex.Size);
