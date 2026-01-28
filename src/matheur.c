@@ -721,6 +721,31 @@ static SegmentEval eval_one_segment(GRBenv *env, const ExData *ex,
   return eval;
 }
 
+static Visit *build_visits_from_tour(const int *tour, int tour_len,
+                                     const ExData *ex, int *out_n) {
+  if (!tour || tour_len <= 0) { *out_n = 0; return NULL; }
+  int cap = tour_len;
+  int n = 0;
+  Visit *visits = (Visit*)xmalloc((size_t)cap * sizeof(Visit));
+  for (int i = 0; i < tour_len; i++) {
+    int idx = tour[i];
+    if (idx == 0) continue;
+    int k = abs(idx);
+    if (k <= 0 || k >= ex->SelectedSize) continue;
+    if (ex->Type[k] == tSTAT) {
+      visits[n].type = tSTAT;
+      visits[n].ex_idx = k;
+      n++;
+    } else if (ex->Type[k] == tPORT) {
+      visits[n].type = tPORT;
+      visits[n].ex_idx = k;
+      n++;
+    }
+  }
+  *out_n = n;
+  return visits;
+}
+
 static int *build_tour_from_eval(const SegmentEval *evals, int nseg, int *out_len);
 
 static int evaluate_visits(const Visit *visits, int n_visits, const ExData *ex,
@@ -790,6 +815,166 @@ static int evaluate_visits(const Visit *visits, int n_visits, const ExData *ex,
   if (out_tour_len) *out_tour_len = trial_tour_len;
   if (out_total) *out_total = trial_total;
   return valid;
+}
+
+static int optimize_port_boundaries(Visit **visits_io, int *n_visits_io,
+                                    const ExData *ex, const double *dist, int Size,
+                                    double ship_cap, double timelimit,
+                                    int max_iters) {
+  if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
+  int improved_any = 0;
+  if (ship_cap <= 0.0) ship_cap = 1e300;
+
+  GRBenv *env = NULL;
+  if (GRBloadenv(&env, NULL) != 0) return 0;
+  GRBsetintparam(env, "OutputFlag", 0);
+  GRBsetintparam(env, "LogToConsole", 0);
+
+  for (int it = 0; it < max_iters; it++) {
+    Visit *visits = *visits_io;
+    int n_visits = *n_visits_io;
+    int port_count = 0;
+    for (int i = 0; i < n_visits; i++) if (visits[i].type == tPORT) port_count++;
+    if (port_count == 0) break;
+
+    int *port_pos = (int*)xmalloc((size_t)port_count * sizeof(int));
+    int p = 0;
+    for (int i = 0; i < n_visits; i++) {
+      if (visits[i].type == tPORT) port_pos[p++] = i;
+    }
+
+    int improved = 0;
+    for (int b = 0; b < port_count; b++) {
+      int boundary_idx = port_pos[b];
+      int prev_port_idx = (b == 0) ? -1 : port_pos[b - 1];
+      int next_port_idx = (b + 1 < port_count) ? port_pos[b + 1] : -1;
+      int start_idx = prev_port_idx + 1;
+      int end_idx_excl = (next_port_idx >= 0) ? (next_port_idx + 1) : n_visits;
+
+      int n_total = 0;
+      int k0 = 0;
+      for (int i = start_idx; i < end_idx_excl; i++) {
+        if (visits[i].type == tSTAT) {
+          if (i < boundary_idx) k0++;
+          n_total++;
+        }
+      }
+      if (n_total < 2 || k0 <= 0 || k0 >= n_total) continue;
+
+      int *stations = (int*)xmalloc((size_t)n_total * sizeof(int));
+      int pos = 0;
+      for (int i = start_idx; i < end_idx_excl; i++) {
+        if (visits[i].type != tSTAT) continue;
+        stations[pos++] = visits[i].ex_idx;
+      }
+
+      double *prefix = (double*)xmalloc((size_t)(n_total + 1) * sizeof(double));
+      prefix[0] = 0.0;
+      for (int i = 0; i < n_total; i++) {
+        prefix[i + 1] = prefix[i] + ex->Amount[stations[i]];
+      }
+
+      double start_rad[2];
+      double port_rad[2];
+      double end_rad[2];
+      if (prev_port_idx < 0) {
+        start_rad[0] = ex->LatLonRad[0];
+        start_rad[1] = ex->LatLonRad[1];
+      } else {
+        int prev_ex = visits[prev_port_idx].ex_idx;
+        start_rad[0] = ex->LatLonRad[prev_ex * 4 + 0];
+        start_rad[1] = ex->LatLonRad[prev_ex * 4 + 1];
+      }
+      int port_ex = visits[boundary_idx].ex_idx;
+      port_rad[0] = ex->LatLonRad[port_ex * 4 + 0];
+      port_rad[1] = ex->LatLonRad[port_ex * 4 + 1];
+      if (next_port_idx < 0) {
+        end_rad[0] = ex->LatLonRad[2];
+        end_rad[1] = ex->LatLonRad[3];
+      } else {
+        int next_ex = visits[next_port_idx].ex_idx;
+        end_rad[0] = ex->LatLonRad[next_ex * 4 + 0];
+        end_rad[1] = ex->LatLonRad[next_ex * 4 + 1];
+      }
+
+      double current_sum = 1e300;
+      {
+        double d0 = 0.0, d1 = 0.0;
+        if (solve_segment_distance(env, ex, stations, k0, start_rad, port_rad,
+                                   timelimit, &d0, NULL, NULL) == 0 &&
+            solve_segment_distance(env, ex, stations + k0, n_total - k0, port_rad, end_rad,
+                                   timelimit, &d1, NULL, NULL) == 0 &&
+            d0 >= 0.0 && d1 >= 0.0) {
+          current_sum = d0 + d1;
+        }
+      }
+
+      double best_sum = current_sum;
+      int best_k = k0;
+      for (int k = 1; k < n_total; k++) {
+        double load_left = prefix[k];
+        double load_right = prefix[n_total] - prefix[k];
+        if (load_left > ship_cap || load_right > ship_cap) continue;
+        double d0 = 0.0, d1 = 0.0;
+        if (solve_segment_distance(env, ex, stations, k, start_rad, port_rad,
+                                   timelimit, &d0, NULL, NULL) != 0) continue;
+        if (solve_segment_distance(env, ex, stations + k, n_total - k, port_rad, end_rad,
+                                   timelimit, &d1, NULL, NULL) != 0) continue;
+        if (d0 < 0.0 || d1 < 0.0) continue;
+        double sum = d0 + d1;
+        if (sum + 1e-9 < best_sum) {
+          best_sum = sum;
+          best_k = k;
+        }
+      }
+
+      if (best_k != k0 && best_sum + 1e-9 < current_sum) {
+        int has_next_port = (next_port_idx >= 0);
+        int slice_len = end_idx_excl - start_idx;
+        int expected_len = n_total + 1 + (has_next_port ? 1 : 0);
+        if (slice_len == expected_len) {
+          Visit *tmp = (Visit*)xmalloc((size_t)slice_len * sizeof(Visit));
+          int out = 0;
+          for (int i = 0; i < best_k; i++) {
+            tmp[out].type = tSTAT;
+            tmp[out].ex_idx = stations[i];
+            out++;
+          }
+          tmp[out].type = tPORT;
+          tmp[out].ex_idx = port_ex;
+          out++;
+          for (int i = best_k; i < n_total; i++) {
+            tmp[out].type = tSTAT;
+            tmp[out].ex_idx = stations[i];
+            out++;
+          }
+          if (has_next_port) {
+            tmp[out].type = tPORT;
+            tmp[out].ex_idx = visits[next_port_idx].ex_idx;
+            out++;
+          }
+          memcpy(&visits[start_idx], tmp, (size_t)slice_len * sizeof(Visit));
+          free(tmp);
+          printf("Boundary opt iter %d: PORT-%d split %d->%d (%.3f -> %.3f)\n",
+                 it + 1, port_ex, k0, best_k, current_sum, best_sum);
+          improved = 1;
+        }
+      }
+
+      free(prefix);
+      free(stations);
+    }
+
+    free(port_pos);
+    if (!improved) {
+      printf("Boundary opt iter %d: no improvement\n", it + 1);
+      break;
+    }
+    improved_any = 1;
+  }
+
+  GRBfreeenv(env);
+  return improved_any;
 }
 
 static int *build_tour_from_eval(const SegmentEval *evals, int nseg, int *out_len) {
@@ -2516,6 +2701,49 @@ int main(int argc, char **argv) {
     memcpy(best_tour, seg_tour, (size_t)seg_tour_len * sizeof(int));
     best_tour_len = seg_tour_len;
   }
+
+  if (seg_tour && seg_tour_len > 0) {
+    int port_opt_iters = 5;
+    int n_visits_opt = 0;
+    Visit *visits_opt = build_visits_from_tour(seg_tour, seg_tour_len, &ex, &n_visits_opt);
+    if (visits_opt) {
+      if (optimize_port_boundaries(&visits_opt, &n_visits_opt, &ex, dist, Size,
+                                   ShipCap, timelimit, port_opt_iters)) {
+        SegmentEval *opt_eval = NULL;
+        int opt_nseg = 0;
+        int *opt_tour = NULL;
+        int opt_tour_len = 0;
+        double opt_total = -1.0;
+        int opt_valid = evaluate_visits(visits_opt, n_visits_opt, &ex, NULL, 0,
+                                        timelimit, dist, Size,
+                                        &opt_eval, &opt_nseg, &opt_tour, &opt_tour_len,
+                                        &opt_total);
+        if (opt_valid && opt_total >= 0.0 && (base_total < 0.0 || opt_total < base_total)) {
+          free_segment_eval(seg_eval, nseg);
+          seg_eval = opt_eval;
+          free(visits);
+          visits = visits_opt;
+          n_visits = n_visits_opt;
+          nseg = opt_nseg;
+          base_total = opt_total;
+          free(seg_tour);
+          seg_tour = opt_tour;
+          seg_tour_len = opt_tour_len;
+          use_segment_plot = (seg_tour && seg_tour_len > 0);
+          printf("Boundary opt accepted: total=%.3f\n", base_total);
+        } else {
+          free_segment_eval(opt_eval, opt_nseg);
+          free(opt_tour);
+          free(visits_opt);
+          if (opt_total >= 0.0) {
+            printf("Boundary opt no improvement: total=%.3f\n", opt_total);
+          }
+        }
+      } else {
+        free(visits_opt);
+      }
+    }
+  }
   if (iterations > 0) {
     clock_t hc_start = clock();
     int iter_done = 0;
@@ -2528,11 +2756,6 @@ int main(int argc, char **argv) {
     const int restart_limit = 3;
     const double port_swap_prob = 0.15;
     const double port_merge_prob = 0.10;
-    const int kick_interval = 50;
-    const int kick_moves = 4;
-    double sa_temp = 50.0;
-    const double sa_decay = 0.995;
-    int stagnation = 0;
     for (int it = 0; it < iterations; it++) {
       iter_done++;
       int success = 0;
@@ -2564,8 +2787,7 @@ int main(int argc, char **argv) {
         moved_any = 0;
         station_moved_any = 0;
         move_count = 0;
-        int kick_mode = (stagnation >= kick_interval);
-        int max_moves = kick_mode ? kick_moves : mutations;
+        int max_moves = mutations;
         for (;;) {
           int src = -1;
           int dst = -1;
@@ -2590,10 +2812,8 @@ int main(int argc, char **argv) {
           if (move_count >= max_moves) {
             break;
           }
-          if (!kick_mode) {
-            if (((double)rand() / (double)RAND_MAX) >= mut_prob) {
-              break;
-            }
+          if (((double)rand() / (double)RAND_MAX) >= mut_prob) {
+            break;
           }
         }
         free(touched);
@@ -2750,29 +2970,10 @@ int main(int argc, char **argv) {
         fflush(csv);
       }
 
-      int accept = 0;
-      int accepted_worse = 0;
       if (base_total < 0.0 || (trial_total >= 0.0 && trial_total < base_total)) {
-        accept = 1;
-      } else if (trial_total >= 0.0 && base_total >= 0.0 && sa_temp > 1e-9) {
-        double delta = trial_total - base_total;
-        double p = exp(-delta / sa_temp);
-        double r = (double)rand() / (double)RAND_MAX;
-        if (r < p) {
-          accept = 1;
-          accepted_worse = 1;
-        }
-      }
-
-      if (accept) {
-        if (accepted_worse) {
-          printf("Hillclimb iter %d accepted worse. (mut_prob=%.3f tau=%.4f sa=%.3f)\n",
-                 it + 1, mut_prob, tau_scale, sa_temp);
-        } else {
-          printf("Hillclimb iter %d accepted. (mut_prob=%.3f tau=%.4f)\n",
-                 it + 1, mut_prob, tau_scale);
-          success = 1;
-        }
+        printf("Hillclimb iter %d accepted. (mut_prob=%.3f tau=%.4f)\n",
+               it + 1, mut_prob, tau_scale);
+        success = 1;
         free_segment_eval(seg_eval, nseg);
         seg_eval = trial_eval;
         free(visits);
@@ -2802,13 +3003,6 @@ int main(int argc, char **argv) {
           memcpy(best_tour, seg_tour, (size_t)seg_tour_len * sizeof(int));
           best_tour_len = seg_tour_len;
         }
-        stagnation = 0;
-      } else {
-        stagnation++;
-      }
-
-      if (sa_temp > 1e-9) {
-        sa_temp *= sa_decay;
       }
 
 ADAPT:
