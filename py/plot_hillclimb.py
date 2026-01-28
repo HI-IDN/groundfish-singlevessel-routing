@@ -87,14 +87,13 @@ def main():
     amount_cols = data[:, 3::3]
     outlier_threshold = 100000.0
     outlier_mask = dist_cols > outlier_threshold
+    invalid_mask = dist_cols <= 0.0
     dist_cols_plot = dist_cols.copy()
-    dist_cols_plot[outlier_mask] = np.nan
-    outlier_rows = np.any(outlier_mask, axis=1)
-    total_dist = np.nansum(dist_cols, axis=1)
-    all_nan = np.all(np.isnan(dist_cols), axis=1)
-    total_dist[all_nan] = np.nan
-    total_dist_plot = total_dist.copy()
-    total_dist_plot[outlier_rows] = np.nan
+    dist_cols_plot[outlier_mask | invalid_mask] = np.nan
+    outlier_rows = np.any(outlier_mask | invalid_mask, axis=1)
+    total_dist_plot = np.nansum(dist_cols_plot, axis=1)
+    all_nan = np.all(np.isnan(dist_cols_plot), axis=1)
+    total_dist_plot[all_nan] = np.nan
 
     if args.smooth == "median":
         smoother = smooth_series_median

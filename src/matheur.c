@@ -2756,8 +2756,8 @@ int main(int argc, char **argv) {
     const int restart_limit = 3;
     const double port_swap_prob = 0.15;
     const double port_merge_prob = 0.10;
-    for (int it = 0; it < iterations; it++) {
-      iter_done++;
+    int it = 0;
+    while (it < iterations) {
       int success = 0;
       Visit *visits_trial = NULL;
       int n_visits_trial = n_visits;
@@ -2827,18 +2827,8 @@ int main(int argc, char **argv) {
       }
       if (!moved_any) {
         printf("Hillclimb iter %d: no feasible move found.\n", it + 1);
-        if (csv) {
-          fprintf(csv, "%d", attempts);
-          if (nseg_max > 0) fputc(',', csv);
-          for (int s = 0; s < nseg_max; s++) {
-            fprintf(csv, "-1.000,0,0");
-            if (s + 1 < nseg_max) fputc(',', csv);
-          }
-          fputc('\n', csv);
-          fflush(csv);
-        }
         free(visits_trial);
-        goto ADAPT;
+        continue;
       }
 
       SegmentEval *trial_eval = NULL;
@@ -3005,7 +2995,8 @@ int main(int argc, char **argv) {
         }
       }
 
-ADAPT:
+      it++;
+      iter_done++;
       window_count++;
       success_count += success;
       if (window_count >= adapt_window) {
