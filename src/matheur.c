@@ -977,6 +977,139 @@ static int optimize_port_boundaries(Visit **visits_io, int *n_visits_io,
   return improved_any;
 }
 
+static int merge_segments_greedy(Visit **visits_io, int *n_visits_io,
+                                 const ExData *ex, double ship_cap,
+                                 double timelimit) {
+  if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
+  if (ship_cap <= 0.0) ship_cap = 1e300;
+
+  GRBenv *env = NULL;
+  if (GRBloadenv(&env, NULL) != 0) return 0;
+  GRBsetintparam(env, "OutputFlag", 0);
+  GRBsetintparam(env, "LogToConsole", 0);
+
+  int merged_any = 0;
+  for (;;) {
+    Visit *visits = *visits_io;
+    int n_visits = *n_visits_io;
+    int port_count = 0;
+    for (int i = 0; i < n_visits; i++) if (visits[i].type == tPORT) port_count++;
+    if (port_count == 0) break;
+
+    int *port_pos = (int*)xmalloc((size_t)port_count * sizeof(int));
+    int p = 0;
+    for (int i = 0; i < n_visits; i++) {
+      if (visits[i].type == tPORT) port_pos[p++] = i;
+    }
+
+    int merged_this_pass = 0;
+    for (int b = 0; b < port_count; b++) {
+      int boundary_idx = port_pos[b];
+      int prev_port_idx = (b == 0) ? -1 : port_pos[b - 1];
+      int next_port_idx = (b + 1 < port_count) ? port_pos[b + 1] : -1;
+      int start_idx = prev_port_idx + 1;
+      int end_idx_excl = (next_port_idx >= 0) ? (next_port_idx + 1) : n_visits;
+
+      int n_total = 0;
+      int k0 = 0;
+      for (int i = start_idx; i < end_idx_excl; i++) {
+        if (visits[i].type == tSTAT) {
+          if (i < boundary_idx) k0++;
+          n_total++;
+        }
+      }
+      if (n_total == 0) continue;
+
+      int *stations = (int*)xmalloc((size_t)n_total * sizeof(int));
+      int pos = 0;
+      for (int i = start_idx; i < end_idx_excl; i++) {
+        if (visits[i].type != tSTAT) continue;
+        stations[pos++] = visits[i].ex_idx;
+      }
+
+      double *prefix = (double*)xmalloc((size_t)(n_total + 1) * sizeof(double));
+      prefix[0] = 0.0;
+      for (int i = 0; i < n_total; i++) {
+        prefix[i + 1] = prefix[i] + ex->Amount[stations[i]];
+      }
+      double load_left = prefix[k0];
+      double load_right = prefix[n_total] - prefix[k0];
+      double load_total = prefix[n_total];
+      int can_merge = (load_total <= ship_cap);
+
+      double start_rad[2];
+      double port_rad[2];
+      double end_rad[2];
+      if (prev_port_idx < 0) {
+        start_rad[0] = ex->LatLonRad[0];
+        start_rad[1] = ex->LatLonRad[1];
+      } else {
+        int prev_ex = visits[prev_port_idx].ex_idx;
+        start_rad[0] = ex->LatLonRad[prev_ex * 4 + 0];
+        start_rad[1] = ex->LatLonRad[prev_ex * 4 + 1];
+      }
+      int port_ex = visits[boundary_idx].ex_idx;
+      port_rad[0] = ex->LatLonRad[port_ex * 4 + 0];
+      port_rad[1] = ex->LatLonRad[port_ex * 4 + 1];
+      if (next_port_idx < 0) {
+        end_rad[0] = ex->LatLonRad[2];
+        end_rad[1] = ex->LatLonRad[3];
+      } else {
+        int next_ex = visits[next_port_idx].ex_idx;
+        end_rad[0] = ex->LatLonRad[next_ex * 4 + 0];
+        end_rad[1] = ex->LatLonRad[next_ex * 4 + 1];
+      }
+
+      int do_merge = 0;
+      double sep_sum = 1e300;
+      double merged_dist = 1e300;
+      if (can_merge) {
+        if (k0 == 0 || k0 == n_total) {
+          do_merge = 1;
+        } else {
+          double d0 = 0.0, d1 = 0.0, dmerge = 0.0;
+          if (solve_segment_distance(env, ex, stations, k0, start_rad, port_rad,
+                                     timelimit, &d0, NULL, NULL) == 0 &&
+              solve_segment_distance(env, ex, stations + k0, n_total - k0, port_rad, end_rad,
+                                     timelimit, &d1, NULL, NULL) == 0 &&
+              solve_segment_distance(env, ex, stations, n_total, start_rad, end_rad,
+                                     timelimit, &dmerge, NULL, NULL) == 0 &&
+              d0 >= 0.0 && d1 >= 0.0 && dmerge >= 0.0) {
+            sep_sum = d0 + d1;
+            merged_dist = dmerge;
+            if (dmerge + 1e-9 < sep_sum) do_merge = 1;
+          }
+        }
+      }
+
+      if (do_merge) {
+        memmove(&visits[boundary_idx], &visits[boundary_idx + 1],
+                (size_t)(n_visits - boundary_idx - 1) * sizeof(Visit));
+        (*n_visits_io)--;
+        if (merged_dist < 1e299) {
+          printf("Merge pass: removed PORT-%d (%.3f -> %.3f, load=%.0f)\n",
+                 port_ex, sep_sum, merged_dist, load_total);
+        } else {
+          printf("Merge pass: removed PORT-%d (load=%.0f)\n", port_ex, load_total);
+        }
+        merged_any = 1;
+        merged_this_pass = 1;
+      }
+
+      free(prefix);
+      free(stations);
+
+      if (merged_this_pass) break;
+    }
+
+    free(port_pos);
+    if (!merged_this_pass) break;
+  }
+
+  GRBfreeenv(env);
+  return merged_any;
+}
+
 static int *build_tour_from_eval(const SegmentEval *evals, int nseg, int *out_len) {
   int cap = 1;
   for (int i = 0; i < nseg; i++) cap += evals[i].order_len + 1;
@@ -2180,16 +2313,15 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
   Visit *visits = (Visit*)xmalloc((size_t)cap * sizeof(Visit));
   double load = 0.0;
   int last_stat = -1;
-  int remaining_segments = max_segments;
 
   if (ship_cap <= 0.0) ship_cap = 1.0;
-  if (remaining_segments < 1) remaining_segments = 1;
+  if (max_segments < 1) max_segments = 1;
 
   for (int i = 0; i < n_station; i++) {
     int st = station_order[i];
     double amt = ex->Amount[st];
 
-    if (load > 0.0 && load + amt > ship_cap && remaining_segments > 1) {
+    if (load > 0.0 && load + amt > ship_cap) {
       double best_dist = 0.0;
       int port_ex = closest_port_ex(ex, full_dist, full_m, last_stat, &best_dist);
       if (port_ex >= 0) {
@@ -2201,16 +2333,11 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
         printf("Insert port before STAT-%d: PORT-%d", st, port_ex);
         if (pt->Name) printf("(%s)", pt->Name);
         printf(" load=%.0f dist=%.3f\n", load, best_dist);
-        if (remaining_segments > 1) remaining_segments--;
         load = 0.0;
         last_stat = -1;
       } else {
         printf("Insert port: none available before STAT-%d (load=%.0f)\n", st, load);
       }
-    }
-    if (load > 0.0 && load + amt > ship_cap && remaining_segments <= 1) {
-      printf("Init warning: segment limit reached; load %.0f + next %.0f exceeds ship cap %.0f\n",
-             load, amt, ship_cap);
     }
 
     if (n == cap) { cap *= 2; visits = (Visit*)realloc(visits, (size_t)cap * sizeof(Visit)); if(!visits) die("OOM"); }
@@ -2224,7 +2351,7 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
       printf("Warning: STAT-%d amount=%.0f exceeds ship capacity %.0f\n", st, amt, ship_cap);
     }
 
-    if (load >= ship_cap && remaining_segments > 1) {
+    if (load >= ship_cap && i + 1 < n_station) {
       double best_dist = 0.0;
       int port_ex = closest_port_ex(ex, full_dist, full_m, st, &best_dist);
       if (port_ex < 0) {
@@ -2239,13 +2366,8 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
       printf("Insert port after STAT-%d: PORT-%d", st, port_ex);
       if (pt->Name) printf("(%s)", pt->Name);
       printf(" load=%.0f dist=%.3f\n", load, best_dist);
-      if (remaining_segments > 1) remaining_segments--;
       load = 0.0;
       last_stat = -1;
-    }
-    if (load >= ship_cap && remaining_segments <= 1) {
-      printf("Init warning: last segment load %.0f exceeds ship cap %.0f\n",
-             load, ship_cap);
     }
   }
 
@@ -2605,7 +2727,7 @@ int main(int argc, char **argv) {
     init_segments = (int)ceil(total_amount / ShipCap);
     if (init_segments < 1) init_segments = 1;
   }
-  printf("Init segments limit: %d (total=%.1f, ship_cap=%.1f)\n",
+  printf("Init segments min: %d (total=%.1f, ship_cap=%.1f)\n",
          init_segments, total_amount, ShipCap);
 
   int n_visits = 0;
@@ -2613,6 +2735,16 @@ int main(int argc, char **argv) {
                                         station_order, n_station,
                                         init_segments, ShipCap, &n_visits);
   free(station_order);
+  int init_built = count_segments(visits, n_visits);
+  printf("Init segments built: %d (min=%d)\n", init_built, init_segments);
+  if (init_built > init_segments) {
+    printf("Init note: extra segments added to respect ship capacity.\n");
+  }
+
+  if (merge_segments_greedy(&visits, &n_visits, &ex, ShipCap, timelimit)) {
+    int merged_count = count_segments(visits, n_visits);
+    printf("Init merge pass: segments=%d (min=%d)\n", merged_count, init_segments);
+  }
 
   print_visit_list(&ex, &items, visits, n_visits);
   print_segment_plan(&ex, &items, visits, n_visits);
@@ -2829,6 +2961,10 @@ int main(int argc, char **argv) {
         printf("Hillclimb iter %d: no feasible move found.\n", it + 1);
         free(visits_trial);
         continue;
+      }
+
+      if (merge_segments_greedy(&visits_trial, &n_visits_trial, &ex, ShipCap, timelimit)) {
+        printf("Merge pass applied before evaluation.\n");
       }
 
       SegmentEval *trial_eval = NULL;

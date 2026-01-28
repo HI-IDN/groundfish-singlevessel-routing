@@ -242,6 +242,8 @@ def main():
     ap.add_argument("--recompute", action="store_true",
                     help="Recompute Dist/Fsble with DistanceLink instead of using stored matrices")
     ap.add_argument("--save", help="Write the plot to this file instead of showing it")
+    ap.add_argument("--ship-cap", type=float,
+                    help="Ship capacity for segment legend (e.g., 45000)")
     ap.add_argument("--tikz", action="store_true", help="Print TikZ code to stdout")
     ap.add_argument("--tikz-out", help="Write TikZ code to this file")
     args = ap.parse_args()
@@ -287,7 +289,17 @@ def main():
     for i, (start, end, stations, dist, amount) in enumerate(stats, 1):
         print(f"Segment {i}: {start} -> {end} | stations={stations} distance={dist:.3f} amount={amount:.0f}")
 
+    legend_labels = None
+    if args.ship_cap is not None and args.ship_cap > 0:
+        legend_labels = []
+        for i, (_start, _end, _stations, _dist, amount) in enumerate(stats, 1):
+            label = f"Seg {i}: {amount:.0f}/{args.ship_cap:.0f}"
+            if amount > args.ship_cap:
+                label += " OVER"
+            legend_labels.append(label)
+
     drawTour(letour, LatLonRad, Type, Amount, DistMtrx, FsbleMtrx,
+             legend_labels=legend_labels,
              save_path=args.save, show=not bool(args.save), title=title)
     if args.tikz or args.tikz_out:
         tikz_code = drawTour_tikz(letour, LatLonRad, Type, Amount, DistMtrx, FsbleMtrx,

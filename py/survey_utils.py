@@ -111,7 +111,7 @@ def Dijkstra_(graph, src, dest):
     return (d.item(),path)
 
 def drawTour(tour, LatLonRad, Type, Amount, DistMtrx, FsbleMtrx,
-             save_path=None, show=True, title=None):
+             save_path=None, show=True, title=None, legend_labels=None):
     
     seg_count = 1
     for idx in tour[1:]:
@@ -271,8 +271,18 @@ def drawTour(tour, LatLonRad, Type, Amount, DistMtrx, FsbleMtrx,
         else:
             ax.plot([x1[0],x_end[0]],[y1[0],y_end[0]],color=colors[c_tour],linestyle='dotted', linewidth=0.6)
     if save_path:
+        if legend_labels:
+            from matplotlib.patches import Patch
+            seg_count = min(len(legend_labels), len(colors))
+            handles = [Patch(color=colors[i], label=legend_labels[i]) for i in range(seg_count)]
+            ax.legend(handles=handles, loc="upper right", fontsize=8, frameon=True)
         plt.savefig(save_path, dpi=200, bbox_inches="tight")
     if show:
+        if legend_labels:
+            from matplotlib.patches import Patch
+            seg_count = min(len(legend_labels), len(colors))
+            handles = [Patch(color=colors[i], label=legend_labels[i]) for i in range(seg_count)]
+            ax.legend(handles=handles, loc="upper right", fontsize=8, frameon=True)
         plt.show()
     else:
         plt.close(fig)
