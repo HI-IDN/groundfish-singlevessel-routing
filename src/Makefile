@@ -1,4 +1,4 @@
-.PHONY: all demo demo_scip cap matheur utils clean
+.PHONY: all demo demo_scip cap matheur matcapheur utils clean
 
 CC ?= clang
 
@@ -42,7 +42,7 @@ SCIP_FLAGS = -I$(SCIP_HOME)/include -L$(SCIP_HOME)/lib -lscip
 endif
 
 # -------- Targets --------
-all: demo demo_scip cap matheur utils
+all: demo demo_scip cap matheur matcapheur utils
 
 demo: main.c utils
 	mkdir -p $(BIN_DIR)
@@ -60,10 +60,14 @@ matheur: matheur.c utils
 	mkdir -p $(BIN_DIR)
 	$(CC) matheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matheur
 
+matcapheur: matcapheur.c utils
+	mkdir -p $(BIN_DIR)
+	$(CC) matcapheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapheur
+
 utils: utils.c
 	mkdir -p $(LIB_DIR)
 	$(CC) -O3 -fPIC -shared utils.c -lm -o $(UTILS_SO)
 
 clean:
-	rm -f $(BIN_DIR)/demo $(BIN_DIR)/demo_scip $(BIN_DIR)/cap $(BIN_DIR)/matheur \
+	rm -f $(BIN_DIR)/demo $(BIN_DIR)/demo_scip $(BIN_DIR)/cap $(BIN_DIR)/matheur $(BIN_DIR)/matcapheur \
 	      $(LIB_DIR)/libutils.so $(LIB_DIR)/libutils.dylib
