@@ -1124,6 +1124,20 @@ static int *build_tour_from_eval(const SegmentEval *evals, int nseg, int *out_le
   return tour;
 }
 
+static void move_visit(Visit *visits, int n_visits, int from_idx, int to_idx) {
+  if (from_idx == to_idx) return;
+  Visit v = visits[from_idx];
+  if (from_idx < to_idx) {
+    memmove(&visits[from_idx], &visits[from_idx + 1],
+            (size_t)(to_idx - from_idx) * sizeof(Visit));
+    visits[to_idx] = v;
+  } else {
+    memmove(&visits[to_idx + 1], &visits[to_idx],
+            (size_t)(from_idx - to_idx) * sizeof(Visit));
+    visits[to_idx] = v;
+  }
+}
+
 static double min_pair_dist(const double *dist, int n, int a, int b) {
   int a0 = 2 * a;
   int a1 = 2 * a + 1;
@@ -1138,6 +1152,131 @@ static double min_pair_dist(const double *dist, int n, int a, int b) {
   if (dist[b1*n + a0] < d) d = dist[b1*n + a0];
   if (dist[b1*n + a1] < d) d = dist[b1*n + a1];
   return d;
+}
+
+static int port_adjacent_cleanup(Visit *visits, int n_visits, const ExData *ex,
+                                 const double *dist, int Size, double ship_cap) {
+  if (!visits || n_visits <= 0) return 0;
+  if (ship_cap <= 0.0) ship_cap = 1e300;
+
+  int port_count = 0;
+  for (int i = 0; i < n_visits; i++) if (visits[i].type == tPORT) port_count++;
+  if (port_count == 0) return 0;
+
+  int *port_pos = (int*)xmalloc((size_t)port_count * sizeof(int));
+  int p = 0;
+  for (int i = 0; i < n_visits; i++) {
+    if (visits[i].type == tPORT) port_pos[p++] = i;
+  }
+
+  double best_improve = 0.0;
+  int best_from = -1;
+  int best_to = -1;
+  int best_port = -1;
+  const char *best_dir = NULL;
+  double eps = 1e-6;
+  int n = 2 * Size;
+
+  for (int b = 0; b < port_count; b++) {
+    int boundary_idx = port_pos[b];
+    int prev_port_idx = (b == 0) ? -1 : port_pos[b - 1];
+    int next_port_idx = (b + 1 < port_count) ? port_pos[b + 1] : -1;
+    int left_start = prev_port_idx + 1;
+    int left_end = boundary_idx - 1;
+    int right_start = boundary_idx + 1;
+    int right_end = (next_port_idx >= 0) ? (next_port_idx - 1) : (n_visits - 1);
+
+    int left_first = -1;
+    int left_last = -1;
+    int right_first = -1;
+    int left_count = 0;
+    int right_count = 0;
+    double load_left = 0.0;
+    double load_right = 0.0;
+
+    for (int i = left_start; i <= left_end; i++) {
+      if (i < 0 || i >= n_visits) continue;
+      if (visits[i].type != tSTAT) continue;
+      if (left_first < 0) left_first = i;
+      left_last = i;
+      left_count++;
+      load_left += ex->Amount[visits[i].ex_idx];
+    }
+    for (int i = right_start; i <= right_end; i++) {
+      if (i < 0 || i >= n_visits) continue;
+      if (visits[i].type != tSTAT) continue;
+      if (right_first < 0) right_first = i;
+      right_count++;
+      load_right += ex->Amount[visits[i].ex_idx];
+    }
+
+    if (left_count == 0 || right_count == 0) continue;
+
+    int port_ex = visits[boundary_idx].ex_idx;
+    double d_first_right = min_pair_dist(dist, n, port_ex, visits[right_first].ex_idx);
+    double d_last_left = min_pair_dist(dist, n, port_ex, visits[left_last].ex_idx);
+
+    int best_left_idx = -1;
+    double best_left_dist = 1e300;
+    for (int i = left_start; i <= left_end; i++) {
+      if (visits[i].type != tSTAT) continue;
+      double d = min_pair_dist(dist, n, port_ex, visits[i].ex_idx);
+      if (d < best_left_dist) {
+        best_left_dist = d;
+        best_left_idx = i;
+      }
+    }
+
+    int best_right_idx = -1;
+    double best_right_dist = 1e300;
+    for (int i = right_start; i <= right_end; i++) {
+      if (visits[i].type != tSTAT) continue;
+      double d = min_pair_dist(dist, n, port_ex, visits[i].ex_idx);
+      if (d < best_right_dist) {
+        best_right_dist = d;
+        best_right_idx = i;
+      }
+    }
+
+    if (best_left_idx >= 0 && left_count > 1) {
+      double amt = ex->Amount[visits[best_left_idx].ex_idx];
+      if (load_right + amt <= ship_cap) {
+        double improve = d_first_right - best_left_dist;
+        if (improve > best_improve + eps) {
+          best_improve = improve;
+          best_from = best_left_idx;
+          best_port = port_ex;
+          best_dir = "L->R";
+          best_to = (best_left_idx < boundary_idx) ? boundary_idx : boundary_idx + 1;
+        }
+      }
+    }
+
+    if (best_right_idx >= 0 && right_count > 1) {
+      double amt = ex->Amount[visits[best_right_idx].ex_idx];
+      if (load_left + amt <= ship_cap) {
+        double improve = d_last_left - best_right_dist;
+        if (improve > best_improve + eps) {
+          best_improve = improve;
+          best_from = best_right_idx;
+          best_port = port_ex;
+          best_dir = "R->L";
+          best_to = boundary_idx;
+        }
+      }
+    }
+  }
+
+  free(port_pos);
+
+  if (best_from >= 0 && best_to >= 0) {
+    int stat_ex = visits[best_from].ex_idx;
+    move_visit(visits, n_visits, best_from, best_to);
+    printf("Port cleanup: moved STAT-%d %s at PORT-%d (improve=%.3f)\n",
+           stat_ex, best_dir ? best_dir : "?", best_port, best_improve);
+    return 1;
+  }
+  return 0;
 }
 
 static int count_segments(const Visit *visits, int n_visits) {
@@ -2961,6 +3100,10 @@ int main(int argc, char **argv) {
         printf("Hillclimb iter %d: no feasible move found.\n", it + 1);
         free(visits_trial);
         continue;
+      }
+
+      if (port_adjacent_cleanup(visits_trial, n_visits_trial, &ex, dist, Size, ShipCap)) {
+        printf("Port cleanup applied before merge/eval.\n");
       }
 
       if (merge_segments_greedy(&visits_trial, &n_visits_trial, &ex, ShipCap, timelimit)) {
