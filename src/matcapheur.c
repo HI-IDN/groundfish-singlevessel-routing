@@ -1168,6 +1168,7 @@ static double min_pair_dist(const double *dist, int n, int a, int b) {
 static int solve_capacity_tour(const ExData *seg, const double *dist,
                                double ship_cap, double timelimit, int verbose,
                                int **out_tour, int *out_len, double *out_obj) {
+  (void)verbose;
   int n = 2 * seg->Size;
   GRBenv *env = NULL;
   GRBmodel *model = NULL;
@@ -1177,10 +1178,14 @@ static int solve_capacity_tour(const ExData *seg, const double *dist,
   error = GRBnewmodel(env, &model, "cap_segment", 0, NULL, NULL, NULL, NULL, NULL);
   if (error) goto QUIT;
 
-  GRBsetdblparam(env, "TimeLimit", timelimit);
+  if (timelimit > 0.0) {
+  if (timelimit > 0.0) {
+    GRBsetdblparam(env, "TimeLimit", timelimit);
+  }
+  }
   GRBsetintparam(env, "Threads", 4);
-  GRBsetintparam(env, "OutputFlag", verbose ? 1 : 0);
-  GRBsetintparam(env, "LogToConsole", verbose ? 1 : 0);
+  GRBsetintparam(env, "OutputFlag", 1);
+  GRBsetintparam(env, "LogToConsole", 1);
 
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
@@ -1378,6 +1383,8 @@ QUIT:
 static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
                                       const ExData *ex, double ship_cap,
                                       double timelimit, int left_seg) {
+  /* Solve a two-segment subproblem with the capacity MIP, keeping the boundary
+     port fixed and reassigning stations across the boundary. */
   if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
   if (left_seg < 0) return 0;
 
@@ -1512,9 +1519,7 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   int *node_tour = NULL;
   int node_len = 0;
   double obj = -1.0;
-  double cap_limit = timelimit;
-  if (cap_limit <= 0.0 || cap_limit > 120.0) cap_limit = 120.0;
-  int ok = solve_capacity_tour(&segex, dist, ship_cap, cap_limit, 0,
+  int ok = solve_capacity_tour(&segex, dist, ship_cap, timelimit, 1,
                                &node_tour, &node_len, &obj);
   if (!ok || !node_tour || node_len <= 0) {
     free(node_tour);
@@ -1537,27 +1542,55 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
     return 0;
   }
 
-  int new_count = 0;
-  Visit *new_vis = (Visit*)xmalloc((size_t)(n_visits + n_total + 4) * sizeof(Visit));
-  for (int i = 0; i < start_idx; i++) new_vis[new_count++] = visits[i];
-
+  int slice_len = end_idx_excl - start_idx;
+  Visit *slice = (Visit*)xmalloc((size_t)slice_len * sizeof(Visit));
+  int slice_n = 0;
   for (int i = 1; i < letour_len; i++) {
     int loc = abs(letour[i]);
     if (loc == 0) continue;
     int ex_idx = local_to_ex[loc];
     int typ = segex.Type[loc];
-    if (typ == tPORT) {
-      new_vis[new_count].type = tPORT;
-      new_vis[new_count].ex_idx = ex_idx;
-    } else {
-      new_vis[new_count].type = tSTAT;
-      new_vis[new_count].ex_idx = ex_idx;
-    }
-    new_count++;
+    slice[slice_n].type = (typ == tPORT) ? tPORT : tSTAT;
+    slice[slice_n].ex_idx = ex_idx;
+    slice_n++;
+  }
+  if (slice_n != slice_len) {
+    free(slice);
+    free(letour);
+    free(node_tour);
+    free(dist); free(fsb);
+    free_exdata(&segex);
+    free(local_to_ex);
+    free(stations);
+    return 0;
   }
 
+  int unchanged = 1;
+  for (int i = 0; i < slice_len; i++) {
+    if (visits[start_idx + i].type != slice[i].type ||
+        visits[start_idx + i].ex_idx != slice[i].ex_idx) {
+      unchanged = 0;
+      break;
+    }
+  }
+  if (unchanged) {
+    free(slice);
+    free(letour);
+    free(node_tour);
+    free(dist); free(fsb);
+    free_exdata(&segex);
+    free(local_to_ex);
+    free(stations);
+    return 0;
+  }
+
+  int new_count = 0;
+  Visit *new_vis = (Visit*)xmalloc((size_t)(n_visits + n_total + 4) * sizeof(Visit));
+  for (int i = 0; i < start_idx; i++) new_vis[new_count++] = visits[i];
+  for (int i = 0; i < slice_len; i++) new_vis[new_count++] = slice[i];
   for (int i = end_idx_excl; i < n_visits; i++) new_vis[new_count++] = visits[i];
 
+  free(slice);
   free(*visits_io);
   *visits_io = new_vis;
   *n_visits_io = new_count;
@@ -1571,6 +1604,43 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   free(local_to_ex);
   free(stations);
   return 1;
+}
+
+static int optimize_boundaries_until_stable(Visit **visits_io, int *n_visits_io,
+                                            const ExData *ex, double ship_cap,
+                                            double timelimit) {
+  /* Sequentially re-optimize each adjacent boundary with the capacity MIP.
+     Track dirty boundaries so we skip unchanged pairs, and stop after a full
+     sweep with no changes. */
+  if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
+  int port_count = count_segments(*visits_io, *n_visits_io) - 1;
+  if (port_count <= 0) return 0;
+
+  int *dirty = (int*)xcalloc((size_t)port_count, sizeof(int));
+  for (int i = 0; i < port_count; i++) dirty[i] = 1;
+
+  int any_change = 0;
+  int pass = 0;
+  for (;;) {
+    int changed = 0;
+    pass++;
+    printf("Capacity boundary sweep pass %d\n", pass);
+    for (int b = 0; b < port_count; b++) {
+      if (!dirty[b]) continue;
+      dirty[b] = 0;
+      if (optimize_boundary_capacity(visits_io, n_visits_io, ex, ship_cap, timelimit, b)) {
+        any_change = 1;
+        changed = 1;
+        dirty[b] = 1;
+        dirty[(b + port_count - 1) % port_count] = 1;
+        dirty[(b + 1) % port_count] = 1;
+      }
+    }
+    if (!changed) break;
+  }
+
+  free(dirty);
+  return any_change;
 }
 
 static int port_adjacent_cleanup(Visit *visits, int n_visits, const ExData *ex,
@@ -2609,7 +2679,9 @@ static int solve_tsp_distance(GRBenv *env, const double *dist, int Size,
   error = GRBnewmodel(env, &model, "segment", 0, NULL, NULL, NULL, NULL, NULL);
   if (error) goto QUIT;
 
-  GRBsetdblparam(env, "TimeLimit", timelimit);
+  if (timelimit > 0.0) {
+    GRBsetdblparam(env, "TimeLimit", timelimit);
+  }
   GRBsetintparam(env, "Threads", 4);
   GRBsetintparam(env, "OutputFlag", verbose ? 1 : 0);
   GRBsetintparam(env, "LogToConsole", verbose ? 1 : 0);
@@ -3129,18 +3201,13 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [timelimit_seconds] [--iters N] [--tau-scale S] [--mutations N] [--mut-prob P] [--write-dat <out.dat>] [--mip] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
     return 1;
   }
 
   const char *file = argv[1];
   int ship_id = atoi(argv[2]);
-  double timelimit = 3600.0;
-  int iterations = 0;
-  int run_mip = 0;
-  int mutations = 1;
-  double tau_scale = 0.5;
-  double mut_prob = 0.0;
+  double timelimit = 0.0;
   int verbose_init = 0;
   const char *write_dat = NULL;
   for (int i = 3; i < argc; i++) {
@@ -3153,58 +3220,20 @@ int main(int argc, char **argv) {
       } else {
         die("--write-dat requires a path");
       }
-    } else if (strcmp(argv[i], "--iters") == 0) {
+    } else if (strcmp(argv[i], "--time-limit") == 0) {
       if (i + 1 < argc) {
-        iterations = atoi(argv[i + 1]);
+        timelimit = atof(argv[i + 1]);
         i++;
       } else {
-        die("--iters requires a value");
+        die("--time-limit requires a value");
       }
-    } else if (strncmp(argv[i], "--iters=", 8) == 0) {
-      iterations = atoi(argv[i] + 8);
-    } else if (strcmp(argv[i], "--tau-scale") == 0) {
-      if (i + 1 < argc) {
-        tau_scale = atof(argv[i + 1]);
-        i++;
-      } else {
-        die("--tau-scale requires a value");
-      }
-    } else if (strncmp(argv[i], "--tau-scale=", 12) == 0) {
-      tau_scale = atof(argv[i] + 12);
-    } else if (strcmp(argv[i], "--mutations") == 0) {
-      if (i + 1 < argc) {
-        mutations = atoi(argv[i + 1]);
-        i++;
-      } else {
-        die("--mutations requires a value");
-      }
-    } else if (strncmp(argv[i], "--mutations=", 12) == 0) {
-      mutations = atoi(argv[i] + 12);
-    } else if (strcmp(argv[i], "--mut-prob") == 0) {
-      if (i + 1 < argc) {
-        mut_prob = atof(argv[i + 1]);
-        i++;
-      } else {
-        die("--mut-prob requires a value");
-      }
-    } else if (strncmp(argv[i], "--mut-prob=", 11) == 0) {
-      mut_prob = atof(argv[i] + 11);
-    } else if (strcmp(argv[i], "--mip") == 0) {
-      run_mip = 1;
+    } else if (strncmp(argv[i], "--time-limit=", 13) == 0) {
+      timelimit = atof(argv[i] + 13);
     } else if (strcmp(argv[i], "--verbose-init") == 0) {
       verbose_init = 1;
     } else {
       timelimit = atof(argv[i]);
     }
-  }
-  if (!isfinite(tau_scale) || tau_scale <= 0.0) {
-    die("--tau-scale must be > 0");
-  }
-  if (mutations < 1) {
-    die("--mutations must be >= 1");
-  }
-  if (!isfinite(mut_prob) || mut_prob < 0.0 || mut_prob >= 1.0) {
-    die("--mut-prob must be in [0, 1)");
   }
 
   const char *ship_names[] = { "Árni Friðriksson", "Bjarni Sæmundsson", "Gullver", "Breki" };
@@ -3302,13 +3331,18 @@ int main(int argc, char **argv) {
     printf("Init note: extra segments added to respect ship capacity.\n");
   }
 
-  if (merge_segments_greedy(&visits, &n_visits, &ex, ShipCap, timelimit)) {
-    int merged_count = count_segments(visits, n_visits);
-    printf("Init merge pass: segments=%d (min=%d)\n", merged_count, init_segments);
-  }
-
   print_visit_list(&ex, &items, visits, n_visits);
+  printf("Initial segment plan:\n");
   print_segment_plan(&ex, &items, visits, n_visits);
+
+  /* Sequentially re-optimize each adjacent boundary until a full pass makes no changes. */
+  if (optimize_boundaries_until_stable(&visits, &n_visits, &ex, ShipCap, timelimit)) {
+    printf("Capacity boundary sweep completed with changes.\n");
+    printf("Updated segment plan:\n");
+    print_segment_plan(&ex, &items, visits, n_visits);
+  } else {
+    printf("Capacity boundary sweep: no changes.\n");
+  }
   int nseg = 0;
   int *seg_tour = NULL;
   int seg_tour_len = 0;
@@ -3316,7 +3350,6 @@ int main(int argc, char **argv) {
                                                 timelimit, &seg_tour, &seg_tour_len);
   if (!segs) die("segment evaluation failed");
   int nseg_max = nseg;
-  SegmentEval *seg_eval = NULL;
   int use_segment_plot = (seg_tour && seg_tour_len > 0);
   char *plot_path = NULL;
   char *csv_path = NULL;
@@ -3327,13 +3360,9 @@ int main(int argc, char **argv) {
     plot_path = (char*)xmalloc(base + 5);
     memcpy(plot_path, write_dat, base);
     memcpy(plot_path + base, ".txt", 5);
-    if (iterations > 0) {
-      csv_path = (char*)xmalloc(base + 5);
-      memcpy(csv_path, write_dat, base);
-      memcpy(csv_path + base, ".csv", 5);
-    }
-  } else if (iterations > 0) {
-    csv_path = xstrdup("hillclimb.csv");
+    csv_path = (char*)xmalloc(base + 5);
+    memcpy(csv_path, write_dat, base);
+    memcpy(csv_path + base, ".csv", 5);
   }
   if (csv_path) {
     csv = fopen(csv_path, "w");
@@ -3383,505 +3412,31 @@ int main(int argc, char **argv) {
                         ? letour_distance_total(seg_tour, seg_tour_len, dist, Size)
                         : sum_segment_distance(segs, nseg);
   if (base_total >= 0.0) {
-    printf("Initial segmented total distance: %.3f\n", base_total);
+    printf("Segmented total distance: %.3f\n", base_total);
   }
-  seg_eval = build_segment_eval_from_tour(segs, nseg, seg_tour, seg_tour_len, &ex);
-  double best_total = base_total;
-  int *best_tour = NULL;
-  int best_tour_len = 0;
-  if (seg_tour && seg_tour_len > 0) {
-    best_tour = (int*)xmalloc((size_t)seg_tour_len * sizeof(int));
-    memcpy(best_tour, seg_tour, (size_t)seg_tour_len * sizeof(int));
-    best_tour_len = seg_tour_len;
-  }
-
-  if (seg_tour && seg_tour_len > 0) {
-    int port_opt_iters = 5;
-    int n_visits_opt = 0;
-    Visit *visits_opt = build_visits_from_tour(seg_tour, seg_tour_len, &ex, &n_visits_opt);
-    if (visits_opt) {
-      if (optimize_port_boundaries(&visits_opt, &n_visits_opt, &ex, dist, Size,
-                                   ShipCap, timelimit, port_opt_iters)) {
-        SegmentEval *opt_eval = NULL;
-        int opt_nseg = 0;
-        int *opt_tour = NULL;
-        int opt_tour_len = 0;
-        double opt_total = -1.0;
-        int opt_valid = evaluate_visits(visits_opt, n_visits_opt, &ex, NULL, 0,
-                                        timelimit, dist, Size,
-                                        &opt_eval, &opt_nseg, &opt_tour, &opt_tour_len,
-                                        &opt_total);
-        if (opt_valid && opt_total >= 0.0 && (base_total < 0.0 || opt_total < base_total)) {
-          free_segment_eval(seg_eval, nseg);
-          seg_eval = opt_eval;
-          free(visits);
-          visits = visits_opt;
-          n_visits = n_visits_opt;
-          nseg = opt_nseg;
-          base_total = opt_total;
-          free(seg_tour);
-          seg_tour = opt_tour;
-          seg_tour_len = opt_tour_len;
-          use_segment_plot = (seg_tour && seg_tour_len > 0);
-          printf("Boundary opt accepted: total=%.3f\n", base_total);
-        } else {
-          free_segment_eval(opt_eval, opt_nseg);
-          free(opt_tour);
-          free(visits_opt);
-          if (opt_total >= 0.0) {
-            printf("Boundary opt no improvement: total=%.3f\n", opt_total);
-          }
-        }
+  if (csv) {
+    fprintf(csv, "0");
+    if (nseg_max > 0) fputc(',', csv);
+    for (int s = 0; s < nseg_max; s++) {
+      if (s < nseg && segs[s].distance >= 0.0) {
+        fprintf(csv, "%.3f,%d,%.0f",
+                segs[s].distance,
+                segs[s].n_stations,
+                segs[s].total_amount);
+      } else if (s < nseg) {
+        fprintf(csv, "nan,%d,%.0f",
+                segs[s].n_stations,
+                segs[s].total_amount);
       } else {
-        free(visits_opt);
+        fprintf(csv, "nan,0,0");
       }
+      if (s + 1 < nseg_max) fputc(',', csv);
     }
-  }
-  if (iterations > 0) {
-    clock_t hc_start = clock();
-    int iter_done = 0;
-    int window_count = 0;
-    int success_count = 0;
-    const int adapt_window = 20;
-    const double adapt_factor = 0.85;
-    const double mut_prob_min = 0.01;
-    const double mut_prob_max = 0.99;
-    const int restart_limit = 3;
-    const double port_swap_prob = 0.15;
-    const double port_merge_prob = 0.10;
-    int it = 0;
-    while (it < iterations) {
-      int success = 0;
-      Visit *visits_trial = NULL;
-      int n_visits_trial = n_visits;
-      int src_seg = -1;
-      int dst_seg = -1;
-      int attempts = 0;
-      int moved = 0;
-      int moved_any = 0;
-      int station_moved_any = 0;
-      int move_count = 0;
-      for (int restart = 0; restart <= restart_limit; restart++) {
-        if (visits_trial) {
-          free(visits_trial);
-          visits_trial = NULL;
-        }
-        visits_trial = (Visit*)xmalloc((size_t)n_visits * sizeof(Visit));
-        memcpy(visits_trial, visits, (size_t)n_visits * sizeof(Visit));
-        n_visits_trial = n_visits;
-        int seg_count = count_segments(visits_trial, n_visits_trial);
-        int *touched = (int*)xcalloc((size_t)seg_count, sizeof(int));
-        int touched_any = 0;
-
-        src_seg = -1;
-        dst_seg = -1;
-        attempts = 0;
-        moved = 0;
-        moved_any = 0;
-        station_moved_any = 0;
-        move_count = 0;
-        int max_moves = mutations;
-        for (;;) {
-          int src = -1;
-          int dst = -1;
-          int att = 0;
-          moved = move_one_station(visits_trial, n_visits_trial, &ex, dist, Size, ShipCap,
-                                   tau_scale, touched_any ? touched : NULL, seg_count,
-                                   &src, &dst, &att);
-          attempts += att;
-          if (!moved) {
-            break;
-          }
-          move_count++;
-          if (!moved_any) {
-            src_seg = src;
-            dst_seg = dst;
-            moved_any = 1;
-            station_moved_any = 1;
-          }
-          if (src >= 0 && src < seg_count) touched[src] = 1;
-          if (dst >= 0 && dst < seg_count) touched[dst] = 1;
-          touched_any = 1;
-          if (move_count >= max_moves) {
-            break;
-          }
-          if (((double)rand() / (double)RAND_MAX) >= mut_prob) {
-            break;
-          }
-        }
-        free(touched);
-        if (moved_any) {
-          break;
-        }
-        if (restart < restart_limit) {
-          printf("Hillclimb iter %d: no feasible move found; restart %d/%d.\n",
-                 it + 1, restart + 1, restart_limit + 1);
-        }
-      }
-      if (!moved_any) {
-        printf("Hillclimb iter %d: no feasible move found.\n", it + 1);
-        free(visits_trial);
-        continue;
-      }
-
-      if (port_adjacent_cleanup(visits_trial, n_visits_trial, &ex, dist, Size, ShipCap)) {
-        printf("Port cleanup applied before merge/eval.\n");
-      }
-      if (moved_any && src_seg >= 0 && dst_seg >= 0 && abs(src_seg - dst_seg) == 1) {
-        int left_seg = src_seg < dst_seg ? src_seg : dst_seg;
-        if (optimize_boundary_capacity(&visits_trial, &n_visits_trial, &ex, ShipCap,
-                                       timelimit, left_seg)) {
-          printf("Cap boundary applied before merge/eval.\n");
-        }
-      }
-
-      if (merge_segments_greedy(&visits_trial, &n_visits_trial, &ex, ShipCap, timelimit)) {
-        printf("Merge pass applied before evaluation.\n");
-      }
-
-      SegmentEval *trial_eval = NULL;
-      int nseg2 = 0;
-      int *trial_tour = NULL;
-      int trial_tour_len = 0;
-      double trial_total = -1.0;
-      int valid = evaluate_visits(visits_trial, n_visits_trial, &ex, seg_eval, nseg,
-                                  timelimit, dist, Size,
-                                  &trial_eval, &nseg2, &trial_tour, &trial_tour_len,
-                                  &trial_total);
-
-      const double port_prob_total = port_swap_prob + port_merge_prob;
-      if (station_moved_any && port_prob_total > 0.0) {
-        double r = (double)rand() / (double)RAND_MAX;
-        if (r < port_prob_total) {
-          Visit *visits_port = (Visit*)xmalloc((size_t)n_visits_trial * sizeof(Visit));
-          memcpy(visits_port, visits_trial, (size_t)n_visits_trial * sizeof(Visit));
-          int n_visits_port = n_visits_trial;
-          int port_move_kind = 0;
-          int port_move_seg = -1;
-          int port_move_ex = -1;
-          double port_move_load = 0.0;
-          double r2 = (double)rand() / (double)RAND_MAX;
-          double swap_cut = port_swap_prob / port_prob_total;
-          attempts += 1;
-          if (r2 < swap_cut) {
-            if (swap_port_visit(visits_port, n_visits_port, &ex, &port_move_seg)) {
-              port_move_kind = 1;
-            }
-          } else {
-            if (merge_segments_by_capacity(visits_port, &n_visits_port, &ex, ShipCap,
-                                           &port_move_seg, &port_move_ex, &port_move_load)) {
-              port_move_kind = 2;
-            }
-          }
-
-          if (port_move_kind != 0) {
-            SegmentEval *port_eval = NULL;
-            int nseg_port = 0;
-            int *port_tour = NULL;
-            int port_tour_len = 0;
-            double port_total = -1.0;
-            int port_valid = evaluate_visits(visits_port, n_visits_port, &ex, seg_eval, nseg,
-                                             timelimit, dist, Size,
-                                             &port_eval, &nseg_port, &port_tour, &port_tour_len,
-                                             &port_total);
-            int use_port = 0;
-            if (port_valid && valid) {
-              double before = -1.0;
-              double after = -1.0;
-              if (port_move_kind == 1) {
-                if (port_move_seg >= 0 && port_move_seg + 1 < nseg2 &&
-                    port_move_seg + 1 < nseg_port) {
-                  double b0 = trial_eval[port_move_seg].res.distance;
-                  double b1 = trial_eval[port_move_seg + 1].res.distance;
-                  double a0 = port_eval[port_move_seg].res.distance;
-                  double a1 = port_eval[port_move_seg + 1].res.distance;
-                  if (b0 >= 0.0 && b1 >= 0.0 && a0 >= 0.0 && a1 >= 0.0) {
-                    before = b0 + b1;
-                    after = a0 + a1;
-                  }
-                }
-              } else if (port_move_kind == 2) {
-                if (port_move_seg >= 0 && port_move_seg + 1 < nseg2 &&
-                    port_move_seg < nseg_port) {
-                  double b0 = trial_eval[port_move_seg].res.distance;
-                  double b1 = trial_eval[port_move_seg + 1].res.distance;
-                  double a0 = port_eval[port_move_seg].res.distance;
-                  if (b0 >= 0.0 && b1 >= 0.0 && a0 >= 0.0) {
-                    before = b0 + b1;
-                    after = a0;
-                  }
-                }
-              }
-              if (before >= 0.0 && after >= 0.0 && after < before) {
-                use_port = 1;
-              } else {
-                printf("Hillclimb iter %d: port tweak skipped (local %.3f -> %.3f)\n",
-                       it + 1, before, after);
-              }
-            } else if (port_valid && !valid) {
-              use_port = 1;
-            }
-
-            if (use_port) {
-              free_segment_eval(trial_eval, nseg2);
-              free(trial_tour);
-              free(visits_trial);
-              visits_trial = visits_port;
-              n_visits_trial = n_visits_port;
-              trial_eval = port_eval;
-              nseg2 = nseg_port;
-              trial_tour = port_tour;
-              trial_tour_len = port_tour_len;
-              trial_total = port_total;
-              valid = port_valid;
-              if (port_move_kind == 2) {
-                printf("Hillclimb merge applied: removed PORT-%d (combined load=%.0f)\n",
-                       port_move_ex, port_move_load);
-              }
-            } else {
-              free_segment_eval(port_eval, nseg_port);
-              free(port_tour);
-              free(visits_port);
-            }
-          } else {
-            free(visits_port);
-          }
-        }
-      }
-      printf("Hillclimb iter %d total distance: %.3f (mut_prob=%.3f tau=%.4f)\n",
-             it + 1, trial_total, mut_prob, tau_scale);
-      if (csv) {
-        fprintf(csv, "%d", attempts);
-        if (nseg_max > 0) fputc(',', csv);
-        for (int s = 0; s < nseg_max; s++) {
-          if (s < nseg2) {
-            fprintf(csv, "%.3f,%d,%.0f",
-                    trial_eval[s].res.distance,
-                    trial_eval[s].res.n_stations,
-                    trial_eval[s].res.total_amount);
-          } else {
-            fprintf(csv, "nan,0,0");
-          }
-          if (s + 1 < nseg_max) fputc(',', csv);
-        }
-        fputc('\n', csv);
-        fflush(csv);
-      }
-
-      if (base_total < 0.0 || (trial_total >= 0.0 && trial_total < base_total)) {
-        printf("Hillclimb iter %d accepted. (mut_prob=%.3f tau=%.4f)\n",
-               it + 1, mut_prob, tau_scale);
-        success = 1;
-        free_segment_eval(seg_eval, nseg);
-        seg_eval = trial_eval;
-        free(visits);
-        visits = visits_trial;
-        n_visits = n_visits_trial;
-        nseg = nseg2;
-        base_total = trial_total;
-        free(seg_tour);
-        seg_tour = trial_tour;
-        seg_tour_len = trial_tour_len;
-        use_segment_plot = (seg_tour && seg_tour_len > 0);
-      } else {
-        printf("Hillclimb iter %d rejected. (mut_prob=%.3f tau=%.4f)\n",
-               it + 1, mut_prob, tau_scale);
-        free_segment_eval(trial_eval, nseg2);
-        free(trial_tour);
-        free(visits_trial);
-      }
-
-      if (trial_total >= 0.0 && (best_total < 0.0 || trial_total < best_total)) {
-        best_total = trial_total;
-        free(best_tour);
-        best_tour = NULL;
-        best_tour_len = 0;
-        if (seg_tour && seg_tour_len > 0) {
-          best_tour = (int*)xmalloc((size_t)seg_tour_len * sizeof(int));
-          memcpy(best_tour, seg_tour, (size_t)seg_tour_len * sizeof(int));
-          best_tour_len = seg_tour_len;
-        }
-      }
-
-      it++;
-      iter_done++;
-      window_count++;
-      success_count += success;
-      if (window_count >= adapt_window) {
-        double rate = (double)success_count / (double)adapt_window;
-        if (rate > 0.2) {
-          tau_scale /= adapt_factor;
-          mut_prob /= adapt_factor;
-        } else {
-          tau_scale *= adapt_factor;
-          mut_prob *= adapt_factor;
-        }
-        if (mut_prob < mut_prob_min) mut_prob = mut_prob_min;
-        if (mut_prob > mut_prob_max) mut_prob = mut_prob_max;
-        printf("Tau-scale update: success_rate=%.2f tau_scale=%.4f mut_prob=%.3f\n",
-               rate, tau_scale, mut_prob);
-        window_count = 0;
-        success_count = 0;
-        if (tau_scale < 0.01) {
-          printf("Tau-scale below 0.01; stopping hillclimb.\n");
-          break;
-        }
-      }
-    }
-    if (seg_tour && seg_tour_len > 0) {
-      print_segment_stats_forward(seg_tour, seg_tour_len, &ex, &items, dist);
-    }
-    double hc_secs = (double)(clock() - hc_start) / (double)CLOCKS_PER_SEC;
-    double mean_secs = (iter_done > 0) ? (hc_secs / (double)iter_done) : 0.0;
-    printf("Hillclimb time: total=%.3f sec, mean=%.3f sec/iter\n", hc_secs, mean_secs);
-  }
-
-  if (best_tour) {
-    if (base_total < 0.0 || (best_total >= 0.0 && best_total < base_total)) {
-      free(seg_tour);
-      seg_tour = best_tour;
-      seg_tour_len = best_tour_len;
-      base_total = best_total;
-      use_segment_plot = (seg_tour && seg_tour_len > 0);
-    } else {
-      free(best_tour);
-    }
+    fputc('\n', csv);
+    fflush(csv);
   }
 
   printf("SelectedSize=%d  Size=%d\n", ex.SelectedSize, ex.Size);
-
-  /* Create Gurobi model (same as Python: full NxN vars) */
-  GRBenv *env = NULL;
-  GRBmodel *model = NULL;
-  int error = 0;
-  if (run_mip) {
-    error = GRBloadenv(&env, "planner.log");
-    if (error) goto QUIT;
-    GRBsetintparam(env, "OutputFlag", 0);
-    GRBsetintparam(env, "LogToConsole", 0);
-
-    error = GRBnewmodel(env, &model, "planner", 0, NULL, NULL, NULL, NULL, NULL);
-    if (error) goto QUIT;
-
-    GRBsetdblparam(env, "TimeLimit", timelimit);
-    GRBsetintparam(env, "Threads", 4);
-    GRBsetintparam(env, "OutputFlag", 0);
-    GRBsetintparam(env, "LogToConsole", 0);
-
-    /* vars e[i,j] index = i*n + j */
-    for (int i = 0; i < n; i++) {
-      for (int j = 0; j < n; j++) {
-        char vname[64];
-        sprintf(vname, "e_%d_%d", i, j);
-        error = GRBaddvar(model, 0, NULL, NULL, dist[i*n + j], 0.0, 1.0, GRB_BINARY, vname);
-        if (error) goto QUIT;
-      }
-    }
-
-
-    /* outdegree=1 and indegree=1 */
-    int *ind = (int*)xmalloc((size_t)n * sizeof(int));
-    double *val = (double*)xmalloc((size_t)n * sizeof(double));
-    for (int j = 0; j < n; j++) val[j] = 1.0;
-
-    for (int i = 0; i < n; i++) {
-      for (int j = 0; j < n; j++) ind[j] = i*n + j;
-      char cname[64];
-      sprintf(cname, "out_%d", i);
-      error = GRBaddconstr(model, n, ind, val, GRB_EQUAL, 1.0, cname);
-      if (error) goto QUIT;
-    }
-    for (int j = 0; j < n; j++) {
-      for (int i = 0; i < n; i++) ind[i] = i*n + j;
-      char cname[64];
-      sprintf(cname, "in_%d", j);
-      error = GRBaddconstr(model, n, ind, val, GRB_EQUAL, 1.0, cname);
-      if (error) goto QUIT;
-    }
-
-    /* internal constraint: e[2i,2i+1]+e[2i+1,2i]==1 */
-    for (int i = 0; i < Size; i++) {
-      int a = 2*i, b = 2*i+1;
-      ind[0] = a*n + b; val[0] = 1.0;
-      ind[1] = b*n + a; val[1] = 1.0;
-      char cname[64];
-      sprintf(cname, "pair_%d", i);
-      error = GRBaddconstr(model, 2, ind, val, GRB_EQUAL, 1.0, cname);
-      if (error) goto QUIT;
-    }
-    free(ind); free(val);
-
-    /* forbid self loops */
-    for (int i = 0; i < n; i++) {
-      error = GRBsetdblattrelement(model, GRB_DBL_ATTR_UB, i*n + i, 0.0);
-      if (error) goto QUIT;
-    }
-
-    /* Do not forbid land-crossing arcs; distances already reroute via waypoints. */
-
-
-    /* callback */
-    struct callback_data cb; cb.n = n;
-    error = GRBsetcallbackfunc(model, subtourelim, (void*)&cb);
-    if (error) goto QUIT;
-    error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_LAZYCONSTRAINTS, 1);
-    if (error) goto QUIT;
-
-    error = GRBoptimize(model);
-    if (error) goto QUIT;
-
-    int solcount = 0;
-    error = GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount);
-    if (error) goto QUIT;
-
-    if (solcount > 0) {
-      double *sol = (double*)xmalloc((size_t)n*n*sizeof(double));
-      error = GRBgetdblattrarray(model, GRB_DBL_ATTR_X, 0, n*n, sol);
-      if (error) goto QUIT;
-
-      int *tour = (int*)xmalloc((size_t)n*sizeof(int));
-      int len = 0;
-      findsubtour_directed(n, sol, &len, tour);
-
-      printf("Tour (nodes): ");
-      for (int i = 0; i < len; i++) printf("%d ", tour[i]);
-      printf("\n");
-
-      int *pairDir = (int*)xmalloc((size_t)Size * sizeof(int));
-      for (int c = 0; c < Size; c++) {
-        int a = 2*c, b = 2*c+1;
-        if (sol[a*n + b] > 0.5) pairDir[c] = +1;
-        else pairDir[c] = -1; /* due to constraint, one must be 1 */
-      }
-
-      if (!use_segment_plot) {
-        const char *plot_out = plot_path ? plot_path : "solution_plot.txt";
-        write_plot_bundle(plot_out,
-                          Size, ex.SelectedSize,
-                          tour, len,
-                          pairDir,
-                          ex.Type, ex.Amount, ex.LatLonRad,
-                          full_dist, full_fsb, full_m);
-      }
-
-      if (write_dat && !use_segment_plot) {
-        int letour_len = 0;
-        int *letour = node_tour_to_letour(tour, len, Size, &letour_len);
-        write_route_dat(write_dat, &items, &ex, letour, letour_len);
-        free(letour);
-      }
-
-      double obj = 0.0;
-      GRBgetdblattr(model, GRB_DBL_ATTR_OBJVAL, &obj);
-      printf("Objective: %g\n", obj);
-
-      free(tour);
-      free(sol);
-      free(pairDir);
-    } else {
-      printf("No solution found.\n");
-    }
-  }
 
   if (use_segment_plot) {
     const char *plot_out = plot_path ? plot_path : "solution_plot.txt";
@@ -3895,23 +3450,17 @@ int main(int argc, char **argv) {
     }
   }
 
-QUIT:
-  if (error) fprintf(stderr, "ERROR: %s\n", GRBgeterrormsg(env));
-  if (model) GRBfreemodel(model);
-  if (env) GRBfreeenv(env);
-
   free(dist);
   free(fsb);
   free(full_dist);
   free(full_fsb);
   free(segs);
   free(visits);
-  free_segment_eval(seg_eval, nseg);
   free(seg_tour);
   free(plot_path);
   if (csv) fclose(csv);
   free(csv_path);
   free_exdata(&ex);
   vec_free(&items);
-  return error ? 1 : 0;
+  return 0;
 }
