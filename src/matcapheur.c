@@ -1417,8 +1417,12 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   int start_idx = prev_port_idx + 1;
   int end_idx_excl = (next_port_idx >= 0) ? next_port_idx : n_visits;
   int n_total = 0;
+  int k0 = 0;
   for (int i = start_idx; i < end_idx_excl; i++) {
-    if (visits[i].type == tSTAT) n_total++;
+    if (visits[i].type == tSTAT) {
+      n_total++;
+      if (i < boundary_idx) k0++;
+    }
   }
   if (n_total < 2) return 0;
 
@@ -1427,6 +1431,37 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   for (int i = start_idx; i < end_idx_excl; i++) {
     if (visits[i].type == tSTAT) stations[pos++] = visits[i].ex_idx;
   }
+  if (k0 < 1 || k0 >= n_total) {
+    free(stations);
+    return 0;
+  }
+
+  /* Debug: show the two segments and their loads before solving. */
+  double load_left = 0.0;
+  double load_right = 0.0;
+  for (int i = 0; i < k0; i++) load_left += ex->Amount[stations[i]];
+  for (int i = k0; i < n_total; i++) load_right += ex->Amount[stations[i]];
+  const char *start_label = (prev_port_idx < 0) ? "BOAT" : "PORT";
+  const char *end_label = (next_port_idx < 0) ? "BOAT-END" : "PORT";
+  if (prev_port_idx < 0) {
+    printf("Cap boundary debug: %s -> [", start_label);
+  } else {
+    printf("Cap boundary debug: %s-%d -> [", start_label, visits[prev_port_idx].ex_idx);
+  }
+  for (int i = 0; i < k0; i++) {
+    printf("%d%s", stations[i], (i + 1 == k0) ? "" : " ");
+  }
+  printf("] -> PORT-%d -> [", visits[boundary_idx].ex_idx);
+  for (int i = k0; i < n_total; i++) {
+    printf("%d%s", stations[i], (i + 1 == n_total) ? "" : " ");
+  }
+  if (next_port_idx < 0) {
+    printf("] -> %s", end_label);
+  } else {
+    printf("] -> %s-%d", end_label, visits[next_port_idx].ex_idx);
+  }
+  printf(" | load_left=%.0f load_right=%.0f cap=%.0f\n",
+         load_left, load_right, ship_cap);
   double total_load = 0.0;
   for (int i = 0; i < n_total; i++) total_load += ex->Amount[stations[i]];
   if (ship_cap > 0.0 && total_load > 2.0 * ship_cap) {
