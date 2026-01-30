@@ -1467,9 +1467,8 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
     end_rad[1] = ex->LatLonRad[next_ex * 4 + 1];
   }
 
-  /* Treat the artificial start/end node as a port so the capacity MIP resets
-     at both ends of the two-segment subproblem (prev port + boundary port). */
-  segex.Type[0] = tPORT;
+  /* Match capacity.c: ship is not a reset node; only ports reset flow. */
+  segex.Type[0] = tSHIP;
   segex.ItemIndex[0] = -1;
   segex.Amount[0] = 0.0;
   segex.LatLonRad[0] = start_rad[0];
