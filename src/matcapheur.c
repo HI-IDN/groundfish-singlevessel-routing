@@ -1427,6 +1427,14 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   for (int i = start_idx; i < end_idx_excl; i++) {
     if (visits[i].type == tSTAT) stations[pos++] = visits[i].ex_idx;
   }
+  double total_load = 0.0;
+  for (int i = 0; i < n_total; i++) total_load += ex->Amount[stations[i]];
+  if (ship_cap > 0.0 && total_load > 2.0 * ship_cap) {
+    printf("Cap boundary skip: load %.0f exceeds 2x ship cap %.0f\n",
+           total_load, 2.0 * ship_cap);
+    free(stations);
+    return 0;
+  }
 
   int n_wayp = ex->SelectedSize - ex->Size;
   ExData segex;
@@ -1459,7 +1467,9 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
     end_rad[1] = ex->LatLonRad[next_ex * 4 + 1];
   }
 
-  segex.Type[0] = tSHIP;
+  /* Treat the artificial start/end node as a port so the capacity MIP resets
+     at both ends of the two-segment subproblem (prev port + boundary port). */
+  segex.Type[0] = tPORT;
   segex.ItemIndex[0] = -1;
   segex.Amount[0] = 0.0;
   segex.LatLonRad[0] = start_rad[0];
