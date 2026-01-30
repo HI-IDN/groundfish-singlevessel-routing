@@ -1143,6 +1143,11 @@ static void findsubtour_directed(int n, double *sol, int *tourlenP, int *tour);
 int __stdcall subtourelim(GRBmodel *model, void *cbdata, int where, void *usrdata);
 static int *node_tour_to_letour(const int *tour, int len, int Size, int *out_len);
 static void free_exdata(ExData *ex);
+static void build_waypoint_dist(const ExData *ex,
+                                const double *Land, int nLand,
+                                double **out_dist, int **out_fsb,
+                                double **out_full_dist, int **out_full_fsb,
+                                int *out_full_m);
 
 static double min_pair_dist(const double *dist, int n, int a, int b) {
   int a0 = 2 * a;
