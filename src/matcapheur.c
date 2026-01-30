@@ -1502,8 +1502,10 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
     end_rad[1] = ex->LatLonRad[next_ex * 4 + 1];
   }
 
-  /* Match capacity.c: ship is not a reset node; only ports reset flow. */
-  segex.Type[0] = tSHIP;
+  /* In the two-segment subproblem the "ship" node carries both start and end
+     coordinates, so mark it as a port reset to allow capacity to reset at
+     both BOAT-START and BOAT-END. */
+  segex.Type[0] = tPORT;
   segex.ItemIndex[0] = -1;
   segex.Amount[0] = 0.0;
   segex.LatLonRad[0] = start_rad[0];
