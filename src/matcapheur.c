@@ -1142,6 +1142,16 @@ struct callback_data {
   int n;
   int numvars;
 };
+
+typedef struct {
+  int status;
+  int solcount;
+  double obj;
+  double bound;
+  double gap;
+  double runtime;
+  double nodecnt;
+} CapSolveStats;
 static void findsubtour_directed(int n, double *sol, int *tourlenP, int *tour);
 int __stdcall subtourelim(GRBmodel *model, void *cbdata, int where, void *usrdata);
 static int *node_tour_to_letour(const int *tour, int len, int Size, int *out_len);
@@ -1169,14 +1179,27 @@ static double min_pair_dist(const double *dist, int n, int a, int b) {
   return d;
 }
 
+static void init_cap_stats(CapSolveStats *st) {
+  if (!st) return;
+  st->status = 0;
+  st->solcount = 0;
+  st->obj = NAN;
+  st->bound = NAN;
+  st->gap = NAN;
+  st->runtime = 0.0;
+  st->nodecnt = 0.0;
+}
+
 static int solve_capacity_tour(const ExData *seg, const double *dist,
                                double ship_cap, double timelimit, int verbose,
-                               int **out_tour, int *out_len, double *out_obj) {
+                               int **out_tour, int *out_len, double *out_obj,
+                               CapSolveStats *out_stats) {
   (void)verbose;
   int n = 2 * seg->Size;
   GRBenv *env = NULL;
   GRBmodel *model = NULL;
   int error = 0;
+  init_cap_stats(out_stats);
 
   if (GRBloadenv(&env, NULL) != 0) return 0;
   error = GRBnewmodel(env, &model, "cap_segment", 0, NULL, NULL, NULL, NULL, NULL);
@@ -1353,17 +1376,29 @@ static int solve_capacity_tour(const ExData *seg, const double *dist,
 
   int status = 0;
   GRBgetintattr(model, GRB_INT_ATTR_STATUS, &status);
+  if (out_stats) out_stats->status = status;
+
+  if (out_stats) {
+    double val = 0.0;
+    if (GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME, &val) == 0) out_stats->runtime = val;
+    if (GRBgetdblattr(model, GRB_DBL_ATTR_NODECOUNT, &val) == 0) out_stats->nodecnt = val;
+    if (GRBgetdblattr(model, GRB_DBL_ATTR_OBJBOUND, &val) == 0) out_stats->bound = val;
+    if (GRBgetdblattr(model, GRB_DBL_ATTR_MIPGAP, &val) == 0) out_stats->gap = val;
+  }
+
   if (!(status == GRB_OPTIMAL || status == GRB_TIME_LIMIT || status == GRB_SUBOPTIMAL)) {
     error = 1;
     goto QUIT;
   }
 
-  error = GRBgetdblattr(model, GRB_DBL_ATTR_OBJVAL, out_obj);
-  if (error) goto QUIT;
-
   int solcount = 0;
   error = GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount);
   if (error || solcount == 0) { error = 1; goto QUIT; }
+  if (out_stats) out_stats->solcount = solcount;
+
+  error = GRBgetdblattr(model, GRB_DBL_ATTR_OBJVAL, out_obj);
+  if (error) goto QUIT;
+  if (out_stats) out_stats->obj = *out_obj;
 
   double *sol = (double*)xmalloc((size_t)n*n*sizeof(double));
   error = GRBgetdblattrarray(model, GRB_DBL_ATTR_X, 0, n*n, sol);
@@ -1384,9 +1419,29 @@ QUIT:
   return error == 0;
 }
 
+static void log_cap_csv(FILE *fp, int pass, int boundary, int port_ex,
+                        int left_count, int right_count,
+                        double load_left, double load_right, int n_nodes,
+                        const CapSolveStats *st, int changed) {
+  if (!fp || !st) return;
+  fprintf(fp,
+          "%d,%d,%d,%d,%d,%.0f,%.0f,%d,%d,%d,",
+          pass, boundary + 1, port_ex, left_count, right_count,
+          load_left, load_right, n_nodes, st->status, st->solcount);
+  if (isnan(st->obj)) fprintf(fp, "nan,");
+  else fprintf(fp, "%.6f,", st->obj);
+  if (isnan(st->bound)) fprintf(fp, "nan,");
+  else fprintf(fp, "%.6f,", st->bound);
+  if (isnan(st->gap)) fprintf(fp, "nan,");
+  else fprintf(fp, "%.6f,", st->gap);
+  fprintf(fp, "%.3f,%.0f,%d\n", st->runtime, st->nodecnt, changed);
+  fflush(fp);
+}
+
 static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
                                       const ExData *ex, double ship_cap,
-                                      double timelimit, int left_seg) {
+                                      double timelimit, int left_seg,
+                                      int pass, FILE *cap_csv) {
   /* Solve a two-segment subproblem with the capacity MIP, keeping the boundary
      port fixed and reassigning stations across the boundary. */
   if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
@@ -1470,6 +1525,11 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   if (ship_cap > 0.0 && total_load > 2.0 * ship_cap) {
     printf("Cap boundary skip: load %.0f exceeds 2x ship cap %.0f\n",
            total_load, 2.0 * ship_cap);
+    CapSolveStats st;
+    init_cap_stats(&st);
+    st.status = -2;
+    log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
+                k0, n_total - k0, load_left, load_right, 0, &st, 0);
     free(stations);
     return 0;
   }
@@ -1569,9 +1629,12 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   int *node_tour = NULL;
   int node_len = 0;
   double obj = -1.0;
+  CapSolveStats st;
   int ok = solve_capacity_tour(&segex, dist, ship_cap, timelimit, 1,
-                               &node_tour, &node_len, &obj);
+                               &node_tour, &node_len, &obj, &st);
   if (!ok || !node_tour || node_len <= 0) {
+    log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
+                k0, n_total - k0, load_left, load_right, n_nodes, &st, 0);
     free(node_tour);
     free(dist); free(fsb);
     free_exdata(&segex);
@@ -1583,6 +1646,8 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   int letour_len = 0;
   int *letour = node_tour_to_letour(node_tour, node_len, segex.Size, &letour_len);
   if (!letour || letour_len <= 1) {
+    log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
+                k0, n_total - k0, load_left, load_right, n_nodes, &st, 0);
     free(letour);
     free(node_tour);
     free(dist); free(fsb);
@@ -1605,6 +1670,8 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
     slice_n++;
   }
   if (slice_n != slice_len) {
+    log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
+                k0, n_total - k0, load_left, load_right, n_nodes, &st, 0);
     free(slice);
     free(letour);
     free(node_tour);
@@ -1624,6 +1691,8 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
     }
   }
   if (unchanged) {
+    log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
+                k0, n_total - k0, load_left, load_right, n_nodes, &st, 0);
     free(slice);
     free(letour);
     free(node_tour);
@@ -1640,6 +1709,8 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   for (int i = 0; i < slice_len; i++) new_vis[new_count++] = slice[i];
   for (int i = end_idx_excl; i < n_visits; i++) new_vis[new_count++] = visits[i];
 
+  log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
+              k0, n_total - k0, load_left, load_right, n_nodes, &st, 1);
   free(slice);
   free(*visits_io);
   *visits_io = new_vis;
@@ -1656,41 +1727,29 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   return 1;
 }
 
-static int optimize_boundaries_until_stable(Visit **visits_io, int *n_visits_io,
-                                            const ExData *ex, double ship_cap,
-                                            double timelimit) {
-  /* Sequentially re-optimize each adjacent boundary with the capacity MIP.
-     Track dirty boundaries so we skip unchanged pairs, and stop after a full
-     sweep with no changes. */
+static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
+                                        const ExData *ex, double ship_cap,
+                                        double timelimit, int pass,
+                                        int *dirty, int port_count,
+                                        FILE *cap_csv) {
+  /* Single boundary sweep pass. Updates dirty[] in-place. */
   if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
-  int port_count = count_segments(*visits_io, *n_visits_io) - 1;
-  if (port_count <= 0) return 0;
+  if (!dirty || port_count <= 0) return 0;
 
-  int *dirty = (int*)xcalloc((size_t)port_count, sizeof(int));
-  for (int i = 0; i < port_count; i++) dirty[i] = 1;
-
-  int any_change = 0;
-  int pass = 0;
-  for (;;) {
-    int changed = 0;
-    pass++;
-    printf("Capacity boundary sweep pass %d\n", pass);
-    for (int b = 0; b < port_count; b++) {
-      if (!dirty[b]) continue;
-      dirty[b] = 0;
-      if (optimize_boundary_capacity(visits_io, n_visits_io, ex, ship_cap, timelimit, b)) {
-        any_change = 1;
-        changed = 1;
-        dirty[b] = 1;
-        dirty[(b + port_count - 1) % port_count] = 1;
-        dirty[(b + 1) % port_count] = 1;
-      }
+  int changed = 0;
+  printf("Capacity boundary sweep pass %d\n", pass);
+  for (int b = 0; b < port_count; b++) {
+    if (!dirty[b]) continue;
+    dirty[b] = 0;
+    if (optimize_boundary_capacity(visits_io, n_visits_io, ex, ship_cap,
+                                   timelimit, b, pass, cap_csv)) {
+      changed = 1;
+      dirty[b] = 1;
+      dirty[(b + port_count - 1) % port_count] = 1;
+      dirty[(b + 1) % port_count] = 1;
     }
-    if (!changed) break;
   }
-
-  free(dirty);
-  return any_change;
+  return changed;
 }
 
 static int port_adjacent_cleanup(Visit *visits, int n_visits, const ExData *ex,
@@ -3254,7 +3313,7 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--cap-time-limit <sec>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--cap-time-limit <sec>] [--stall-passes <n>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
     return 1;
   }
 
@@ -3262,6 +3321,7 @@ int main(int argc, char **argv) {
   int ship_id = atoi(argv[2]);
   double timelimit = 0.0;
   double cap_timelimit = 120.0;
+  int stall_passes = 3;
   int verbose_init = 0;
   const char *write_dat = NULL;
   for (int i = 3; i < argc; i++) {
@@ -3288,10 +3348,19 @@ int main(int argc, char **argv) {
       } else {
         die("--cap-time-limit requires a value");
       }
+    } else if (strcmp(argv[i], "--stall-passes") == 0) {
+      if (i + 1 < argc) {
+        stall_passes = atoi(argv[i + 1]);
+        i++;
+      } else {
+        die("--stall-passes requires a value");
+      }
     } else if (strncmp(argv[i], "--time-limit=", 13) == 0) {
       timelimit = atof(argv[i] + 13);
     } else if (strncmp(argv[i], "--cap-time-limit=", 17) == 0) {
       cap_timelimit = atof(argv[i] + 17);
+    } else if (strncmp(argv[i], "--stall-passes=", 15) == 0) {
+      stall_passes = atoi(argv[i] + 15);
     } else if (strcmp(argv[i], "--verbose-init") == 0) {
       verbose_init = 1;
     } else {
@@ -3398,25 +3467,19 @@ int main(int argc, char **argv) {
   printf("Initial segment plan:\n");
   print_segment_plan(&ex, &items, visits, n_visits);
 
-  /* Sequentially re-optimize each adjacent boundary until a full pass makes no changes. */
-  if (optimize_boundaries_until_stable(&visits, &n_visits, &ex, ShipCap, cap_timelimit)) {
-    printf("Capacity boundary sweep completed with changes.\n");
-    printf("Updated segment plan:\n");
-    print_segment_plan(&ex, &items, visits, n_visits);
-  } else {
-    printf("Capacity boundary sweep: no changes.\n");
+  int nseg_max = count_segments(visits, n_visits);
+  int port_count = nseg_max - 1;
+  int *dirty = NULL;
+  if (port_count > 0) {
+    dirty = (int*)xcalloc((size_t)port_count, sizeof(int));
+    for (int i = 0; i < port_count; i++) dirty[i] = 1;
   }
-  int nseg = 0;
-  int *seg_tour = NULL;
-  int seg_tour_len = 0;
-  SegmentResult *segs = evaluate_visit_segments(&ex, visits, n_visits, &nseg,
-                                                timelimit, &seg_tour, &seg_tour_len);
-  if (!segs) die("segment evaluation failed");
-  int nseg_max = nseg;
-  int use_segment_plot = (seg_tour && seg_tour_len > 0);
+
   char *plot_path = NULL;
   char *csv_path = NULL;
+  char *cap_csv_path = NULL;
   FILE *csv = NULL;
+  FILE *cap_csv = NULL;
   if (write_dat) {
     const char *dot = strrchr(write_dat, '.');
     size_t base = dot ? (size_t)(dot - write_dat) : strlen(write_dat);
@@ -3426,13 +3489,16 @@ int main(int argc, char **argv) {
     csv_path = (char*)xmalloc(base + 5);
     memcpy(csv_path, write_dat, base);
     memcpy(csv_path + base, ".csv", 5);
+    cap_csv_path = (char*)xmalloc(base + 9);
+    memcpy(cap_csv_path, write_dat, base);
+    memcpy(cap_csv_path + base, ".cap.csv", 9);
   }
   if (csv_path) {
     csv = fopen(csv_path, "w");
     if (!csv) {
       perror("fopen(csv)");
     } else {
-      fputs("attempts", csv);
+      fputs("attempts,changed,total,best,stall", csv);
       if (nseg_max > 0) fputc(',', csv);
       for (int s = 0; s < nseg_max; s++) {
         fprintf(csv, "seg%d_distance,seg%d_stations,seg%d_amount", s + 1, s + 1, s + 1);
@@ -3441,7 +3507,117 @@ int main(int argc, char **argv) {
       fputc('\n', csv);
     }
   }
+  if (cap_csv_path) {
+    cap_csv = fopen(cap_csv_path, "w");
+    if (!cap_csv) {
+      perror("fopen(cap_csv)");
+    } else {
+      fputs("pass,boundary,port_ex,left_stations,right_stations,load_left,load_right,n_nodes,status,solcount,obj,bound,gap,runtime,nodes,changed\n",
+            cap_csv);
+    }
+  }
 
+  int nseg = 0;
+  int *seg_tour = NULL;
+  int seg_tour_len = 0;
+  SegmentResult *segs = NULL;
+  double best_total = 1e300;
+  int best_pass = 0;
+  int pass = 0;
+  int changed = 0;
+  int any_change = 0;
+  int stall_count = 0;
+
+  for (;;) {
+    pass++;
+    changed = optimize_boundaries_one_pass(&visits, &n_visits, &ex, ShipCap,
+                                           cap_timelimit, pass, dirty,
+                                           port_count, cap_csv);
+    if (changed) any_change = 1;
+
+    int nseg_new = 0;
+    int *seg_tour_new = NULL;
+    int seg_tour_len_new = 0;
+    SegmentResult *segs_new = evaluate_visit_segments(&ex, visits, n_visits, &nseg_new,
+                                                      timelimit, &seg_tour_new, &seg_tour_len_new);
+    if (!segs_new) die("segment evaluation failed");
+
+    double total = (seg_tour_new && seg_tour_len_new > 0)
+                     ? letour_distance_total(seg_tour_new, seg_tour_len_new, dist, Size)
+                     : sum_segment_distance(segs_new, nseg_new);
+    if (total >= 0.0 && total + 1e-9 < best_total) {
+      best_total = total;
+      best_pass = pass;
+      stall_count = 0;
+      if (seg_tour_new && seg_tour_len_new > 0 && write_dat) {
+        write_route_dat(write_dat, &items, &ex, seg_tour_new, seg_tour_len_new);
+      }
+      if (seg_tour_new && seg_tour_len_new > 0 && plot_path) {
+        write_plot_bundle_letour(plot_path,
+                                 Size, ex.SelectedSize,
+                                 seg_tour_new, seg_tour_len_new,
+                                 ex.Type, ex.Amount, ex.LatLonRad,
+                                 &items, &ex);
+      }
+    } else {
+      stall_count++;
+    }
+
+    printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d/%d\n",
+           pass, changed, total, best_total, nseg_new, stall_count, stall_passes);
+
+    if (csv) {
+      fprintf(csv, "%d,%d,", pass, changed);
+      if (total >= 0.0) fprintf(csv, "%.3f,%.3f", total, best_total);
+      else fprintf(csv, "nan,%.3f", best_total);
+      fprintf(csv, ",%d", stall_count);
+      if (nseg_max > 0) fputc(',', csv);
+      for (int s = 0; s < nseg_max; s++) {
+        if (s < nseg_new && segs_new[s].distance >= 0.0) {
+          fprintf(csv, "%.3f,%d,%.0f",
+                  segs_new[s].distance,
+                  segs_new[s].n_stations,
+                  segs_new[s].total_amount);
+        } else if (s < nseg_new) {
+          fprintf(csv, "nan,%d,%.0f",
+                  segs_new[s].n_stations,
+                  segs_new[s].total_amount);
+        } else {
+          fprintf(csv, "nan,0,0");
+        }
+        if (s + 1 < nseg_max) fputc(',', csv);
+      }
+      fputc('\n', csv);
+      fflush(csv);
+    }
+
+    free(segs);
+    free(seg_tour);
+    segs = segs_new;
+    seg_tour = seg_tour_new;
+    seg_tour_len = seg_tour_len_new;
+    nseg = nseg_new;
+    if (!changed) break;
+    if (stall_passes > 0 && stall_count >= stall_passes) {
+      printf("Stopping: no improvement for %d passes.\n", stall_passes);
+      break;
+    }
+  }
+
+  free(dirty);
+
+  if (any_change) {
+    printf("Capacity boundary sweep completed with changes.\n");
+  } else {
+    printf("Capacity boundary sweep: no changes.\n");
+  }
+  if (best_total < 1e299) {
+    printf("Best pass %d total distance: %.3f\n", best_pass, best_total);
+  }
+  printf("Updated segment plan:\n");
+  print_segment_plan(&ex, &items, visits, n_visits);
+
+  int use_segment_plot = (seg_tour && seg_tour_len > 0);
   if (use_segment_plot) {
     print_segment_stats_forward(seg_tour, seg_tour_len, &ex, &items, dist);
   } else {
@@ -3477,41 +3653,8 @@ int main(int argc, char **argv) {
   if (base_total >= 0.0) {
     printf("Segmented total distance: %.3f\n", base_total);
   }
-  if (csv) {
-    fprintf(csv, "0");
-    if (nseg_max > 0) fputc(',', csv);
-    for (int s = 0; s < nseg_max; s++) {
-      if (s < nseg && segs[s].distance >= 0.0) {
-        fprintf(csv, "%.3f,%d,%.0f",
-                segs[s].distance,
-                segs[s].n_stations,
-                segs[s].total_amount);
-      } else if (s < nseg) {
-        fprintf(csv, "nan,%d,%.0f",
-                segs[s].n_stations,
-                segs[s].total_amount);
-      } else {
-        fprintf(csv, "nan,0,0");
-      }
-      if (s + 1 < nseg_max) fputc(',', csv);
-    }
-    fputc('\n', csv);
-    fflush(csv);
-  }
 
   printf("SelectedSize=%d  Size=%d\n", ex.SelectedSize, ex.Size);
-
-  if (use_segment_plot) {
-    const char *plot_out = plot_path ? plot_path : "solution_plot.txt";
-    write_plot_bundle_letour(plot_out,
-                             Size, ex.SelectedSize,
-                             seg_tour, seg_tour_len,
-                             ex.Type, ex.Amount, ex.LatLonRad,
-                             &items, &ex);
-    if (write_dat) {
-      write_route_dat(write_dat, &items, &ex, seg_tour, seg_tour_len);
-    }
-  }
 
   free(dist);
   free(fsb);
@@ -3523,6 +3666,8 @@ int main(int argc, char **argv) {
   free(plot_path);
   if (csv) fclose(csv);
   free(csv_path);
+  if (cap_csv) fclose(cap_csv);
+  free(cap_csv_path);
   free_exdata(&ex);
   vec_free(&items);
   return 0;
