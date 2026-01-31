@@ -1138,7 +1138,10 @@ static void move_visit(Visit *visits, int n_visits, int from_idx, int to_idx) {
   }
 }
 
-struct callback_data { int n; };
+struct callback_data {
+  int n;
+  int numvars;
+};
 static void findsubtour_directed(int n, double *sol, int *tourlenP, int *tour);
 int __stdcall subtourelim(GRBmodel *model, void *cbdata, int where, void *usrdata);
 static int *node_tour_to_letour(const int *tour, int len, int Size, int *out_len);
@@ -1339,7 +1342,9 @@ static int solve_capacity_tour(const ExData *seg, const double *dist,
   free(ind2);
   free(val2);
 
-  struct callback_data cb; cb.n = n;
+  struct callback_data cb;
+  cb.n = n;
+  cb.numvars = 3 * n * n;
   error = GRBsetcallbackfunc(model, subtourelim, (void*)&cb);
   if (error) goto QUIT;
   error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_LAZYCONSTRAINTS, 1);
@@ -2685,10 +2690,11 @@ int __stdcall subtourelim(GRBmodel *model, void *cbdata, int where, void *usrdat
   (void)model;
   struct callback_data *d=(struct callback_data*)usrdata;
   int n=d->n;
+  int numvars = d->numvars;
   int error=0;
 
   if(where==GRB_CB_MIPSOL){
-    double *sol=(double*)xmalloc((size_t)n*n*sizeof(double));
+    double *sol=(double*)xmalloc((size_t)numvars*sizeof(double));
     int *tour=(int*)xmalloc((size_t)n*sizeof(int));
     GRBcbget(cbdata, where, GRB_CB_MIPSOL_SOL, sol);
 
@@ -2772,7 +2778,9 @@ static int solve_tsp_distance(GRBenv *env, const double *dist, int Size,
     if (error) goto QUIT;
   }
 
-  struct callback_data cb; cb.n = n;
+  struct callback_data cb;
+  cb.n = n;
+  cb.numvars = n * n;
   error = GRBsetcallbackfunc(model, subtourelim, (void*)&cb);
   if (error) goto QUIT;
   error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_LAZYCONSTRAINTS, 1);
