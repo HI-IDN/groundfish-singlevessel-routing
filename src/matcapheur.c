@@ -1441,7 +1441,8 @@ static void log_cap_csv(FILE *fp, int pass, int boundary, int port_ex,
 static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
                                       const ExData *ex, double ship_cap,
                                       double timelimit, int left_seg,
-                                      int pass, FILE *cap_csv) {
+                                      int pass, FILE *cap_csv,
+                                      GRBenv *seg_env, double seg_timelimit) {
   /* Solve a two-segment subproblem with the capacity MIP, keeping the boundary
      port fixed and reassigning stations across the boundary. */
   if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
@@ -1592,6 +1593,9 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   }
 
   int port_ex = visits[boundary_idx].ex_idx;
+  double port_rad[2];
+  port_rad[0] = ex->LatLonRad[port_ex * 4 + 0];
+  port_rad[1] = ex->LatLonRad[port_ex * 4 + 1];
   segex.Type[k] = tPORT;
   segex.ItemIndex[k] = ex->ItemIndex[port_ex];
   segex.Amount[k] = 0.0;
@@ -1630,9 +1634,38 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   int node_len = 0;
   double obj = -1.0;
   CapSolveStats st;
+
+  double baseline = 1e300;
+  if (seg_env) {
+    double left_dist = 0.0;
+    double right_dist = 0.0;
+    int err_left = solve_segment_distance(seg_env, ex, stations, k0,
+                                          start_rad, port_rad, seg_timelimit,
+                                          &left_dist, NULL, NULL);
+    int err_right = solve_segment_distance(seg_env, ex, stations + k0, n_total - k0,
+                                           port_rad, end_rad, seg_timelimit,
+                                           &right_dist, NULL, NULL);
+    if (!err_left && !err_right) {
+      baseline = left_dist + right_dist;
+    }
+  }
+
   int ok = solve_capacity_tour(&segex, dist, ship_cap, timelimit, 1,
                                &node_tour, &node_len, &obj, &st);
   if (!ok || !node_tour || node_len <= 0) {
+    log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
+                k0, n_total - k0, load_left, load_right, n_nodes, &st, 0);
+    free(node_tour);
+    free(dist); free(fsb);
+    free_exdata(&segex);
+    free(local_to_ex);
+    free(stations);
+    return 0;
+  }
+
+  if (baseline < 1e299 && obj >= baseline - 1e-6) {
+    printf("Cap boundary reject: PORT-%d obj=%.3f baseline=%.3f\n",
+           port_ex, obj, baseline);
     log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
                 k0, n_total - k0, load_left, load_right, n_nodes, &st, 0);
     free(node_tour);
@@ -1731,7 +1764,8 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
                                         const ExData *ex, double ship_cap,
                                         double timelimit, int pass,
                                         int *dirty, int port_count,
-                                        FILE *cap_csv) {
+                                        FILE *cap_csv,
+                                        GRBenv *seg_env, double seg_timelimit) {
   /* Single boundary sweep pass. Updates dirty[] in-place. */
   if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
   if (!dirty || port_count <= 0) return 0;
@@ -1742,7 +1776,8 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
     if (!dirty[b]) continue;
     dirty[b] = 0;
     if (optimize_boundary_capacity(visits_io, n_visits_io, ex, ship_cap,
-                                   timelimit, b, pass, cap_csv)) {
+                                   timelimit, b, pass, cap_csv,
+                                   seg_env, seg_timelimit)) {
       changed = 1;
       dirty[b] = 1;
       dirty[(b + port_count - 1) % port_count] = 1;
@@ -3528,11 +3563,67 @@ int main(int argc, char **argv) {
   int any_change = 0;
   int stall_count = 0;
 
+  /* Baseline: evaluate initial segmented solution before any boundary moves. */
+  {
+    int nseg_init = 0;
+    int *seg_tour_init = NULL;
+    int seg_tour_len_init = 0;
+    SegmentResult *segs_init = evaluate_visit_segments(&ex, visits, n_visits, &nseg_init,
+                                                       timelimit, &seg_tour_init, &seg_tour_len_init);
+    if (!segs_init) die("segment evaluation failed");
+    double total_init = (seg_tour_init && seg_tour_len_init > 0)
+                          ? letour_distance_total(seg_tour_init, seg_tour_len_init, dist, Size)
+                          : sum_segment_distance(segs_init, nseg_init);
+    best_total = total_init;
+    best_pass = 0;
+    if (seg_tour_init && seg_tour_len_init > 0 && write_dat) {
+      write_route_dat(write_dat, &items, &ex, seg_tour_init, seg_tour_len_init);
+    }
+    if (seg_tour_init && seg_tour_len_init > 0 && plot_path) {
+      write_plot_bundle_letour(plot_path,
+                               Size, ex.SelectedSize,
+                               seg_tour_init, seg_tour_len_init,
+                               ex.Type, ex.Amount, ex.LatLonRad,
+                               &items, &ex);
+    }
+    printf("PROGRESS pass=0 changed=0 total=%.3f best=%.3f nseg=%d stall=0/%d\n",
+           total_init, best_total, nseg_init, stall_passes);
+    if (csv) {
+      fprintf(csv, "0,0,%.3f,%.3f,0", total_init, best_total);
+      if (nseg_max > 0) fputc(',', csv);
+      for (int s = 0; s < nseg_max; s++) {
+        if (s < nseg_init && segs_init[s].distance >= 0.0) {
+          fprintf(csv, "%.3f,%d,%.0f",
+                  segs_init[s].distance,
+                  segs_init[s].n_stations,
+                  segs_init[s].total_amount);
+        } else if (s < nseg_init) {
+          fprintf(csv, "nan,%d,%.0f",
+                  segs_init[s].n_stations,
+                  segs_init[s].total_amount);
+        } else {
+          fprintf(csv, "nan,0,0");
+        }
+        if (s + 1 < nseg_max) fputc(',', csv);
+      }
+      fputc('\n', csv);
+      fflush(csv);
+    }
+    free(segs_init);
+    free(seg_tour_init);
+  }
+
+  GRBenv *guard_env = NULL;
+  if (GRBloadenv(&guard_env, NULL) != 0) die("guard env failed");
+  GRBsetintparam(guard_env, "OutputFlag", 0);
+  GRBsetintparam(guard_env, "LogToConsole", 0);
+
   for (;;) {
     pass++;
     changed = optimize_boundaries_one_pass(&visits, &n_visits, &ex, ShipCap,
                                            cap_timelimit, pass, dirty,
-                                           port_count, cap_csv);
+                                           port_count, cap_csv,
+                                           guard_env, timelimit);
     if (changed) any_change = 1;
 
     int nseg_new = 0;
@@ -3604,6 +3695,7 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (guard_env) GRBfreeenv(guard_env);
   free(dirty);
 
   if (any_change) {

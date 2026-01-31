@@ -236,6 +236,54 @@ def segment_stats(letour, Type, Amount, dist_mtrx, names):
     return stats
 
 
+def format_label(idx, Type, names, boat_name):
+    if idx == 0:
+        return boat_name
+    if Type[idx] == tPORT:
+        if names and idx < len(names) and names[idx]:
+            return names[idx]
+        return f"PORT-{idx}"
+    if Type[idx] == tSTAT:
+        return f"STAT-{idx}"
+    return f"NODE-{idx}"
+
+
+def print_edges(letour, Type, dist_mtrx, names, full=False):
+    boat_name = names[0] if names else "BOAT"
+    prev_node = 0
+    prev_label = f"{boat_name}-START"
+    total = 0.0
+    for idx in letour[1:]:
+        if idx == 0:
+            continue
+        i = int(abs(idx))
+        entry = 2 * i + (1 if idx < 0 else 0)
+        exit_node = 2 * i + (0 if idx < 0 else 1)
+        base_label = format_label(i, Type, names, boat_name)
+        entry_label = f"{base_label} [entry]"
+        exit_label = f"{base_label} [exit]"
+        d = dist_mtrx[prev_node, entry]
+        total += d
+        if full:
+            print(f"{prev_label} -> {entry_label} (distance: {d:.3f}, total: {total:.3f})")
+        else:
+            print(f"{prev_label} -> {base_label} (distance: {d:.3f})")
+        if full:
+            d_in = dist_mtrx[entry, exit_node]
+            if d_in > 1e-9:
+                total += d_in
+                print(f"{entry_label} -> {exit_label} (distance: {d_in:.3f}, total: {total:.3f})")
+        prev_node = exit_node
+        prev_label = exit_label if full else base_label
+    d_end = dist_mtrx[prev_node, 1]
+    total += d_end
+    if full:
+        print(f"{prev_label} -> {boat_name}-END (distance: {d_end:.3f}, total: {total:.3f})")
+        print(f"TOTAL distance: {total:.3f}")
+    else:
+        print(f"{prev_label} -> {boat_name}-END (distance: {d_end:.3f})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sol", required=True, help="Path to solution_plot.txt (from C)")
@@ -244,6 +292,10 @@ def main():
     ap.add_argument("--save", help="Write the plot to this file instead of showing it")
     ap.add_argument("--ship-cap", type=float,
                     help="Ship capacity for segment legend (e.g., 45000)")
+    ap.add_argument("--edges", action="store_true",
+                    help="Print edge-by-edge distances for the route")
+    ap.add_argument("--edges-full", action="store_true",
+                    help="Print edge-by-edge distances including entry->exit legs")
     ap.add_argument("--tikz", action="store_true", help="Print TikZ code to stdout")
     ap.add_argument("--tikz-out", help="Write TikZ code to this file")
     args = ap.parse_args()
@@ -288,6 +340,11 @@ def main():
     stats = segment_stats(letour, Type, Amount, DistMtrx, names)
     for i, (start, end, stations, dist, amount) in enumerate(stats, 1):
         print(f"Segment {i}: {start} -> {end} | stations={stations} distance={dist:.3f} amount={amount:.0f}")
+
+    if args.edges_full:
+        print_edges(letour, Type, DistMtrx, names, full=True)
+    elif args.edges:
+        print_edges(letour, Type, DistMtrx, names, full=False)
 
     legend_labels = None
     if args.ship_cap is not None and args.ship_cap > 0:
