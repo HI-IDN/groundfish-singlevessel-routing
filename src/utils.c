@@ -328,7 +328,7 @@ void CreateDistanceMatrix(PARAMS params) {
   double* G = params.Graph;
 
   for (i = 0; i < M; i++)
-    D[i+M*i] = 10000000000000000000000.0;
+    D[i+M*i] = 0.0;
   for (i = 0; i < m; i++) {
     for (j = i + 1; j < m; j++) {
        x1 = params.LatLonRad[0][i];

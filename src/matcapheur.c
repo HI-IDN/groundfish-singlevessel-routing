@@ -1183,13 +1183,11 @@ static int solve_capacity_tour(const ExData *seg, const double *dist,
   if (error) goto QUIT;
 
   if (timelimit > 0.0) {
-  if (timelimit > 0.0) {
-    GRBsetdblparam(env, "TimeLimit", timelimit);
+    GRBsetdblparam(GRBgetenv(model), "TimeLimit", timelimit);
   }
-  }
-  GRBsetintparam(env, "Threads", 4);
-  GRBsetintparam(env, "OutputFlag", 1);
-  GRBsetintparam(env, "LogToConsole", 1);
+  GRBsetintparam(GRBgetenv(model), "Threads", 4);
+  GRBsetintparam(GRBgetenv(model), "OutputFlag", 1);
+  GRBsetintparam(GRBgetenv(model), "LogToConsole", 1);
 
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
@@ -3256,13 +3254,14 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--cap-time-limit <sec>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
     return 1;
   }
 
   const char *file = argv[1];
   int ship_id = atoi(argv[2]);
   double timelimit = 0.0;
+  double cap_timelimit = 120.0;
   int verbose_init = 0;
   const char *write_dat = NULL;
   for (int i = 3; i < argc; i++) {
@@ -3282,8 +3281,17 @@ int main(int argc, char **argv) {
       } else {
         die("--time-limit requires a value");
       }
+    } else if (strcmp(argv[i], "--cap-time-limit") == 0) {
+      if (i + 1 < argc) {
+        cap_timelimit = atof(argv[i + 1]);
+        i++;
+      } else {
+        die("--cap-time-limit requires a value");
+      }
     } else if (strncmp(argv[i], "--time-limit=", 13) == 0) {
       timelimit = atof(argv[i] + 13);
+    } else if (strncmp(argv[i], "--cap-time-limit=", 17) == 0) {
+      cap_timelimit = atof(argv[i] + 17);
     } else if (strcmp(argv[i], "--verbose-init") == 0) {
       verbose_init = 1;
     } else {
@@ -3391,7 +3399,7 @@ int main(int argc, char **argv) {
   print_segment_plan(&ex, &items, visits, n_visits);
 
   /* Sequentially re-optimize each adjacent boundary until a full pass makes no changes. */
-  if (optimize_boundaries_until_stable(&visits, &n_visits, &ex, ShipCap, timelimit)) {
+  if (optimize_boundaries_until_stable(&visits, &n_visits, &ex, ShipCap, cap_timelimit)) {
     printf("Capacity boundary sweep completed with changes.\n");
     printf("Updated segment plan:\n");
     print_segment_plan(&ex, &items, visits, n_visits);
