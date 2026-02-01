@@ -1645,27 +1645,17 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
     int err_right = solve_segment_distance(seg_env, ex, stations + k0, n_total - k0,
                                            port_rad, end_rad, seg_timelimit,
                                            &right_dist, NULL, NULL);
-    if (!err_left && !err_right) {
+    if (!err_left && !err_right && left_dist < 100000.0 && right_dist < 100000.0) {
       baseline = left_dist + right_dist;
+    } else {
+      printf("Cap boundary baseline infeasible: PORT-%d left=%.3f right=%.3f\n",
+             port_ex, left_dist, right_dist);
     }
   }
 
   int ok = solve_capacity_tour(&segex, dist, ship_cap, timelimit, 1,
                                &node_tour, &node_len, &obj, &st);
   if (!ok || !node_tour || node_len <= 0) {
-    log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
-                k0, n_total - k0, load_left, load_right, n_nodes, &st, 0);
-    free(node_tour);
-    free(dist); free(fsb);
-    free_exdata(&segex);
-    free(local_to_ex);
-    free(stations);
-    return 0;
-  }
-
-  if (baseline < 1e299 && obj >= baseline - 1e-6) {
-    printf("Cap boundary reject: PORT-%d obj=%.3f baseline=%.3f\n",
-           port_ex, obj, baseline);
     log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
                 k0, n_total - k0, load_left, load_right, n_nodes, &st, 0);
     free(node_tour);
@@ -1736,6 +1726,56 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
     return 0;
   }
 
+  double new_total = 1e300;
+  if (seg_env && baseline < 1e299) {
+    int port_pos = -1;
+    int *left_list = (int*)xmalloc((size_t)slice_len * sizeof(int));
+    int *right_list = (int*)xmalloc((size_t)slice_len * sizeof(int));
+    int left_count = 0;
+    int right_count = 0;
+    for (int i = 0; i < slice_len; i++) {
+      if (slice[i].type == tPORT) {
+        port_pos = i;
+        continue;
+      }
+      if (port_pos < 0) left_list[left_count++] = slice[i].ex_idx;
+      else right_list[right_count++] = slice[i].ex_idx;
+    }
+    if (port_pos >= 0) {
+      double left_dist = 0.0;
+      double right_dist = 0.0;
+      int err_left = solve_segment_distance(seg_env, ex, left_list, left_count,
+                                            start_rad, port_rad, seg_timelimit,
+                                            &left_dist, NULL, NULL);
+      int err_right = solve_segment_distance(seg_env, ex, right_list, right_count,
+                                             port_rad, end_rad, seg_timelimit,
+                                             &right_dist, NULL, NULL);
+      if (!err_left && !err_right && left_dist < 100000.0 && right_dist < 100000.0) {
+        new_total = left_dist + right_dist;
+      } else {
+        printf("Cap boundary reject: PORT-%d segment infeasible left=%.3f right=%.3f\n",
+               port_ex, left_dist, right_dist);
+      }
+    }
+    free(left_list);
+    free(right_list);
+  }
+
+  if (baseline < 1e299 && new_total >= baseline - 1e-6) {
+    printf("Cap boundary reject: PORT-%d real=%.3f baseline=%.3f\n",
+           port_ex, new_total, baseline);
+    log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
+                k0, n_total - k0, load_left, load_right, n_nodes, &st, 0);
+    free(slice);
+    free(letour);
+    free(node_tour);
+    free(dist); free(fsb);
+    free_exdata(&segex);
+    free(local_to_ex);
+    free(stations);
+    return 0;
+  }
+
   int new_count = 0;
   Visit *new_vis = (Visit*)xmalloc((size_t)(n_visits + n_total + 4) * sizeof(Visit));
   for (int i = 0; i < start_idx; i++) new_vis[new_count++] = visits[i];
@@ -1749,7 +1789,8 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   *visits_io = new_vis;
   *n_visits_io = new_count;
 
-  printf("Cap boundary opt: PORT-%d stations=%d obj=%.3f\n", port_ex, n_total, obj);
+  printf("Cap boundary opt: PORT-%d stations=%d obj=%.3f real=%.3f baseline=%.3f\n",
+         port_ex, n_total, obj, new_total, baseline);
 
   free(letour);
   free(node_tour);
