@@ -1192,6 +1192,7 @@ static void init_cap_stats(CapSolveStats *st) {
 
 static int solve_capacity_tour(const ExData *seg, const double *dist,
                                double ship_cap, double timelimit, int verbose,
+                               int cap_seed, int cap_mipfocus,
                                int **out_tour, int *out_len, double *out_obj,
                                CapSolveStats *out_stats) {
   (void)verbose;
@@ -1207,6 +1208,12 @@ static int solve_capacity_tour(const ExData *seg, const double *dist,
 
   if (timelimit > 0.0) {
     GRBsetdblparam(GRBgetenv(model), "TimeLimit", timelimit);
+  }
+  if (cap_seed >= 0) {
+    GRBsetintparam(GRBgetenv(model), "Seed", cap_seed);
+  }
+  if (cap_mipfocus >= 0) {
+    GRBsetintparam(GRBgetenv(model), "MIPFocus", cap_mipfocus);
   }
   GRBsetintparam(GRBgetenv(model), "Threads", 4);
   GRBsetintparam(GRBgetenv(model), "OutputFlag", 1);
@@ -1442,7 +1449,8 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
                                       const ExData *ex, double ship_cap,
                                       double timelimit, int left_seg,
                                       int pass, FILE *cap_csv,
-                                      GRBenv *seg_env, double seg_timelimit) {
+                                      GRBenv *seg_env, double seg_timelimit,
+                                      int cap_seed, int cap_mipfocus) {
   /* Solve a two-segment subproblem with the capacity MIP, keeping the boundary
      port fixed and reassigning stations across the boundary. */
   if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
@@ -1654,6 +1662,7 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
   }
 
   int ok = solve_capacity_tour(&segex, dist, ship_cap, timelimit, 1,
+                               cap_seed, cap_mipfocus,
                                &node_tour, &node_len, &obj, &st);
   if (!ok || !node_tour || node_len <= 0) {
     log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
@@ -1806,7 +1815,8 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
                                         double timelimit, int pass,
                                         int *dirty, int port_count,
                                         FILE *cap_csv,
-                                        GRBenv *seg_env, double seg_timelimit) {
+                                        GRBenv *seg_env, double seg_timelimit,
+                                        int cap_seed, int cap_mipfocus) {
   /* Single boundary sweep pass. Updates dirty[] in-place. */
   if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
   if (!dirty || port_count <= 0) return 0;
@@ -1818,7 +1828,8 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
     dirty[b] = 0;
     if (optimize_boundary_capacity(visits_io, n_visits_io, ex, ship_cap,
                                    timelimit, b, pass, cap_csv,
-                                   seg_env, seg_timelimit)) {
+                                   seg_env, seg_timelimit,
+                                   cap_seed, cap_mipfocus)) {
       changed = 1;
       dirty[b] = 1;
       dirty[(b + port_count - 1) % port_count] = 1;
@@ -3389,7 +3400,7 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--cap-time-limit <sec>] [--stall-passes <n>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--cap-time-limit <sec>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--stall-passes <n>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
     return 1;
   }
 
@@ -3397,6 +3408,8 @@ int main(int argc, char **argv) {
   int ship_id = atoi(argv[2]);
   double timelimit = 0.0;
   double cap_timelimit = 120.0;
+  int cap_seed = -1;
+  int cap_mipfocus = -1;
   int stall_passes = 3;
   int verbose_init = 0;
   const char *write_dat = NULL;
@@ -3424,6 +3437,20 @@ int main(int argc, char **argv) {
       } else {
         die("--cap-time-limit requires a value");
       }
+    } else if (strcmp(argv[i], "--cap-seed") == 0) {
+      if (i + 1 < argc) {
+        cap_seed = atoi(argv[i + 1]);
+        i++;
+      } else {
+        die("--cap-seed requires a value");
+      }
+    } else if (strcmp(argv[i], "--cap-mipfocus") == 0) {
+      if (i + 1 < argc) {
+        cap_mipfocus = atoi(argv[i + 1]);
+        i++;
+      } else {
+        die("--cap-mipfocus requires a value");
+      }
     } else if (strcmp(argv[i], "--stall-passes") == 0) {
       if (i + 1 < argc) {
         stall_passes = atoi(argv[i + 1]);
@@ -3435,6 +3462,10 @@ int main(int argc, char **argv) {
       timelimit = atof(argv[i] + 13);
     } else if (strncmp(argv[i], "--cap-time-limit=", 17) == 0) {
       cap_timelimit = atof(argv[i] + 17);
+    } else if (strncmp(argv[i], "--cap-seed=", 11) == 0) {
+      cap_seed = atoi(argv[i] + 11);
+    } else if (strncmp(argv[i], "--cap-mipfocus=", 15) == 0) {
+      cap_mipfocus = atoi(argv[i] + 15);
     } else if (strncmp(argv[i], "--stall-passes=", 15) == 0) {
       stall_passes = atoi(argv[i] + 15);
     } else if (strcmp(argv[i], "--verbose-init") == 0) {
@@ -3450,6 +3481,8 @@ int main(int argc, char **argv) {
 
   printf("Ship: %s\n", ship);
   srand((unsigned)time(NULL));
+  if (cap_seed >= 0) printf("CapSeed: %d\n", cap_seed);
+  if (cap_mipfocus >= 0) printf("CapMIPFocus: %d\n", cap_mipfocus);
 
   /* read dat */
   ItemVec items; vec_init(&items);
@@ -3664,7 +3697,8 @@ int main(int argc, char **argv) {
     changed = optimize_boundaries_one_pass(&visits, &n_visits, &ex, ShipCap,
                                            cap_timelimit, pass, dirty,
                                            port_count, cap_csv,
-                                           guard_env, timelimit);
+                                           guard_env, timelimit,
+                                           cap_seed, cap_mipfocus);
     if (changed) any_change = 1;
 
     int nseg_new = 0;
