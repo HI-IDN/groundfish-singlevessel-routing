@@ -3679,7 +3679,7 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--cap-time-limit <sec>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--stall-passes <n>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--cap-time-limit <sec>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
     return 1;
   }
 
@@ -3689,7 +3689,6 @@ int main(int argc, char **argv) {
   double cap_timelimit = 120.0;
   int cap_seed = -1;
   int cap_mipfocus = -1;
-  int stall_passes = 3;
   int verbose_init = 0;
   const char *write_dat = NULL;
   for (int i = 3; i < argc; i++) {
@@ -3730,13 +3729,6 @@ int main(int argc, char **argv) {
       } else {
         die("--cap-mipfocus requires a value");
       }
-    } else if (strcmp(argv[i], "--stall-passes") == 0) {
-      if (i + 1 < argc) {
-        stall_passes = atoi(argv[i + 1]);
-        i++;
-      } else {
-        die("--stall-passes requires a value");
-      }
     } else if (strncmp(argv[i], "--time-limit=", 13) == 0) {
       timelimit = atof(argv[i] + 13);
     } else if (strncmp(argv[i], "--cap-time-limit=", 17) == 0) {
@@ -3745,8 +3737,6 @@ int main(int argc, char **argv) {
       cap_seed = atoi(argv[i] + 11);
     } else if (strncmp(argv[i], "--cap-mipfocus=", 15) == 0) {
       cap_mipfocus = atoi(argv[i] + 15);
-    } else if (strncmp(argv[i], "--stall-passes=", 15) == 0) {
-      stall_passes = atoi(argv[i] + 15);
     } else if (strcmp(argv[i], "--verbose-init") == 0) {
       verbose_init = 1;
     } else {
@@ -3943,8 +3933,8 @@ int main(int argc, char **argv) {
                                ex.Type, ex.Amount, ex.LatLonRad,
                                &items, &ex);
     }
-    printf("PROGRESS pass=0 changed=0 total=%.3f best=%.3f nseg=%d stall=0/%d\n",
-           total_init, best_total, nseg_init, stall_passes);
+    printf("PROGRESS pass=0 changed=0 total=%.3f best=%.3f nseg=%d stall=0\n",
+           total_init, best_total, nseg_init);
     if (csv) {
       fprintf(csv, "0,0,%.3f,%.3f,0", total_init, best_total);
       if (nseg_max > 0) fputc(',', csv);
@@ -4018,16 +4008,16 @@ int main(int argc, char **argv) {
     }
 
     if (mut_count > 0 && mut_note[0] != '\0') {
-      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d/%d mut=%d %s\n",
-             pass, changed, total, best_total, nseg_new, stall_count, stall_passes,
+      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d mut=%d %s\n",
+             pass, changed, total, best_total, nseg_new, stall_count,
              mut_count, mut_note);
     } else if (mut_count > 0) {
-      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d/%d mut=%d\n",
-             pass, changed, total, best_total, nseg_new, stall_count, stall_passes,
+      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d mut=%d\n",
+             pass, changed, total, best_total, nseg_new, stall_count,
              mut_count);
     } else {
-      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d/%d\n",
-             pass, changed, total, best_total, nseg_new, stall_count, stall_passes);
+      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d\n",
+             pass, changed, total, best_total, nseg_new, stall_count);
     }
 
     if (csv) {
