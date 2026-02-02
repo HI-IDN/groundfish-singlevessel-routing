@@ -57,6 +57,9 @@ cd bin && ../py/plot_solution.py --sol ../sol/all_res_1.txt --recompute
 
 For reproducibility, record solver versions and any run flags (e.g., time limits) in your experiment notes.
 
+## Capacity Boundary Matheuristic (cap_* runs)
+This variant treats the full tour as a sequence of capacity‑feasible segments separated by fixed ports and optimizes **two adjacent segments at a time**. Each boundary pass solves a capacity MIP that reassigns stations across the boundary while keeping the separating port fixed. Because the MIP is time‑limited and rarely optimal, the algorithm **re‑optimizes each resulting segment** with the segment TSP solver and **accepts the boundary change only if the real two‑segment distance decreases** (infeasible segments, e.g., land‑crossing distances ≥ 100000, are rejected). The sweep continues around the circle until a full pass produces no accepted changes. Although each subproblem is solved only approximately, repeated boundary passes typically improve the global tour over the initial segmentation.
+
 ## Notes
 - `sol/` is intended for generated outputs; keep large artifacts only when needed for paper figures.
 - The plotting scripts rely on `py/survey_utils.py` and may recompute distance matrices if requested.
