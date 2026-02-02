@@ -3770,10 +3770,6 @@ int main(int argc, char **argv) {
     seg_tour_len = seg_tour_len_new;
     nseg = nseg_new;
     if (!changed) break;
-    if (stall_passes > 0 && stall_count >= stall_passes) {
-      printf("Stopping: no improvement for %d passes.\n", stall_passes);
-      break;
-    }
   }
 
   if (guard_env) GRBfreeenv(guard_env);

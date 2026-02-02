@@ -157,12 +157,14 @@ def fmt(val, digits=3):
 
 def latex_table(rows):
     header = (
-        "run & passes & baseline & best & final & improv\\% & "
-        "passes chg & avg seg chg & max seg chg & final nseg & "
-        "cap acc/solves & cap gap avg \\\\"
+        "run & passes & baseline & final & avg seg chg & max seg chg & "
+        "final nseg & cap acc/solves & cap gap avg (\\%) \\\\"
     )
     lines = [
-        "\\begin{tabular}{r r r r r r r r r r r r}",
+        "\\begin{table}[ht]",
+        "\\centering",
+        "\\caption{Summary of cap runs. Columns show run id, number of passes, baseline total distance (pass 0), final total distance, average and maximum segments changed per pass, final number of segments, accepted/total capacity solves, and average capacity MIP gap (percent).}",
+        "\\begin{tabular}{r r r r r r r r r}",
         "\\hline",
         header,
         "\\hline",
@@ -173,19 +175,17 @@ def latex_table(rows):
             str(r["run"]),
             str(r["passes"]),
             fmt(r["base_total"]),
-            fmt(r["best_total"]),
             fmt(r["final_total"]),
-            fmt(r["improve_pct"], 2),
-            str(r["passes_changed"]),
             fmt(r["avg_seg_changed"], 2),
             str(r["max_seg_changed"]),
             fmt(r["final_nseg"], 0),
             cap_acc,
-            fmt(r["cap_gap_avg"], 3),
+            fmt(r["cap_gap_avg"] * 100.0 if r["cap_gap_avg"] is not None else None, 2),
         ]) + " \\\\"
         lines.append(line)
     lines.append("\\hline")
     lines.append("\\end{tabular}")
+    lines.append("\\end{table}")
     return "\n".join(lines)
 
 
@@ -231,7 +231,7 @@ def main():
     for path in sol_dir.glob("cap_*.csv"):
         if path.name.endswith(".cap.csv"):
             continue
-        m = re.match(r"cap_(\\d+)\\.csv$", path.name)
+        m = re.match(r"cap_(\d+)\.csv$", path.name)
         if not m:
             continue
         run_files[int(m.group(1))] = path
