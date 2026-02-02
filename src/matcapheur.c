@@ -1192,7 +1192,7 @@ static void init_cap_stats(CapSolveStats *st) {
 
 static int solve_capacity_tour(const ExData *seg, const double *dist,
                                double ship_cap, double timelimit, int verbose,
-                               int cap_seed, int cap_mipfocus,
+                               int solve_seed, int cap_mipfocus,
                                int **out_tour, int *out_len, double *out_obj,
                                CapSolveStats *out_stats) {
   (void)verbose;
@@ -1209,8 +1209,8 @@ static int solve_capacity_tour(const ExData *seg, const double *dist,
   if (timelimit > 0.0) {
     GRBsetdblparam(GRBgetenv(model), "TimeLimit", timelimit);
   }
-  if (cap_seed >= 0) {
-    GRBsetintparam(GRBgetenv(model), "Seed", cap_seed);
+  if (solve_seed >= 0) {
+    GRBsetintparam(GRBgetenv(model), "Seed", solve_seed);
   }
   if (cap_mipfocus >= 0) {
     GRBsetintparam(GRBgetenv(model), "MIPFocus", cap_mipfocus);
@@ -1455,6 +1455,7 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
      port fixed and reassigning stations across the boundary. */
   if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
   if (left_seg < 0) return 0;
+  (void)cap_seed;
 
   Visit *visits = *visits_io;
   int n_visits = *n_visits_io;
@@ -1661,8 +1662,9 @@ static int optimize_boundary_capacity(Visit **visits_io, int *n_visits_io,
     }
   }
 
+  int solve_seed = rand();
   int ok = solve_capacity_tour(&segex, dist, ship_cap, timelimit, 1,
-                               cap_seed, cap_mipfocus,
+                               solve_seed, cap_mipfocus,
                                &node_tour, &node_len, &obj, &st);
   if (!ok || !node_tour || node_len <= 0) {
     log_cap_csv(cap_csv, pass, left_seg, visits[boundary_idx].ex_idx,
@@ -3480,8 +3482,12 @@ int main(int argc, char **argv) {
   const char *ship = ship_names[ship_id-1];
 
   printf("Ship: %s\n", ship);
-  srand((unsigned)time(NULL));
-  if (cap_seed >= 0) printf("CapSeed: %d\n", cap_seed);
+  if (cap_seed >= 0) {
+    srand((unsigned)cap_seed);
+    printf("CapSeed(base RNG): %d\n", cap_seed);
+  } else {
+    srand((unsigned)time(NULL));
+  }
   if (cap_mipfocus >= 0) printf("CapMIPFocus: %d\n", cap_mipfocus);
 
   /* read dat */
