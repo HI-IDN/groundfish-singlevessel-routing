@@ -3603,7 +3603,7 @@ int main(int argc, char **argv) {
     if (!csv) {
       perror("fopen(csv)");
     } else {
-      fputs("attempts,changed,total,best,stall", csv);
+      fputs("attempts,changed,total,best,stall,elapsed_sec", csv);
       if (nseg_max > 0) fputc(',', csv);
       for (int s = 0; s < nseg_max; s++) {
         fprintf(csv, "seg%d_distance,seg%d_stations,seg%d_amount", s + 1, s + 1, s + 1);
@@ -3622,6 +3622,7 @@ int main(int argc, char **argv) {
     }
   }
 
+  clock_t start_clock = clock();
   int nseg = 0;
   int *seg_tour = NULL;
   int seg_tour_len = 0;
@@ -3659,7 +3660,8 @@ int main(int argc, char **argv) {
     printf("PROGRESS pass=0 changed=0 total=%.3f best=%.3f nseg=%d stall=0\n",
            total_init, best_total, nseg_init);
     if (csv) {
-      fprintf(csv, "0,0,%.3f,%.3f,0", total_init, best_total);
+      double elapsed = (double)(clock() - start_clock) / (double)CLOCKS_PER_SEC;
+      fprintf(csv, "0,0,%.3f,%.3f,0,%.3f", total_init, best_total, elapsed);
       if (nseg_max > 0) fputc(',', csv);
       for (int s = 0; s < nseg_max; s++) {
         if (s < nseg_init && segs_init[s].distance >= 0.0) {
@@ -3729,10 +3731,11 @@ int main(int argc, char **argv) {
            pass, changed, total, best_total, nseg_new, stall_count);
 
     if (csv) {
+      double elapsed = (double)(clock() - start_clock) / (double)CLOCKS_PER_SEC;
       fprintf(csv, "%d,%d,", pass, changed);
       if (total >= 0.0) fprintf(csv, "%.3f,%.3f", total, best_total);
       else fprintf(csv, "nan,%.3f", best_total);
-      fprintf(csv, ",%d", stall_count);
+      fprintf(csv, ",%d,%.3f", stall_count, elapsed);
       if (nseg_max > 0) fputc(',', csv);
       for (int s = 0; s < nseg_max; s++) {
         if (s < nseg_new && segs_new[s].distance >= 0.0) {

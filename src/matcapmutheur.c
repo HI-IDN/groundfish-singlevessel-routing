@@ -2071,7 +2071,7 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
                                         GRBenv *seg_env, double seg_timelimit,
                                         int cap_seed, int cap_mipfocus,
                                         const double *dist, int Size,
-                                        int *out_mut_count,
+                                        int *out_mut_count, int *out_mut_attempts,
                                         char *out_mut_note, size_t out_mut_note_len) {
   /* Single boundary sweep pass. Updates dirty[] in-place. */
   if (!visits_io || !*visits_io || !n_visits_io || *n_visits_io <= 0) return 0;
@@ -2079,6 +2079,7 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
 
   int changed = 0;
   int mut_count = 0;
+  int mut_attempts = 0;
   if (out_mut_note && out_mut_note_len > 0) out_mut_note[0] = '\0';
   printf("Capacity boundary sweep pass %d\n", pass);
   for (int b = 0; b < port_count; b++) {
@@ -2099,6 +2100,7 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
     int dst_seg = -1;
     int stat_ex = -1;
     double delta = 0.0;
+    mut_attempts++;
     if (mutate_inject_closest_station(visits_io, n_visits_io, ex, dist, Size,
                                       ship_cap, b, seg_env, seg_timelimit,
                                       &src_seg, &dst_seg, &stat_ex, &delta)) {
@@ -2115,6 +2117,7 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
     }
   }
   if (out_mut_count) *out_mut_count = mut_count;
+  if (out_mut_attempts) *out_mut_attempts = mut_attempts;
   return changed;
 }
 
@@ -3880,7 +3883,7 @@ int main(int argc, char **argv) {
     if (!csv) {
       perror("fopen(csv)");
     } else {
-      fputs("attempts,changed,total,best,stall", csv);
+      fputs("attempts,changed,total,best,stall,mut_success,mut_attempts,elapsed_sec", csv);
       if (nseg_max > 0) fputc(',', csv);
       for (int s = 0; s < nseg_max; s++) {
         fprintf(csv, "seg%d_distance,seg%d_stations,seg%d_amount", s + 1, s + 1, s + 1);
@@ -3899,6 +3902,7 @@ int main(int argc, char **argv) {
     }
   }
 
+  clock_t start_clock = clock();
   int nseg = 0;
   int *seg_tour = NULL;
   int seg_tour_len = 0;
@@ -3936,7 +3940,8 @@ int main(int argc, char **argv) {
     printf("PROGRESS pass=0 changed=0 total=%.3f best=%.3f nseg=%d stall=0\n",
            total_init, best_total, nseg_init);
     if (csv) {
-      fprintf(csv, "0,0,%.3f,%.3f,0", total_init, best_total);
+      double elapsed = (double)(clock() - start_clock) / (double)CLOCKS_PER_SEC;
+      fprintf(csv, "0,0,%.3f,%.3f,0,0,0,%.3f", total_init, best_total, elapsed);
       if (nseg_max > 0) fputc(',', csv);
       for (int s = 0; s < nseg_max; s++) {
         if (s < nseg_init && segs_init[s].distance >= 0.0) {
@@ -3968,6 +3973,7 @@ int main(int argc, char **argv) {
   for (;;) {
     pass++;
     int mut_count = 0;
+    int mut_attempts = 0;
     char mut_note[256];
     mut_note[0] = '\0';
     changed = optimize_boundaries_one_pass(&visits, &n_visits, &ex, ShipCap,
@@ -3976,7 +3982,8 @@ int main(int argc, char **argv) {
                                            guard_env, timelimit,
                                            cap_seed, cap_mipfocus,
                                            dist, Size,
-                                           &mut_count, mut_note, sizeof(mut_note));
+                                           &mut_count, &mut_attempts,
+                                           mut_note, sizeof(mut_note));
     if (changed) any_change = 1;
 
     int nseg_new = 0;
@@ -4008,23 +4015,24 @@ int main(int argc, char **argv) {
     }
 
     if (mut_count > 0 && mut_note[0] != '\0') {
-      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d mut=%d %s\n",
+      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d mut=%d/%d %s\n",
              pass, changed, total, best_total, nseg_new, stall_count,
-             mut_count, mut_note);
+             mut_count, mut_attempts, mut_note);
     } else if (mut_count > 0) {
-      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d mut=%d\n",
+      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d mut=%d/%d\n",
              pass, changed, total, best_total, nseg_new, stall_count,
-             mut_count);
+             mut_count, mut_attempts);
     } else {
-      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d\n",
-             pass, changed, total, best_total, nseg_new, stall_count);
+      printf("PROGRESS pass=%d changed=%d total=%.3f best=%.3f nseg=%d stall=%d mut=0/%d\n",
+             pass, changed, total, best_total, nseg_new, stall_count, mut_attempts);
     }
 
     if (csv) {
+      double elapsed = (double)(clock() - start_clock) / (double)CLOCKS_PER_SEC;
       fprintf(csv, "%d,%d,", pass, changed);
       if (total >= 0.0) fprintf(csv, "%.3f,%.3f", total, best_total);
       else fprintf(csv, "nan,%.3f", best_total);
-      fprintf(csv, ",%d", stall_count);
+      fprintf(csv, ",%d,%d,%d,%.3f", stall_count, mut_count, mut_attempts, elapsed);
       if (nseg_max > 0) fputc(',', csv);
       for (int s = 0; s < nseg_max; s++) {
         if (s < nseg_new && segs_new[s].distance >= 0.0) {
