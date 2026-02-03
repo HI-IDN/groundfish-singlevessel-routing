@@ -86,6 +86,9 @@ def summarize_run(run_id, cap_csv, cap_log):
     total = [fnum(r["total"]) for r in rows]
     best = [fnum(r["best"]) for r in rows]
     changed_flag = [inum(r["changed"]) for r in rows]
+    mut_success = [inum(r.get("mut_success", 0)) for r in rows]
+    mut_attempts = [inum(r.get("mut_attempts", 0)) for r in rows]
+    elapsed = [fnum(r.get("elapsed_sec", None)) for r in rows]
 
     base_total = total[0]
     final_total = total[-1]
@@ -108,17 +111,40 @@ def summarize_run(run_id, cap_csv, cap_log):
     cap_solves = cap_accept = 0
     cap_gap_avg = None
     cap_time_avg = None
+    cap_by_pass = {}
     if cap_log:
         cap_solves = len(cap_log)
         cap_accept = sum(1 for r in cap_log if inum(r.get("changed", 0)) == 1)
         gaps = [fnum(r.get("gap", "")) for r in cap_log]
-        gaps = [g for g in gaps if g is not None and not math.isnan(g)]
+        gaps = [g for g in gaps if g is not None and math.isfinite(g) and g >= 0.0 and g <= 10.0]
         if gaps:
             cap_gap_avg = sum(gaps) / len(gaps)
         times = [fnum(r.get("runtime", "")) for r in cap_log]
         times = [t for t in times if t is not None and not math.isnan(t)]
         if times:
             cap_time_avg = sum(times) / len(times)
+        for r in cap_log:
+            p = inum(r.get("pass", 0))
+            if p is None:
+                continue
+            bucket = cap_by_pass.setdefault(p, {
+                "solves": 0,
+                "accept": 0,
+                "no_inc": 0,
+                "gap_vals": [],
+                "time_vals": [],
+            })
+            bucket["solves"] += 1
+            if inum(r.get("changed", 0)) == 1:
+                bucket["accept"] += 1
+            if inum(r.get("solcount", 0)) == 0:
+                bucket["no_inc"] += 1
+            g = fnum(r.get("gap", ""))
+            if g is not None and math.isfinite(g) and g >= 0.0 and g <= 10.0:
+                bucket["gap_vals"].append(g)
+            t = fnum(r.get("runtime", ""))
+            if t is not None and math.isfinite(t):
+                bucket["time_vals"].append(t)
 
     return {
         "run": run_id,
@@ -138,11 +164,15 @@ def summarize_run(run_id, cap_csv, cap_log):
         "cap_accept": cap_accept,
         "cap_gap_avg": cap_gap_avg,
         "cap_time_avg": cap_time_avg,
+        "cap_by_pass": cap_by_pass,
         "per_pass": {
             "nseg": nseg_by_pass,
             "seg_changed": seg_changed_by_pass,
             "total": total,
             "best": best,
+            "mut_success": mut_success,
+            "mut_attempts": mut_attempts,
+            "elapsed": elapsed,
         },
     }
 
@@ -191,24 +221,56 @@ def latex_table(rows):
 
 def latex_per_pass(run_id, summary):
     per = summary["per_pass"]
+    cap_by_pass = summary.get("cap_by_pass", {})
     lines = [
-        "\\begin{tabular}{r r r r r}",
+        "\\begin{tabular}{r r r r r r r r r r r r}",
         "\\hline",
-        f"pass & segs chg & nseg & total & best \\\\",
+        f"pass & total & best & $\\Delta$ & seg chg & nseg & mut & cap acc/solves & cap no-inc & cap gap (\\%) & cap time & elapsed \\\\",
         "\\hline",
     ]
     for i, (nseg, total, best) in enumerate(zip(per["nseg"], per["total"], per["best"])):
         if i == 0:
             seg_chg = 0
+            delta = None
         else:
             seg_chg = per["seg_changed"][i - 1]
+            prev = per["total"][i - 1]
+            delta = None if prev is None or total is None else (total - prev)
+        mut_s = per.get("mut_success", [0]*len(per["total"]))[i] or 0
+        mut_a = per.get("mut_attempts", [0]*len(per["total"]))[i] or 0
+        mut_str = f"{mut_s}/{mut_a}"
+        cap = cap_by_pass.get(i, None)
+        if cap:
+            cap_acc = f"{cap['accept']}/{cap['solves']}"
+            cap_no = str(cap["no_inc"])
+            if cap["gap_vals"]:
+                cap_gap = sum(cap["gap_vals"]) / len(cap["gap_vals"]) * 100.0
+            else:
+                cap_gap = None
+            if cap["time_vals"]:
+                cap_time = sum(cap["time_vals"]) / len(cap["time_vals"])
+            else:
+                cap_time = None
+        else:
+            cap_acc = "0/0"
+            cap_no = "0"
+            cap_gap = None
+            cap_time = None
+        elapsed = per.get("elapsed", [None]*len(per["total"]))[i]
         lines.append(
             " & ".join([
                 str(i),
-                str(seg_chg),
-                str(nseg),
                 fmt(total),
                 fmt(best),
+                fmt(delta),
+                str(seg_chg),
+                str(nseg),
+                mut_str,
+                cap_acc,
+                cap_no,
+                fmt(cap_gap, 2),
+                fmt(cap_time, 2),
+                fmt(elapsed, 2),
             ]) + " \\\\"
         )
     lines.append("\\hline")
@@ -218,30 +280,53 @@ def latex_per_pass(run_id, summary):
 
 def main():
     parser = argparse.ArgumentParser(description="Summarize cap_* runs and emit a LaTeX table.")
+    parser.add_argument("csv_paths", nargs="*", help="Optional list of cap_*.csv files.")
     parser.add_argument("--sol-dir", default="sol", help="Directory with cap_*.csv files.")
     parser.add_argument("--per-pass", action="store_true", help="Include a per-pass table for each run.")
     parser.add_argument("--out", default="", help="Write LaTeX output to a file instead of stdout.")
     args = parser.parse_args()
 
-    sol_dir = Path(args.sol_dir)
-    if not sol_dir.exists():
-        raise SystemExit(f"Missing sol dir: {sol_dir}")
-
     run_files = {}
-    for path in sol_dir.glob("cap_*.csv"):
-        if path.name.endswith(".cap.csv"):
-            continue
-        m = re.match(r"cap_(\d+)\.csv$", path.name)
-        if not m:
-            continue
-        run_files[int(m.group(1))] = path
+    if args.csv_paths:
+        for raw in args.csv_paths:
+            path = Path(raw)
+            if not path.exists():
+                raise SystemExit(f"Missing file: {path}")
+            if path.name.endswith(".cap.csv"):
+                continue
+            run_id = None
+            m = re.match(r"cap_(\d+)\.csv$", path.name)
+            if m:
+                run_id = int(m.group(1))
+            m = re.match(r"capmut_(\d+)\.csv$", path.name)
+            if m:
+                run_id = int(m.group(1))
+            if run_id is None:
+                run_id = path.stem
+            run_files[run_id] = path
+    else:
+        sol_dir = Path(args.sol_dir)
+        if not sol_dir.exists():
+            raise SystemExit(f"Missing sol dir: {sol_dir}")
+
+        for path in sol_dir.glob("cap_*.csv"):
+            if path.name.endswith(".cap.csv"):
+                continue
+            m = re.match(r"cap_(\d+)\.csv$", path.name)
+            if not m:
+                continue
+            run_files[int(m.group(1))] = path
 
     summaries = []
-    for run_id in sorted(run_files):
+    for run_id in sorted(run_files, key=lambda x: (isinstance(x, str), x)):
         cap_csv = load_cap_csv(run_files[run_id])
         if not cap_csv:
             continue
-        cap_log = load_cap_log(sol_dir / f"cap_{run_id}.cap.csv")
+        cap_log = None
+        cap_path = run_files[run_id]
+        cap_log_path = cap_path.with_suffix(".cap.csv")
+        if cap_log_path.exists():
+            cap_log = load_cap_log(cap_log_path)
         summaries.append(summarize_run(run_id, cap_csv, cap_log))
 
     if not summaries:

@@ -292,6 +292,8 @@ def main():
     ap.add_argument("--save", help="Write the plot to this file instead of showing it")
     ap.add_argument("--ship-cap", type=float,
                     help="Ship capacity for segment legend (e.g., 45000)")
+    ap.add_argument("--legend", action="store_true",
+                    help="Show segment amount legend even without ship capacity")
     ap.add_argument("--edges", action="store_true",
                     help="Print edge-by-edge distances for the route")
     ap.add_argument("--edges-full", action="store_true",
@@ -354,6 +356,10 @@ def main():
             if amount > args.ship_cap:
                 label += " OVER"
             legend_labels.append(label)
+    elif args.legend:
+        legend_labels = []
+        for i, (_start, _end, _stations, _dist, amount) in enumerate(stats, 1):
+            legend_labels.append(f"Seg {i}: {amount:.0f}")
 
     drawTour(letour, LatLonRad, Type, Amount, DistMtrx, FsbleMtrx,
              legend_labels=legend_labels,
