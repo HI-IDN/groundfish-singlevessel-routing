@@ -3957,9 +3957,10 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--init_timelimit <sec>] [--seg_timelimit <sec>] [--cap-time-limit <sec>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--init_timelimit <sec>] [--seg_timelimit <sec>] [--cap-time-limit <sec>] [--init-capacity <val>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
     fprintf(stderr, "  Note: greedy init ignores --init_timelimit (kept for compatibility).\n");
     fprintf(stderr, "        --seg_timelimit defaults to 0 (no limit).\n");
+    fprintf(stderr, "        --init-capacity (if set) must be <= ship capacity.\n");
     return 1;
   }
 
@@ -3968,6 +3969,7 @@ int main(int argc, char **argv) {
   double init_timelimit = 0.0;
   double seg_timelimit = 0.0;
   double cap_timelimit = 120.0;
+  double init_capacity = 0.0;
   int cap_seed = -1;
   int cap_mipfocus = -1;
   int verbose_init = 0;
@@ -4013,6 +4015,13 @@ int main(int argc, char **argv) {
       } else {
         die("--cap-time-limit requires a value");
       }
+    } else if (strcmp(argv[i], "--init-capacity") == 0) {
+      if (i + 1 < argc) {
+        init_capacity = atof(argv[i + 1]);
+        i++;
+      } else {
+        die("--init-capacity requires a value");
+      }
     } else if (strcmp(argv[i], "--cap-seed") == 0) {
       if (i + 1 < argc) {
         cap_seed = atoi(argv[i + 1]);
@@ -4044,6 +4053,8 @@ int main(int argc, char **argv) {
       init_timelimit = atof(argv[i] + 13);
     } else if (strncmp(argv[i], "--cap-time-limit=", 17) == 0) {
       cap_timelimit = atof(argv[i] + 17);
+    } else if (strncmp(argv[i], "--init-capacity=", 16) == 0) {
+      init_capacity = atof(argv[i] + 16);
     } else if (strncmp(argv[i], "--cap-seed=", 11) == 0) {
       cap_seed = atoi(argv[i] + 11);
     } else if (strncmp(argv[i], "--cap-mipfocus=", 15) == 0) {
@@ -4077,6 +4088,10 @@ int main(int argc, char **argv) {
   double ShipCap = 0.0;
   readDat_C(file, ship, &items, &ShipCap, 0);
   printf("ShipCap: %.0f\n", ShipCap);
+  if (init_capacity > 0.0 && ShipCap > 0.0 && init_capacity > ShipCap) {
+    die("--init-capacity exceeds ship capacity");
+  }
+  double init_cap = (init_capacity > 0.0) ? init_capacity : ShipCap;
 
   ExData ex = build_exdata(&items);
   /* Build waypoint-aware feasibility + distance for node graph of size n = 2*Size */
@@ -4108,15 +4123,15 @@ int main(int argc, char **argv) {
     if (ex.Type[i] == tSTAT) total_amount += ex.Amount[i];
   }
   int init_segments = 1;
-  if (ShipCap > 0.0) {
-    init_segments = (int)ceil(total_amount / ShipCap);
+  if (init_cap > 0.0) {
+    init_segments = (int)ceil(total_amount / init_cap);
     if (init_segments < 1) init_segments = 1;
   }
-  printf("Init segments min: %d (total=%.1f, ship_cap=%.1f)\n",
-         init_segments, total_amount, ShipCap);
+  printf("Init segments min: %d (total=%.1f, init_cap=%.1f, ship_cap=%.1f)\n",
+         init_segments, total_amount, init_cap, ShipCap);
 
   int n_visits = 0;
-  Visit *visits = build_greedy_visits(&ex, &items, full_dist, full_m, ShipCap, &n_visits);
+  Visit *visits = build_greedy_visits(&ex, &items, full_dist, full_m, init_cap, &n_visits);
   int init_built = count_segments(visits, n_visits);
   printf("Init segments built: %d (min=%d)\n", init_built, init_segments);
   if (init_built > init_segments) {

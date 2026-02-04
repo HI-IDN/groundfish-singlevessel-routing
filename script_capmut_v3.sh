@@ -17,6 +17,7 @@ for cap_t in "${CAP_TIMELIMITS[@]}"; do
   "${BIN_DIR}/matcapmutheur_v3" "${DAT_FILE}" 1 \
     --cap-time-limit "${cap_t}" \
     --write-dat "${out_dat}" \
+    --init-capacity 42000 \
     --verbose-init \
     > "${out_log}"
 done
