@@ -882,8 +882,8 @@ int main(int argc, char **argv) {
 
   error = GRBloadenv(&env, "planner.log");
   if (error) goto QUIT;
-  GRBsetintparam(env, "OutputFlag", 0);
-  GRBsetintparam(env, "LogToConsole", 0);
+  GRBsetintparam(env, "OutputFlag", 1);
+  GRBsetintparam(env, "LogToConsole", 1);
 
   error = GRBnewmodel(env, &model, "planner", 0, NULL, NULL, NULL, NULL, NULL);
   if (error) goto QUIT;
