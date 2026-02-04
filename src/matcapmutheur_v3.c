@@ -3577,6 +3577,200 @@ static double min_dist_from_start(const double *full_dist, int full_m, int to_ex
   return d0 < d1 ? d0 : d1;
 }
 
+static int *collect_station_list(const ExData *ex, int *out_n) {
+  int n_station = 0;
+  for (int i = 0; i < ex->Size; i++) {
+    if (ex->Type[i] == tSTAT) n_station++;
+  }
+  int *stations = (int*)xmalloc((size_t)n_station * sizeof(int));
+  int sidx = 0;
+  for (int i = 0; i < ex->Size; i++) {
+    if (ex->Type[i] == tSTAT) stations[sidx++] = i;
+  }
+  *out_n = n_station;
+  return stations;
+}
+
+static int *tsp_cheapest_insertion(const ExData *ex, const double *full_dist, int full_m,
+                                   int *out_n) {
+  int n_station = 0;
+  int *stations = collect_station_list(ex, &n_station);
+  if (n_station <= 1) {
+    *out_n = n_station;
+    return stations;
+  }
+
+  int a = 0, b = 1;
+  double best = min_dist_ex(full_dist, full_m, stations[0], stations[1]);
+  for (int i = 0; i < n_station; i++) {
+    for (int j = i + 1; j < n_station; j++) {
+      double d = min_dist_ex(full_dist, full_m, stations[i], stations[j]);
+      if (d < best) { best = d; a = i; b = j; }
+    }
+  }
+
+  int *tour = (int*)xmalloc((size_t)n_station * sizeof(int));
+  int *used = (int*)xcalloc((size_t)n_station, sizeof(int));
+  int len = 0;
+  tour[len++] = a;
+  tour[len++] = b;
+  used[a] = 1;
+  used[b] = 1;
+
+  while (len < n_station) {
+    double best_delta = 1e300;
+    int best_u = -1;
+    int best_pos = -1;
+    for (int u = 0; u < n_station; u++) {
+      if (used[u]) continue;
+      int st_u = stations[u];
+      for (int i = 0; i < len; i++) {
+        int j = (i + 1) % len;
+        int st_i = stations[tour[i]];
+        int st_j = stations[tour[j]];
+        double d_ij = min_dist_ex(full_dist, full_m, st_i, st_j);
+        double d_iu = min_dist_ex(full_dist, full_m, st_i, st_u);
+        double d_uj = min_dist_ex(full_dist, full_m, st_u, st_j);
+        double delta = d_iu + d_uj - d_ij;
+        if (delta < best_delta) {
+          best_delta = delta;
+          best_u = u;
+          best_pos = j;
+        }
+      }
+    }
+    if (best_u < 0) break;
+    for (int k = len; k > best_pos; k--) {
+      tour[k] = tour[k - 1];
+    }
+    tour[best_pos] = best_u;
+    used[best_u] = 1;
+    len++;
+  }
+
+  int *order = (int*)xmalloc((size_t)n_station * sizeof(int));
+  for (int i = 0; i < n_station; i++) {
+    order[i] = stations[tour[i]];
+  }
+  free(tour);
+  free(used);
+  free(stations);
+  *out_n = n_station;
+  return order;
+}
+
+typedef struct {
+  int u;
+  int v;
+  double w;
+} Edge;
+
+static int edge_cmp(const void *a, const void *b) {
+  const Edge *ea = (const Edge*)a;
+  const Edge *eb = (const Edge*)b;
+  if (ea->w < eb->w) return -1;
+  if (ea->w > eb->w) return 1;
+  return 0;
+}
+
+static int dsu_find(int *p, int x) {
+  if (p[x] == x) return x;
+  p[x] = dsu_find(p, p[x]);
+  return p[x];
+}
+
+static void dsu_union(int *p, int a, int b) {
+  int ra = dsu_find(p, a);
+  int rb = dsu_find(p, b);
+  if (ra != rb) p[rb] = ra;
+}
+
+static int *tsp_greedy_edge(const ExData *ex, const double *full_dist, int full_m,
+                            int *out_n) {
+  int n_station = 0;
+  int *stations = collect_station_list(ex, &n_station);
+  if (n_station <= 1) {
+    *out_n = n_station;
+    return stations;
+  }
+
+  int edge_count = n_station * (n_station - 1) / 2;
+  Edge *edges = (Edge*)xmalloc((size_t)edge_count * sizeof(Edge));
+  int eidx = 0;
+  for (int i = 0; i < n_station; i++) {
+    for (int j = i + 1; j < n_station; j++) {
+      edges[eidx].u = i;
+      edges[eidx].v = j;
+      edges[eidx].w = min_dist_ex(full_dist, full_m, stations[i], stations[j]);
+      eidx++;
+    }
+  }
+  qsort(edges, (size_t)edge_count, sizeof(Edge), edge_cmp);
+
+  int *deg = (int*)xcalloc((size_t)n_station, sizeof(int));
+  int *adj1 = (int*)xmalloc((size_t)n_station * sizeof(int));
+  int *adj2 = (int*)xmalloc((size_t)n_station * sizeof(int));
+  int *parent = (int*)xmalloc((size_t)n_station * sizeof(int));
+  for (int i = 0; i < n_station; i++) {
+    adj1[i] = -1;
+    adj2[i] = -1;
+    parent[i] = i;
+  }
+
+  int used_edges = 0;
+  for (int i = 0; i < edge_count && used_edges < n_station; i++) {
+    int u = edges[i].u;
+    int v = edges[i].v;
+    if (deg[u] >= 2 || deg[v] >= 2) continue;
+    int ru = dsu_find(parent, u);
+    int rv = dsu_find(parent, v);
+    if (ru == rv) {
+      if (used_edges != n_station - 1) continue;
+    }
+    if (adj1[u] == -1) adj1[u] = v;
+    else adj2[u] = v;
+    if (adj1[v] == -1) adj1[v] = u;
+    else adj2[v] = u;
+    deg[u]++; deg[v]++;
+    used_edges++;
+    dsu_union(parent, u, v);
+  }
+
+  int ok = (used_edges == n_station);
+  for (int i = 0; i < n_station; i++) {
+    if (deg[i] != 2) { ok = 0; break; }
+  }
+  if (!ok) {
+    printf("Greedy-edge init: failed to build a full tour, falling back to station order.\n");
+    free(edges);
+    free(deg);
+    free(adj1);
+    free(adj2);
+    free(parent);
+    *out_n = n_station;
+    return stations;
+  }
+
+  int *order = (int*)xmalloc((size_t)n_station * sizeof(int));
+  int cur = 0;
+  int prev = -1;
+  for (int i = 0; i < n_station; i++) {
+    order[i] = stations[cur];
+    int next = (adj1[cur] != prev) ? adj1[cur] : adj2[cur];
+    prev = cur;
+    cur = next;
+  }
+
+  free(edges);
+  free(deg);
+  free(adj1);
+  free(adj2);
+  free(parent);
+  free(stations);
+  *out_n = n_station;
+  return order;
+}
+
 static Visit *build_greedy_visits(const ExData *ex, const ItemVec *items,
                                   const double *full_dist, int full_m,
                                   double ship_cap, int *out_n) {
@@ -3957,7 +4151,7 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--init_timelimit <sec>] [--seg_timelimit <sec>] [--cap-time-limit <sec>] [--init-capacity <val>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--init_timelimit <sec>] [--seg_timelimit <sec>] [--cap-time-limit <sec>] [--init-capacity <val>] [--init-strategy <nearest|cheapest|greedy-edge>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
     fprintf(stderr, "  Note: greedy init ignores --init_timelimit (kept for compatibility).\n");
     fprintf(stderr, "        --seg_timelimit defaults to 0 (no limit).\n");
     fprintf(stderr, "        --init-capacity (if set) must be <= ship capacity.\n");
@@ -3970,6 +4164,7 @@ int main(int argc, char **argv) {
   double seg_timelimit = 0.0;
   double cap_timelimit = 120.0;
   double init_capacity = 0.0;
+  const char *init_strategy = "nearest";
   int cap_seed = -1;
   int cap_mipfocus = -1;
   int verbose_init = 0;
@@ -4022,6 +4217,13 @@ int main(int argc, char **argv) {
       } else {
         die("--init-capacity requires a value");
       }
+    } else if (strcmp(argv[i], "--init-strategy") == 0) {
+      if (i + 1 < argc) {
+        init_strategy = argv[i + 1];
+        i++;
+      } else {
+        die("--init-strategy requires a value");
+      }
     } else if (strcmp(argv[i], "--cap-seed") == 0) {
       if (i + 1 < argc) {
         cap_seed = atoi(argv[i + 1]);
@@ -4055,6 +4257,8 @@ int main(int argc, char **argv) {
       cap_timelimit = atof(argv[i] + 17);
     } else if (strncmp(argv[i], "--init-capacity=", 16) == 0) {
       init_capacity = atof(argv[i] + 16);
+    } else if (strncmp(argv[i], "--init-strategy=", 16) == 0) {
+      init_strategy = argv[i] + 16;
     } else if (strncmp(argv[i], "--cap-seed=", 11) == 0) {
       cap_seed = atoi(argv[i] + 11);
     } else if (strncmp(argv[i], "--cap-mipfocus=", 15) == 0) {
@@ -4131,7 +4335,27 @@ int main(int argc, char **argv) {
          init_segments, total_amount, init_cap, ShipCap);
 
   int n_visits = 0;
-  Visit *visits = build_greedy_visits(&ex, &items, full_dist, full_m, init_cap, &n_visits);
+  Visit *visits = NULL;
+  if (strcmp(init_strategy, "nearest") == 0) {
+    if (verbose_init) printf("Init strategy: nearest (capacity-aware)\n");
+    visits = build_greedy_visits(&ex, &items, full_dist, full_m, init_cap, &n_visits);
+  } else {
+    int n_station = 0;
+    int *station_order = NULL;
+    if (strcmp(init_strategy, "cheapest") == 0) {
+      if (verbose_init) printf("Init strategy: cheapest insertion\n");
+      station_order = tsp_cheapest_insertion(&ex, full_dist, full_m, &n_station);
+    } else if (strcmp(init_strategy, "greedy-edge") == 0) {
+      if (verbose_init) printf("Init strategy: greedy edge\n");
+      station_order = tsp_greedy_edge(&ex, full_dist, full_m, &n_station);
+    } else {
+      die("Unknown --init-strategy (use nearest|cheapest|greedy-edge)");
+    }
+    visits = build_capacity_visits(&ex, &items, full_dist, full_m,
+                                   station_order, n_station,
+                                   init_segments, init_cap, &n_visits);
+    free(station_order);
+  }
   int init_built = count_segments(visits, n_visits);
   printf("Init segments built: %d (min=%d)\n", init_built, init_segments);
   if (init_built > init_segments) {
