@@ -1,0 +1,6 @@
+Ship: Árni Friðriksson
+ShipCap: 45000
+Set parameter Username
+Set parameter LicenseID to value 2738882
+Academic license - for non-commercial use only - expires 2026-11-14
+Set parameter LogToConsole to value 1
