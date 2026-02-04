@@ -1,0 +1,104 @@
+# Compiled object files and static libraries
+*.o
+*.obj
+*.lo
+*.a
+*.lib
+*.la
+
+# Precompiled headers
+*.gch
+*.pch
+
+# Shared / dynamic libraries and debug symbols
+*.so
+*.dll
+*.dylib
+*.pdb
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Common build directories and outputs
+/build/
+/build*/
+bin/
+/Bin/
+/dist/
+/lib/
+/lib*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+Makefile.user
+
+# Generated coverage and profiling files
+*.gcda
+*.gcno
+*.gcov
+coverage.*
+htmlcov/
+
+# Packaging / distribution
+*.egg-info/
+*.tar.gz
+*.zip
+
+# Logs and runtime files
+*.log
+*.pid
+*.seed
+*.pid.lock
+core
+*.stackdump
+
+# Editor / IDE files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# CLion / CMake user files
+cmake-build-*/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Vim/Emacs swap and backup files
+*~
+*.swp
+*.swo
+.*.swp
+
+# Tags / index files
+tags
+TAGS
+cscope.*
+ctags
+
+# Python (project contains Python utilities)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+env/
+.venv/
+.pytest_cache/
+
+# Misc
+*.tmp
+*.bak
+
+# Matplotlib config/cache (do not commit runtime files)
+mplconfig/
+.matplotlib/
+matplotlib/
+fontList.cache
+fontlist-v*.json
+tex.cache/
