@@ -3553,6 +3553,145 @@ static int closest_port_ex(const ExData *ex, const double *full_dist, int full_m
   return best_ex;
 }
 
+static double min_dist_ex(const double *full_dist, int full_m, int from_ex, int to_ex) {
+  int a0 = 2 * from_ex;
+  int a1 = 2 * from_ex + 1;
+  int b0 = 2 * to_ex;
+  int b1 = 2 * to_ex + 1;
+  double d0 = full_dist[a0*full_m + b0];
+  double d1 = full_dist[a0*full_m + b1];
+  double d2 = full_dist[a1*full_m + b0];
+  double d3 = full_dist[a1*full_m + b1];
+  double d = d0;
+  if (d1 < d) d = d1;
+  if (d2 < d) d = d2;
+  if (d3 < d) d = d3;
+  return d;
+}
+
+static double min_dist_from_start(const double *full_dist, int full_m, int to_ex) {
+  int b0 = 2 * to_ex;
+  int b1 = 2 * to_ex + 1;
+  double d0 = full_dist[0*full_m + b0];
+  double d1 = full_dist[0*full_m + b1];
+  return d0 < d1 ? d0 : d1;
+}
+
+static Visit *build_greedy_visits(const ExData *ex, const ItemVec *items,
+                                  const double *full_dist, int full_m,
+                                  double ship_cap, int *out_n) {
+  int n_station = 0;
+  for (int i = 0; i < ex->Size; i++) {
+    if (ex->Type[i] == tSTAT) n_station++;
+  }
+  int *stations = (int*)xmalloc((size_t)n_station * sizeof(int));
+  int sidx = 0;
+  for (int i = 0; i < ex->Size; i++) {
+    if (ex->Type[i] == tSTAT) stations[sidx++] = i;
+  }
+  int *visited = (int*)xcalloc((size_t)n_station, sizeof(int));
+
+  int cap = n_station * 2 + 8;
+  int n = 0;
+  Visit *visits = (Visit*)xmalloc((size_t)cap * sizeof(Visit));
+
+  double load = 0.0;
+  int remaining = n_station;
+  int current_ex = -1; /* boat start */
+
+  if (ship_cap <= 0.0) ship_cap = 1e300;
+
+  while (remaining > 0) {
+    int best_idx = -1;
+    double best_dist = 1e300;
+
+    for (int i = 0; i < n_station; i++) {
+      if (visited[i]) continue;
+      int st = stations[i];
+      double amt = ex->Amount[st];
+      if (load > 0.0 && load + amt > ship_cap) continue;
+      double d = (current_ex < 0)
+                   ? min_dist_from_start(full_dist, full_m, st)
+                   : min_dist_ex(full_dist, full_m, current_ex, st);
+      if (d < best_dist) { best_dist = d; best_idx = i; }
+    }
+
+    if (best_idx < 0 && load <= 0.0) {
+      for (int i = 0; i < n_station; i++) {
+        if (visited[i]) continue;
+        int st = stations[i];
+        double d = (current_ex < 0)
+                     ? min_dist_from_start(full_dist, full_m, st)
+                     : min_dist_ex(full_dist, full_m, current_ex, st);
+        if (d < best_dist) { best_dist = d; best_idx = i; }
+      }
+    }
+
+    if (best_idx < 0) {
+      if (current_ex < 0) {
+        printf("Greedy init: no feasible station from start.\n");
+        break;
+      }
+      double port_dist = 0.0;
+      int port_ex = closest_port_ex(ex, full_dist, full_m, current_ex, &port_dist);
+      if (port_ex < 0) {
+        printf("Insert port: none available (load=%.0f)\n", load);
+        break;
+      }
+      if (n == cap) { cap *= 2; visits = (Visit*)realloc(visits, (size_t)cap * sizeof(Visit)); if (!visits) die("OOM"); }
+      visits[n].type = tPORT;
+      visits[n].ex_idx = port_ex;
+      n++;
+      Item *pt = &items->a[ex->ItemIndex[port_ex]];
+      printf("Insert port (greedy): PORT-%d", port_ex);
+      if (pt->Name) printf("(%s)", pt->Name);
+      printf(" load=%.0f dist=%.3f\n", load, port_dist);
+      load = 0.0;
+      current_ex = port_ex;
+      continue;
+    }
+
+    int st = stations[best_idx];
+    if (n == cap) { cap *= 2; visits = (Visit*)realloc(visits, (size_t)cap * sizeof(Visit)); if (!visits) die("OOM"); }
+    visits[n].type = tSTAT;
+    visits[n].ex_idx = st;
+    n++;
+    visited[best_idx] = 1;
+    remaining--;
+    load += ex->Amount[st];
+    current_ex = st;
+
+    if (ex->Amount[st] > ship_cap) {
+      printf("Warning: STAT-%d amount=%.0f exceeds ship capacity %.0f\n",
+             st, ex->Amount[st], ship_cap);
+    }
+
+    if (load >= ship_cap && remaining > 0) {
+      double port_dist = 0.0;
+      int port_ex = closest_port_ex(ex, full_dist, full_m, current_ex, &port_dist);
+      if (port_ex < 0) {
+        printf("Insert port: none available after STAT-%d (load=%.0f)\n", st, load);
+      } else {
+        if (n == cap) { cap *= 2; visits = (Visit*)realloc(visits, (size_t)cap * sizeof(Visit)); if (!visits) die("OOM"); }
+        visits[n].type = tPORT;
+        visits[n].ex_idx = port_ex;
+        n++;
+        Item *pt = &items->a[ex->ItemIndex[port_ex]];
+        printf("Insert port after STAT-%d: PORT-%d", st, port_ex);
+        if (pt->Name) printf("(%s)", pt->Name);
+        printf(" load=%.0f dist=%.3f\n", load, port_dist);
+        load = 0.0;
+        current_ex = port_ex;
+      }
+    }
+  }
+
+  free(stations);
+  free(visited);
+  *out_n = n;
+  return visits;
+}
+
 static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
                                     const double *full_dist, int full_m,
                                     const int *station_order, int n_station,
@@ -3819,7 +3958,8 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 int main(int argc, char **argv) {
   if (argc < 3) {
     fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--init_timelimit <sec>] [--seg_timelimit <sec>] [--cap-time-limit <sec>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
-    fprintf(stderr, "  Note: --init_timelimit and --seg_timelimit default to 0 (no limit).\n");
+    fprintf(stderr, "  Note: greedy init ignores --init_timelimit (kept for compatibility).\n");
+    fprintf(stderr, "        --seg_timelimit defaults to 0 (no limit).\n");
     return 1;
   }
 
@@ -3915,6 +4055,9 @@ int main(int argc, char **argv) {
       init_timelimit = atof(argv[i]);
     }
   }
+  if (init_timelimit > 0.0) {
+    printf("Note: --init_timelimit is ignored in v3 greedy init.\n");
+  }
 
   const char *ship_names[] = { "Árni Friðriksson", "Bjarni Sæmundsson", "Gullver", "Breki" };
   if (ship_id < 1 || ship_id > 4) die("ship_id must be 1..4");
@@ -3956,60 +4099,9 @@ int main(int argc, char **argv) {
   fsb[0*n + 1] = 1;
   fsb[1*n + 0] = 1;
 
-  ExData ex_np = build_exdata_no_ports(&items);
-  int np_n = 2 * ex_np.Size;
-  double *dist_np = NULL;
-  int *fsb_np = NULL;
-  time_t init_dist_start = time(NULL);
-  build_waypoint_dist(&ex_np, NULL, 0, &dist_np, &fsb_np, NULL, NULL, NULL);
-  time_t init_dist_end = time(NULL);
-  dist_np[0*np_n + 1] = 0.0;
-  dist_np[1*np_n + 0] = 0.0;
-  fsb_np[0*np_n + 1] = 1;
-  fsb_np[1*np_n + 0] = 1;
   if (verbose_init) {
-    printf("Init no-port distance matrix wall time: %.0f s\n",
-           difftime(init_dist_end, init_dist_start));
+    printf("Init strategy: greedy nearest-neighbor with capacity resets.\n");
   }
-
-  GRBenv *init_env = NULL;
-  if (GRBloadenv(&init_env, NULL) != 0) die("init env failed");
-  GRBsetintparam(init_env, "OutputFlag", 0);
-  GRBsetintparam(init_env, "LogToConsole", 0);
-  double init_obj = 0.0;
-  int *init_tour = NULL;
-  int init_len = 0;
-  time_t init_solve_start = time(NULL);
-  if (solve_tsp_distance(init_env, dist_np, ex_np.Size, init_timelimit, verbose_init, &init_obj,
-                         &init_tour, &init_len) != 0) {
-    die("initial no-port solve failed");
-  }
-  time_t init_solve_end = time(NULL);
-  printf("Initial no-port objective: %.3f\n", init_obj);
-  if (verbose_init) {
-    printf("Initial no-port TSP wall time: %.0f s\n",
-           difftime(init_solve_end, init_solve_start));
-    printf("Initial no-port TSP stats: status=%d solcount=%d grb_runtime=%.2f s (timelimit=%.1f)\n",
-           g_last_tsp_status, g_last_tsp_solcount, g_last_tsp_runtime, init_timelimit);
-  }
-  GRBfreeenv(init_env);
-
-  int letour_len = 0;
-  int *letour = node_tour_to_letour(init_tour, init_len, ex_np.Size, &letour_len);
-  int *station_order = (int*)xmalloc((size_t)letour_len * sizeof(int));
-  int n_station = 0;
-  for (int i = 0; i < letour_len; i++) {
-    if (letour[i] == 0) continue;
-    station_order[n_station++] = abs(letour[i]);
-  }
-  printf("Initial station order (no ports):");
-  for (int i = 0; i < n_station; i++) printf(" %d", station_order[i]);
-  printf("\n");
-  free(letour);
-  free(init_tour);
-  free(dist_np);
-  free(fsb_np);
-  free_exdata(&ex_np);
 
   double total_amount = 0.0;
   for (int i = 0; i < ex.SelectedSize; i++) {
@@ -4024,10 +4116,7 @@ int main(int argc, char **argv) {
          init_segments, total_amount, ShipCap);
 
   int n_visits = 0;
-  Visit *visits = build_capacity_visits(&ex, &items, full_dist, full_m,
-                                        station_order, n_station,
-                                        init_segments, ShipCap, &n_visits);
-  free(station_order);
+  Visit *visits = build_greedy_visits(&ex, &items, full_dist, full_m, ShipCap, &n_visits);
   int init_built = count_segments(visits, n_visits);
   printf("Init segments built: %d (min=%d)\n", init_built, init_segments);
   if (init_built > init_segments) {

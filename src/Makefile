@@ -1,4 +1,4 @@
-.PHONY: all demo demo_scip cap matheur matcapheur matcapmutheur matcapmut_v2 utils clean
+.PHONY: all demo demo_scip cap matheur matcapheur matcapmutheur matcapmut_v2 matcapmutheur_v3 utils clean
 
 CC ?= clang
 
@@ -42,7 +42,7 @@ SCIP_FLAGS = -I$(SCIP_HOME)/include -L$(SCIP_HOME)/lib -lscip
 endif
 
 # -------- Targets --------
-all: demo demo_scip cap matheur matcapheur matcapmutheur utils
+all: demo demo_scip cap matheur matcapheur matcapmutheur matcapmutheur_v3 utils
 
 demo: main.c utils
 	mkdir -p $(BIN_DIR)
@@ -72,10 +72,14 @@ matcapmut_v2: matcapmut_v2.c utils
 	mkdir -p $(BIN_DIR)
 	$(CC) matcapmut_v2.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapmut_v2
 
+matcapmutheur_v3: matcapmutheur_v3.c utils
+	mkdir -p $(BIN_DIR)
+	$(CC) matcapmutheur_v3.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapmutheur_v3
+
 utils: utils.c
 	mkdir -p $(LIB_DIR)
 	$(CC) -O3 -fPIC -shared utils.c -lm -o $(UTILS_SO)
 
 clean:
-	rm -f $(BIN_DIR)/demo $(BIN_DIR)/demo_scip $(BIN_DIR)/cap $(BIN_DIR)/matheur $(BIN_DIR)/matcapheur $(BIN_DIR)/matcapmutheur $(BIN_DIR)/matcapmut_v2 \
+	rm -f $(BIN_DIR)/demo $(BIN_DIR)/demo_scip $(BIN_DIR)/cap $(BIN_DIR)/matheur $(BIN_DIR)/matcapheur $(BIN_DIR)/matcapmutheur $(BIN_DIR)/matcapmut_v2 $(BIN_DIR)/matcapmutheur_v3 \
 	      $(LIB_DIR)/libutils.so $(LIB_DIR)/libutils.dylib

@@ -499,6 +499,11 @@ typedef struct ExData {
   double *LatLonDegMin;  /* [SelectedSize][4] degmin */
 } ExData;
 
+/* Last TSP solve stats (for init diagnostics). */
+static double g_last_tsp_runtime = -1.0;
+static int g_last_tsp_status = -1;
+static int g_last_tsp_solcount = -1;
+
 typedef struct {
   int type;    /* tSTAT or tPORT */
   int ex_idx;  /* index into original ExData */
@@ -3155,15 +3160,20 @@ static int solve_tsp_distance(GRBenv *env, const double *dist, int Size,
   GRBmodel *model = NULL;
   int error = 0;
 
+  g_last_tsp_runtime = -1.0;
+  g_last_tsp_status = -1;
+  g_last_tsp_solcount = -1;
+
   error = GRBnewmodel(env, &model, "segment", 0, NULL, NULL, NULL, NULL, NULL);
   if (error) goto QUIT;
 
+  GRBenv *menv = GRBgetenv(model);
   if (timelimit > 0.0) {
-    GRBsetdblparam(env, "TimeLimit", timelimit);
+    GRBsetdblparam(menv, "TimeLimit", timelimit);
   }
-  GRBsetintparam(env, "Threads", 4);
-  GRBsetintparam(env, "OutputFlag", verbose ? 1 : 0);
-  GRBsetintparam(env, "LogToConsole", verbose ? 1 : 0);
+  GRBsetintparam(menv, "Threads", 4);
+  GRBsetintparam(menv, "OutputFlag", verbose ? 1 : 0);
+  GRBsetintparam(menv, "LogToConsole", verbose ? 1 : 0);
 
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
@@ -3217,6 +3227,21 @@ static int solve_tsp_distance(GRBenv *env, const double *dist, int Size,
 
   int status = 0;
   GRBgetintattr(model, GRB_INT_ATTR_STATUS, &status);
+  g_last_tsp_status = status;
+  {
+    double rt = 0.0;
+    if (GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME, &rt) == 0) {
+      g_last_tsp_runtime = rt;
+    }
+    int sc = 0;
+    if (GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &sc) == 0) {
+      g_last_tsp_solcount = sc;
+    }
+    if (verbose) {
+      fprintf(stderr, "TSP stats: status=%d solcount=%d runtime=%.2f s\n",
+              g_last_tsp_status, g_last_tsp_solcount, g_last_tsp_runtime);
+    }
+  }
   if (status == GRB_OPTIMAL || status == GRB_TIME_LIMIT || status == GRB_SUBOPTIMAL) {
     error = GRBgetdblattr(model, GRB_DBL_ATTR_OBJVAL, out_obj);
     if (error) goto QUIT;
@@ -3821,11 +3846,17 @@ int main(int argc, char **argv) {
   int np_n = 2 * ex_np.Size;
   double *dist_np = NULL;
   int *fsb_np = NULL;
+  time_t init_dist_start = time(NULL);
   build_waypoint_dist(&ex_np, NULL, 0, &dist_np, &fsb_np, NULL, NULL, NULL);
+  time_t init_dist_end = time(NULL);
   dist_np[0*np_n + 1] = 0.0;
   dist_np[1*np_n + 0] = 0.0;
   fsb_np[0*np_n + 1] = 1;
   fsb_np[1*np_n + 0] = 1;
+  if (verbose_init) {
+    printf("Init no-port distance matrix wall time: %.0f s\n",
+           difftime(init_dist_end, init_dist_start));
+  }
 
   GRBenv *init_env = NULL;
   if (GRBloadenv(&init_env, NULL) != 0) die("init env failed");
@@ -3834,11 +3865,19 @@ int main(int argc, char **argv) {
   double init_obj = 0.0;
   int *init_tour = NULL;
   int init_len = 0;
+  time_t init_solve_start = time(NULL);
   if (solve_tsp_distance(init_env, dist_np, ex_np.Size, init_timelimit, verbose_init, &init_obj,
                          &init_tour, &init_len) != 0) {
     die("initial no-port solve failed");
   }
+  time_t init_solve_end = time(NULL);
   printf("Initial no-port objective: %.3f\n", init_obj);
+  if (verbose_init) {
+    printf("Initial no-port TSP wall time: %.0f s\n",
+           difftime(init_solve_end, init_solve_start));
+    printf("Initial no-port TSP stats: status=%d solcount=%d grb_runtime=%.2f s (timelimit=%.1f)\n",
+           g_last_tsp_status, g_last_tsp_solcount, g_last_tsp_runtime, init_timelimit);
+  }
   GRBfreeenv(init_env);
 
   int letour_len = 0;
