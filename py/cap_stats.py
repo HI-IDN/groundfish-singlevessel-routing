@@ -3,6 +3,8 @@ import argparse
 import csv
 import math
 import re
+import statistics
+import sys
 from pathlib import Path
 
 
@@ -103,14 +105,21 @@ def summarize_run(run_id, cap_csv, cap_log):
         seg_changed_by_pass.append(segments_changed(rows[i - 1], rows[i], seg_count))
 
     passes_changed = sum(1 for c in changed_flag if c)
-    avg_seg_changed = (sum(seg_changed_by_pass) / len(seg_changed_by_pass)) if seg_changed_by_pass else 0.0
-    max_seg_changed = max(seg_changed_by_pass) if seg_changed_by_pass else 0
+    seg_series = seg_changed_by_pass if seg_changed_by_pass else [0]
+    avg_seg_changed = (sum(seg_series) / len(seg_series)) if seg_series else 0.0
+    max_seg_changed = max(seg_series) if seg_series else 0
+    min_seg_changed = min(seg_series) if seg_series else 0
+    med_seg_changed = statistics.median(seg_series) if seg_series else 0
     avg_nseg = sum(nseg_by_pass) / len(nseg_by_pass)
     final_nseg = nseg_by_pass[-1]
 
     cap_solves = cap_accept = 0
     cap_gap_avg = None
+    cap_gap_min = None
+    cap_gap_max = None
+    cap_gap_std = None
     cap_time_avg = None
+    cap_time_sum = None
     cap_by_pass = {}
     if cap_log:
         cap_solves = len(cap_log)
@@ -119,10 +128,14 @@ def summarize_run(run_id, cap_csv, cap_log):
         gaps = [g for g in gaps if g is not None and math.isfinite(g) and g >= 0.0 and g <= 10.0]
         if gaps:
             cap_gap_avg = sum(gaps) / len(gaps)
+            cap_gap_min = min(gaps)
+            cap_gap_max = max(gaps)
+            cap_gap_std = statistics.pstdev(gaps) if len(gaps) > 1 else 0.0
         times = [fnum(r.get("runtime", "")) for r in cap_log]
         times = [t for t in times if t is not None and not math.isnan(t)]
         if times:
             cap_time_avg = sum(times) / len(times)
+            cap_time_sum = sum(times)
         for r in cap_log:
             p = inum(r.get("pass", 0))
             if p is None:
@@ -146,6 +159,13 @@ def summarize_run(run_id, cap_csv, cap_log):
             if t is not None and math.isfinite(t):
                 bucket["time_vals"].append(t)
 
+    run_elapsed = None
+    if elapsed:
+        for val in reversed(elapsed):
+            if val is not None and not math.isnan(val):
+                run_elapsed = val
+                break
+
     return {
         "run": run_id,
         "passes": passes[-1],
@@ -157,13 +177,20 @@ def summarize_run(run_id, cap_csv, cap_log):
         "improve_pct": improve_pct,
         "passes_changed": passes_changed,
         "avg_seg_changed": avg_seg_changed,
+        "min_seg_changed": min_seg_changed,
+        "med_seg_changed": med_seg_changed,
         "max_seg_changed": max_seg_changed,
         "avg_nseg": avg_nseg,
         "final_nseg": final_nseg,
         "cap_solves": cap_solves,
         "cap_accept": cap_accept,
         "cap_gap_avg": cap_gap_avg,
+        "cap_gap_min": cap_gap_min,
+        "cap_gap_max": cap_gap_max,
+        "cap_gap_std": cap_gap_std,
         "cap_time_avg": cap_time_avg,
+        "cap_time_sum": cap_time_sum,
+        "run_elapsed": run_elapsed,
         "cap_by_pass": cap_by_pass,
         "per_pass": {
             "nseg": nseg_by_pass,
@@ -181,37 +208,97 @@ def fmt(val, digits=3):
     if val is None or (isinstance(val, float) and math.isnan(val)):
         return "nan"
     if isinstance(val, int):
-        return str(val)
+        if digits <= 0:
+            return str(val)
+        return f"{val:.{digits}f}"
     return f"{val:.{digits}f}"
 
 
-def latex_table(rows):
-    header = (
-        "run & passes & baseline & final & avg seg chg & max seg chg & "
-        "final nseg & cap acc/solves & cap gap avg (\\%) \\\\"
-    )
+def latex_table(rows, base_total_all=None, final_nseg_all=None):
+    if base_total_all is None:
+        base_total_all = []
+    if final_nseg_all is None:
+        final_nseg_all = []
+    base_same = bool(base_total_all) and len(set(base_total_all)) == 1
+    nseg_same = bool(final_nseg_all) and len(set(final_nseg_all)) == 1
+    if base_same:
+        header_top = (
+            "time & num. & final & seg change & accepted/ & MIP gap (\\%) & run time \\\\"
+        )
+        header_sub = (
+            "limit (s) & passes & distance & mean/med/max & solves & min/avg/max/std & (min) \\\\"
+        )
+        colspec = "r r r r r r r"
+        caption = (
+            "Summary of cap runs. Baseline total distance (pass 0) is "
+            f"{fmt(base_total_all[0])} for all runs. "
+        )
+        if nseg_same:
+            caption += f"Final number of segments is {fmt(final_nseg_all[0], 0)} for all runs. "
+        elif final_nseg_all:
+            caption += (
+                f"Final number of segments ranges from "
+                f"{fmt(min(final_nseg_all), 0)} to {fmt(max(final_nseg_all), 0)}. "
+            )
+        caption += (
+            "Columns show capacity MIP time limit (seconds), number of passes, final total distance, "
+            "mean/median/max segments changed per pass, accepted/total capacity solves, "
+            "capacity MIP gap min/avg/max/std (percent), and total run time (minutes). "
+            "Initialization uses --init_timelimit if set (otherwise no limit)."
+        )
+    else:
+        header_top = (
+            "time & num. & baseline & final & seg change & accepted/ & MIP gap (\\%) & run time \\\\"
+        )
+        header_sub = (
+            "limit (s) & passes &  &  & mean/med/max & solves & min/avg/max/std & (min) \\\\"
+        )
+        colspec = "r r r r r r r r"
+        caption = (
+            "Summary of cap runs. Columns show capacity MIP time limit (seconds), number of passes, "
+            "baseline total distance (pass 0), "
+            "final total distance, mean/median/max segments changed per pass, "
+            "accepted/total capacity solves, capacity MIP gap "
+            "min/avg/max/std (percent), and total run time (minutes). "
+            "Initialization uses --init_timelimit if set (otherwise no limit)."
+        )
     lines = [
         "\\begin{table}[ht]",
         "\\centering",
-        "\\caption{Summary of cap runs. Columns show run id, number of passes, baseline total distance (pass 0), final total distance, average and maximum segments changed per pass, final number of segments, accepted/total capacity solves, and average capacity MIP gap (percent).}",
-        "\\begin{tabular}{r r r r r r r r r}",
+        f"\\caption{{{caption}}}",
+        f"\\begin{{tabular}}{{{colspec}}}",
         "\\hline",
-        header,
+        header_top,
+        header_sub,
         "\\hline",
     ]
     for r in rows:
         cap_acc = f"{r['cap_accept']}/{r['cap_solves']}" if r["cap_solves"] else "0/0"
-        line = " & ".join([
+        seg_chg = "/".join([
+            fmt(r["avg_seg_changed"], 1),
+            fmt(r["med_seg_changed"], 1),
+            fmt(r["max_seg_changed"], 1),
+        ])
+        gap_min = fmt(r["cap_gap_min"] * 100.0 if r["cap_gap_min"] is not None else None, 0)
+        gap_avg = fmt(r["cap_gap_avg"] * 100.0 if r["cap_gap_avg"] is not None else None, 0)
+        gap_max = fmt(r["cap_gap_max"] * 100.0 if r["cap_gap_max"] is not None else None, 0)
+        gap_std = fmt(r["cap_gap_std"] * 100.0 if r["cap_gap_std"] is not None else None, 0)
+        gap_stats = f"{gap_min}/{gap_avg}/{gap_max}/{gap_std}"
+        run_time = fmt(r["run_elapsed"] / 60.0 if r["run_elapsed"] is not None else None, 0)
+        items = [
             str(r["run"]),
             str(r["passes"]),
-            fmt(r["base_total"]),
+        ]
+        if not base_same:
+            items.append(fmt(r["base_total"]))
+        items.extend([
             fmt(r["final_total"]),
-            fmt(r["avg_seg_changed"], 2),
-            str(r["max_seg_changed"]),
-            fmt(r["final_nseg"], 0),
+            seg_chg,
             cap_acc,
-            fmt(r["cap_gap_avg"] * 100.0 if r["cap_gap_avg"] is not None else None, 2),
-        ]) + " \\\\"
+            gap_stats,
+            run_time,
+        ])
+        line = " & ".join(items) + " \\\\"
         lines.append(line)
     lines.append("\\hline")
     lines.append("\\end{tabular}")
@@ -268,7 +355,7 @@ def latex_per_pass(run_id, summary):
                 mut_str,
                 cap_acc,
                 cap_no,
-                fmt(cap_gap, 2),
+            fmt(cap_gap, 0),
                 fmt(cap_time, 2),
                 fmt(elapsed, 2),
             ]) + " \\\\"
@@ -278,6 +365,38 @@ def latex_per_pass(run_id, summary):
     return "\n".join(lines)
 
 
+def print_time_summary(summaries, init_time_limit, out):
+    rows = []
+    for s in summaries:
+        run = s.get("run")
+        if not isinstance(run, int):
+            continue
+        solves = s.get("cap_solves", 0) or 0
+        actual_sec = s.get("run_elapsed")
+        mip_ub = run * solves
+        mip_init_ub = mip_ub + init_time_limit
+        rows.append((run, solves, mip_ub, mip_init_ub, actual_sec))
+
+    if not rows:
+        return
+
+    print(f"Assumed init time limit: {int(init_time_limit)}s", file=out)
+    print(
+        f"{'TL(s)':>6} {'solves':>6} {'MIP UB (min)':>12} "
+        f"{'MIP+init UB (min)':>18} {'actual (min)':>12} {'actual (s)':>12}",
+        file=out,
+    )
+    for tl, solves, mip_ub, mip_init_ub, actual_sec in rows:
+        actual_min = (actual_sec / 60.0) if actual_sec is not None else None
+        actual_min_str = f"{actual_min:12.1f}" if actual_min is not None else f"{'nan':>12}"
+        actual_sec_str = f"{actual_sec:12.1f}" if actual_sec is not None else f"{'nan':>12}"
+        print(
+            f"{tl:6d} {solves:6d} {mip_ub/60:12.1f} {mip_init_ub/60:18.1f} "
+            f"{actual_min_str} {actual_sec_str}",
+            file=out,
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Summarize cap_* runs and emit a LaTeX table.")
     parser.add_argument("csv_paths", nargs="*", help="Optional list of <base>_*.csv files.")
@@ -285,6 +404,12 @@ def main():
     parser.add_argument("--sol-dir", default="sol", help="Directory with <base>_*.csv files.")
     parser.add_argument("--per-pass", action="store_true", help="Include a per-pass table for each run.")
     parser.add_argument("--out", default="", help="Write LaTeX output to a file instead of stdout.")
+    parser.add_argument("--time-summary", action="store_true",
+                        help="Print time-limit upper bounds vs actual run time to stderr.")
+    parser.add_argument("--compare-times", action="store_true",
+                        help="Alias for --time-summary.")
+    parser.add_argument("--init-time-limit", type=float, default=300.0,
+                        help="Initialization time limit (seconds) for upper-bound calc.")
     args = parser.parse_args()
 
     run_files = {}
@@ -335,12 +460,17 @@ def main():
     if not summaries:
         raise SystemExit("No cap_*.csv files found")
 
+    if args.time_summary or args.compare_times:
+        print_time_summary(summaries, args.init_time_limit, sys.stderr)
+
     out = []
-    out.append(latex_table(summaries))
+    base_total_all = [s["base_total"] for s in summaries if s.get("base_total") is not None]
+    final_nseg_all = [s["final_nseg"] for s in summaries if s.get("final_nseg") is not None]
+    out.append(latex_table(summaries, base_total_all=base_total_all, final_nseg_all=final_nseg_all))
     if args.per_pass:
         for s in summaries:
             out.append("")
-            out.append(f"% Run {s['run']} per-pass")
+            out.append(f"% Time limit {s['run']} per-pass")
             out.append(latex_per_pass(s["run"], s))
 
     output = "\n".join(out)

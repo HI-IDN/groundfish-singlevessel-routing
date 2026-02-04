@@ -3682,13 +3682,15 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--time-limit <sec>] [--cap-time-limit <sec>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--init_timelimit <sec>] [--seg_timelimit <sec>] [--cap-time-limit <sec>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "  Note: --init_timelimit and --seg_timelimit default to 0 (no limit).\n");
     return 1;
   }
 
   const char *file = argv[1];
   int ship_id = atoi(argv[2]);
-  double timelimit = 0.0;
+  double init_timelimit = 0.0;
+  double seg_timelimit = 0.0;
   double cap_timelimit = 120.0;
   int cap_seed = -1;
   int cap_mipfocus = -1;
@@ -3704,9 +3706,26 @@ int main(int argc, char **argv) {
       } else {
         die("--write-dat requires a path");
       }
-    } else if (strcmp(argv[i], "--time-limit") == 0) {
+    } else if (strcmp(argv[i], "--init_timelimit") == 0 || strcmp(argv[i], "--init-timelimit") == 0 ||
+               strcmp(argv[i], "--init-time-limit") == 0) {
       if (i + 1 < argc) {
-        timelimit = atof(argv[i + 1]);
+        init_timelimit = atof(argv[i + 1]);
+        i++;
+      } else {
+        die("--init_timelimit requires a value");
+      }
+    } else if (strcmp(argv[i], "--seg_timelimit") == 0 || strcmp(argv[i], "--seg-timelimit") == 0 ||
+               strcmp(argv[i], "--seg-time-limit") == 0) {
+      if (i + 1 < argc) {
+        seg_timelimit = atof(argv[i + 1]);
+        i++;
+      } else {
+        die("--seg_timelimit requires a value");
+      }
+    } else if (strcmp(argv[i], "--time-limit") == 0) {
+      /* Backward-compatible alias: applies to init only. */
+      if (i + 1 < argc) {
+        init_timelimit = atof(argv[i + 1]);
         i++;
       } else {
         die("--time-limit requires a value");
@@ -3732,8 +3751,21 @@ int main(int argc, char **argv) {
       } else {
         die("--cap-mipfocus requires a value");
       }
+    } else if (strncmp(argv[i], "--init_timelimit=", 16) == 0) {
+      init_timelimit = atof(argv[i] + 16);
+    } else if (strncmp(argv[i], "--init-timelimit=", 16) == 0) {
+      init_timelimit = atof(argv[i] + 16);
+    } else if (strncmp(argv[i], "--init-time-limit=", 18) == 0) {
+      init_timelimit = atof(argv[i] + 18);
+    } else if (strncmp(argv[i], "--seg_timelimit=", 15) == 0) {
+      seg_timelimit = atof(argv[i] + 15);
+    } else if (strncmp(argv[i], "--seg-timelimit=", 15) == 0) {
+      seg_timelimit = atof(argv[i] + 15);
+    } else if (strncmp(argv[i], "--seg-time-limit=", 17) == 0) {
+      seg_timelimit = atof(argv[i] + 17);
     } else if (strncmp(argv[i], "--time-limit=", 13) == 0) {
-      timelimit = atof(argv[i] + 13);
+      /* Backward-compatible alias: applies to init only. */
+      init_timelimit = atof(argv[i] + 13);
     } else if (strncmp(argv[i], "--cap-time-limit=", 17) == 0) {
       cap_timelimit = atof(argv[i] + 17);
     } else if (strncmp(argv[i], "--cap-seed=", 11) == 0) {
@@ -3743,7 +3775,8 @@ int main(int argc, char **argv) {
     } else if (strcmp(argv[i], "--verbose-init") == 0) {
       verbose_init = 1;
     } else {
-      timelimit = atof(argv[i]);
+      /* Backward-compatible positional timelimit: applies to init only. */
+      init_timelimit = atof(argv[i]);
     }
   }
 
@@ -3801,7 +3834,7 @@ int main(int argc, char **argv) {
   double init_obj = 0.0;
   int *init_tour = NULL;
   int init_len = 0;
-  if (solve_tsp_distance(init_env, dist_np, ex_np.Size, timelimit, verbose_init, &init_obj,
+  if (solve_tsp_distance(init_env, dist_np, ex_np.Size, init_timelimit, verbose_init, &init_obj,
                          &init_tour, &init_len) != 0) {
     die("initial no-port solve failed");
   }
@@ -3920,7 +3953,7 @@ int main(int argc, char **argv) {
     int *seg_tour_init = NULL;
     int seg_tour_len_init = 0;
     SegmentResult *segs_init = evaluate_visit_segments(&ex, visits, n_visits, &nseg_init,
-                                                       timelimit, &seg_tour_init, &seg_tour_len_init);
+                                                       seg_timelimit, &seg_tour_init, &seg_tour_len_init);
     if (!segs_init) die("segment evaluation failed");
     double total_init = (seg_tour_init && seg_tour_len_init > 0)
                           ? letour_distance_total(seg_tour_init, seg_tour_len_init, dist, Size)
@@ -3979,7 +4012,7 @@ int main(int argc, char **argv) {
     changed = optimize_boundaries_one_pass(&visits, &n_visits, &ex, ShipCap,
                                            cap_timelimit, pass, dirty,
                                            port_count, cap_csv,
-                                           guard_env, timelimit,
+                                           guard_env, seg_timelimit,
                                            cap_seed, cap_mipfocus,
                                            dist, Size,
                                            &mut_count, &mut_attempts,
@@ -3990,7 +4023,7 @@ int main(int argc, char **argv) {
     int *seg_tour_new = NULL;
     int seg_tour_len_new = 0;
     SegmentResult *segs_new = evaluate_visit_segments(&ex, visits, n_visits, &nseg_new,
-                                                      timelimit, &seg_tour_new, &seg_tour_len_new);
+                                                      seg_timelimit, &seg_tour_new, &seg_tour_len_new);
     if (!segs_new) die("segment evaluation failed");
 
     double total = (seg_tour_new && seg_tour_len_new > 0)
