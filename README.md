@@ -1,9 +1,9 @@
 # Matheuristic Optimization
 
-This repository contains C implementations of optimization models and matheuristics, plus Python utilities to visualize routes and report results. The C binaries use commercial solvers (Gurobi or SCIP) and generate plot bundles that the Python scripts can render.
+This repository contains C implementations of optimization models and matheuristics, plus Python utilities to visualize routes and report results. The C binaries use commercial solvers (Gurobi or SCIP) and generate plot bundles that the Python scripts can render. For the current workflow, focus on `capacity.c` and `matcapmutheur.c`; other C files are kept for historical comparison only.
 
 ## Repository Layout
-- `src/`: C sources and the `Makefile` (primary entry points: `matheur.c` and `capacity.c`; `main.c`/`main_scip.c` are demo speed comparisons).
+- `src/`: C sources and the `Makefile` (primary entry points: `capacity.c` and `matcapmutheur.c`; other C files are historical).
 - `bin/`: compiled executables and runtime assets (e.g., `island.bin`).
 - `lib/`: shared libraries produced by `make` (e.g., `libutils.*`).
 - `dat/`: input datasets (`*.dat`).
@@ -16,19 +16,19 @@ The build expects local solver installs. Set environment variables as needed:
 - `GUROBI_HOME=/Library/gurobi1300/macos_universal2`
 - `SCIP_HOME=$HOME/.local/scipoptsuite-10.0.0`
 
-Build all targets and place binaries in `bin/`:
+Build and place binaries in `bin/`:
 ```sh
-make -C src all
+make -C src cap matcapmutheur
 ```
 
-Run a demo (Gurobi build, for comparison only):
+Run the capacity MIP directly:
 ```sh
-./bin/demo dat/data2023spring.dat 1
+./bin/cap dat/data2023spring.dat 1
 ```
 
-Run the SCIP variant:
+Run the capacity-boundary matheuristic with mutation:
 ```sh
-./bin/demo_scip dat/data2023spring.dat 1
+./bin/matcapmutheur dat/data2023spring.dat 1 --cap-time-limit 180 --write-dat sol/capmut_1.dat --verbose-init
 ```
 
 ## Plotting Results
@@ -47,18 +47,14 @@ Remark: the land mask `island.bin` is loaded relative to the current working dir
 cd bin && ../py/plot_solution.py --sol ../sol/all_res_1.txt --recompute
 ```
 
-## Algorithm Overview (ES(1+1) Hillclimb)
-- **Initialization**: solve a no-port TSP to get a station order, compute the **minimum** segment count as `ceil(total_amount / ship_capacity)`, then walk the order and **greedily fill to ship capacity**, inserting the nearest port **before** a station if `load + amt > ship_cap` (and load > 0) or **after** a station if `load >= ship_cap` (and more stations remain). This always respects capacity; it may create **extra segments** above the minimum when the fixed order would otherwise overflow.
-- **Mutation**: for each hillclimb iteration, attempt a **chain** of station moves (up to `mutations`, stopping early with probability `1 - mut_prob`). The first move chooses any segment; subsequent moves may only take stations from segments touched so far. A source/destination pair is admissible only if the minimum cross‑segment station distance <= `max(tolA, tolB)` where each `tol` is the mean nearest‑neighbor distance inside that segment (segments with 0–1 station use `+inf`). If no feasible move exists (after limited restarts), the iteration is **retried** without advancing counters or writing CSV. After a successful station chain, a quick **port swap/merge** may be tested; it is kept only if it shortens the stitched pair (merge also requires combined load <= capacity).
-- **Port cleanup**: after a mutation chain, optionally move a station across a boundary if it **shortens the port-to-first/last station leg** and still respects capacity (a quick local fix for long deadhead legs).
-- **Merge refinement**: after a mutation chain, greedily remove adjacent ports when the **combined load** stays within capacity and the merged segment **shortens total distance** (evaluated via segment solves). This reduces segment count when possible without breaking the capacity rule.
-- **Boundary refinement (debug pass)**: using the current optimized tour order, iterate over adjacent segment pairs and re‑position the boundary port to minimize the **sum of the two segment distances**, subject to capacity. This sweep repeats for a few iterations or until no improvement, and prints each accepted boundary change.
-- **Evaluation & selection**: re-solve each segment TSP, stitch the tour, and accept the offspring only if it improves. Each iteration applies a chain of up to `mutations` station moves (stopping early with probability `1 - mut_prob`).
+## Algorithm Overview (Capacity + Boundary Mutation)
+- **Initialization**: solve a no‑port TSP to get a station order, compute the **minimum** segment count as `ceil(total_amount / ship_capacity)`, then walk the order and **greedily fill to ship capacity**, inserting the nearest port **before** a station if `load + amt > ship_cap` (and load > 0) or **after** a station if `load >= ship_cap` (and more stations remain). This always respects capacity; it may create **extra segments** above the minimum when the fixed order would otherwise overflow.
+- **Capacity MIP (`capacity.c`)**: a full MIP with capacity flow constraints and waypoint‑aware distances. Used for benchmarking and for small subproblems.
+- **Boundary sweep (`matcapmutheur.c`)**: iterate over adjacent segment pairs and solve a **time‑limited capacity MIP** to reassign stations across the boundary port. Accept only if the **real two‑segment distance** (after re‑optimizing each segment) improves and no segment is infeasible (distance ≥ 100000).
+- **Mutation fallback**: if the boundary MIP rejects a change, attempt a **single‑station injection** from outside the pair. Choose the station closest to any station in the pair, insert it into the closest of the two segments (capacity‑feasible), and accept only if the **net change across (left + right + donor)** segments improves.
+- **Termination**: stop after a full pass with no accepted changes.
 
 For reproducibility, record solver versions and any run flags (e.g., time limits) in your experiment notes.
-
-## Capacity Boundary Matheuristic (cap_* runs)
-This variant treats the full tour as a sequence of capacity‑feasible segments separated by fixed ports and optimizes **two adjacent segments at a time**. Each boundary pass solves a capacity MIP that reassigns stations across the boundary while keeping the separating port fixed. Because the MIP is time‑limited and rarely optimal, the algorithm **re‑optimizes each resulting segment** with the segment TSP solver and **accepts the boundary change only if the real two‑segment distance decreases** (infeasible segments, e.g., land‑crossing distances ≥ 100000, are rejected). The sweep continues around the circle until a full pass produces no accepted changes. Although each subproblem is solved only approximately, repeated boundary passes typically improve the global tour over the initial segmentation.
 
 ## Notes
 - `sol/` is intended for generated outputs; keep large artifacts only when needed for paper figures.

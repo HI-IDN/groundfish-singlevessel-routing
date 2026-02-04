@@ -280,8 +280,9 @@ def latex_per_pass(run_id, summary):
 
 def main():
     parser = argparse.ArgumentParser(description="Summarize cap_* runs and emit a LaTeX table.")
-    parser.add_argument("csv_paths", nargs="*", help="Optional list of cap_*.csv files.")
-    parser.add_argument("--sol-dir", default="sol", help="Directory with cap_*.csv files.")
+    parser.add_argument("csv_paths", nargs="*", help="Optional list of <base>_*.csv files.")
+    parser.add_argument("--base", default="cap", help="Base name for sol files (e.g., cap, capmut).")
+    parser.add_argument("--sol-dir", default="sol", help="Directory with <base>_*.csv files.")
     parser.add_argument("--per-pass", action="store_true", help="Include a per-pass table for each run.")
     parser.add_argument("--out", default="", help="Write LaTeX output to a file instead of stdout.")
     args = parser.parse_args()
@@ -309,10 +310,12 @@ def main():
         if not sol_dir.exists():
             raise SystemExit(f"Missing sol dir: {sol_dir}")
 
-        for path in sol_dir.glob("cap_*.csv"):
+        pattern = f"{args.base}_*.csv"
+        rx = re.compile(rf"{re.escape(args.base)}_(\d+)\.csv$")
+        for path in sol_dir.glob(pattern):
             if path.name.endswith(".cap.csv"):
                 continue
-            m = re.match(r"cap_(\d+)\.csv$", path.name)
+            m = rx.match(path.name)
             if not m:
                 continue
             run_files[int(m.group(1))] = path
