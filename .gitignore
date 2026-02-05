@@ -102,3 +102,6 @@ matplotlib/
 fontList.cache
 fontlist-v*.json
 tex.cache/
+
+# Derived files
+dat/parsed_data.sqlite
