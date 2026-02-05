@@ -1,0 +1,70 @@
+# Centralized configuration for the GSP experiments
+# This file lists global paths, default parameters and per-variant settings.
+# Purpose: gather all hard-coded values and ranges used by scripts/Makefiles so
+# they can be referenced from a single place later.
+
+global:
+  repo_root: "."                    # repository root (Code)
+  code_dir: "src"
+  bin_dir: "bin"
+  dat_dir: "dat"
+  sol_dir: "sol"
+  logs_dir: "logs"
+
+  # Default input datasets (relative to repo root)
+  default_dataset: "dat/singleboatdata2023spring.dat"
+
+  # Island polygon / map
+  island_bin: "bin/island.bin"
+
+  # Database output
+  parsed_db: "dat/parsed_data.sqlite"
+
+  # General solver limits
+  time_limit_mip: 300              # global MIP time limit (seconds)
+  cap_time_limits: [60,120,180,240,300,360,420,480]
+  cap_time_limit_default: 60       # default per-cap timelimit when single value used
+
+  # Progress / logging
+  progress_interval: 100000
+
+  # File name templates (placeholders: {variant},{dataset_tag},{cap})
+  sol_filename_template: "sol/{variant}_{cap}.csv"
+  log_stdout_template: "logs/{variant}_{dataset_tag}_{cap}.out"
+  log_stderr_template: "logs/{variant}_{dataset_tag}_{cap}.err"
+
+variants:
+  capmut:
+    description: "Original matheuristic variant used in experiments (capmut)"
+    binary: "bin/matcapmutheur"        # executable relative to repo root
+    sol_prefix: "capmut"
+    uses_cap_time_limits: true
+
+  capmut_v3:
+    description: "Variant v3 (refined matheuristic)"
+    binary: "bin/matcapmut_v3"
+    sol_prefix: "capmut_v3"
+    uses_cap_time_limits: true
+
+  capmut_v3_cheapest:
+    description: "Variant v3 with cheapest-insertion initialization"
+    binary: "bin/matcapmut_v3_cheapest"
+    sol_prefix: "capmut_v3_cheapest"
+    uses_cap_time_limits: true
+
+scripts:
+  # How scripts should invoke binaries (field placeholders will be replaced by script)
+  run_template: "{bin} {dataset} --time-limit {time_limit_mip} --cap-time-limit {cap_time_limit} --write-dat {outpath} --verbose-init"
+  # alternative template when a wrapper binary `matheuristic` supports --variant flag
+  run_wrapper_template: "{bin}/matheuristic --variant {variant} {dataset} --time-limit {time_limit_mip} --cap-time-limit {cap_time_limit} --write-dat {outpath} --verbose-init"
+
+plot:
+  python_plot_script: "py/plot_solution.py"
+  default_plot_output_dir: "figs"
+  plot_verbose_flag: "--verbose"
+
+notes:
+  - "This config.yaml is a collection of defaults and templates. Scripts/Makefiles
+    should be updated to read values from this file and substitute the placeholders."
+  - "Placeholders: {bin} {variant} {dataset} {time_limit_mip} {cap_time_limit} {outpath} {dataset_tag} {cap}."
+  - "If a binary name differs from the one set above, update the variant entry to match the real executable."
