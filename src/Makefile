@@ -32,25 +32,12 @@ endif
 
 UTILS_LIB = -L$(LIB_DIR) -lutils $(UTILS_RPATH)
 
-# -------- SCIP --------
-SCIP_HOME ?= $(HOME)/.local/scipoptsuite-10.0.0
-SCIP_CONFIG ?= $(SCIP_HOME)/bin/scip-config
-SCIP_FLAGS := $(shell $(SCIP_CONFIG) --cflags --libs 2>/dev/null)
-
-ifeq ($(strip $(SCIP_FLAGS)),)
-SCIP_FLAGS = -I$(SCIP_HOME)/include -L$(SCIP_HOME)/lib -lscip
-endif
-
 # -------- Targets --------
-all: demo demo_scip cap matheur matcapheur matcapmutheur matcapmutheur_v3 utils
+all: demo cap matheur matcapheur matcapmutheur matcapmutheur_v3 utils
 
 demo: main.c utils
 	mkdir -p $(BIN_DIR)
 	$(CC) main.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/demo
-
-demo_scip: main_scip.c utils
-	mkdir -p $(BIN_DIR)
-	$(CC) main_scip.c $(SCIP_FLAGS) $(UTILS_LIB) -lm -o $(BIN_DIR)/demo_scip
 
 cap: capacity.c utils
 	mkdir -p $(BIN_DIR)
@@ -81,5 +68,5 @@ utils: utils.c
 	$(CC) -O3 -fPIC -shared utils.c -lm -o $(UTILS_SO)
 
 clean:
-	rm -f $(BIN_DIR)/demo $(BIN_DIR)/demo_scip $(BIN_DIR)/cap $(BIN_DIR)/matheur $(BIN_DIR)/matcapheur $(BIN_DIR)/matcapmutheur $(BIN_DIR)/matcapmut_v2 $(BIN_DIR)/matcapmutheur_v3 \
+	rm -f $(BIN_DIR)/demo $(BIN_DIR)/cap $(BIN_DIR)/matheur $(BIN_DIR)/matcapheur $(BIN_DIR)/matcapmutheur $(BIN_DIR)/matcapmut_v2 $(BIN_DIR)/matcapmutheur_v3 \
 	      $(LIB_DIR)/libutils.so $(LIB_DIR)/libutils.dylib
