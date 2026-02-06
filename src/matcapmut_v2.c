@@ -559,6 +559,22 @@ static double sum_segment_distance(const SegmentResult *segs, int nseg) {
   return total;
 }
 
+static SegmentResult *evaluate_visit_segments(const ExData *ex,
+                                              const Visit *visits, int n_visits,
+                                              int *out_nseg, double timelimit,
+                                              int **out_tour, int *out_tour_len);
+
+static void trace_log_current_solution(FILE *fp,
+                                       int *step_io,
+                                       int pass,
+                                       const char *note,
+                                       const ExData *ex,
+                                       const Visit *visits,
+                                       int n_visits,
+                                       double seg_timelimit,
+                                       const double *dist,
+                                       int Size);
+
 static double letour_distance_total(const int *letour, int letour_len,
                                     const double *dist, int Size) {
   if (!letour || letour_len <= 0) return -1.0;
@@ -2081,6 +2097,7 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
                                         double timelimit, int pass,
                                         int *dirty, int port_count,
                                         FILE *cap_csv,
+                                        FILE *trace_fp, int *trace_step,
                                         GRBenv *seg_env, double seg_timelimit,
                                         int cap_seed, int cap_mipfocus,
                                         const double *dist, int Size,
@@ -2106,6 +2123,13 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
       dirty[b] = 1;
       dirty[(b + port_count - 1) % port_count] = 1;
       dirty[(b + 1) % port_count] = 1;
+      if (trace_fp) {
+        char note[32];
+        snprintf(note, sizeof(note), "cap_b%d", b + 1);
+        trace_log_current_solution(trace_fp, trace_step, pass, note,
+                                   ex, *visits_io, *n_visits_io,
+                                   seg_timelimit, dist, Size);
+      }
       continue;
     }
 
@@ -2122,6 +2146,13 @@ static int optimize_boundaries_one_pass(Visit **visits_io, int *n_visits_io,
       mark_dirty_for_segment(src_seg, port_count, dirty);
       mark_dirty_for_segment(dst_seg, port_count, dirty);
       mark_dirty_for_segment(b, port_count, dirty);
+      if (trace_fp) {
+        char note[64];
+        snprintf(note, sizeof(note), "mut_stat%d", stat_ex);
+        trace_log_current_solution(trace_fp, trace_step, pass, note,
+                                   ex, *visits_io, *n_visits_io,
+                                   seg_timelimit, dist, Size);
+      }
       if (out_mut_note && out_mut_note_len > 0) {
         snprintf(out_mut_note, out_mut_note_len,
                  "mut=STAT-%d src=%d dst=%d delta=%.3f",
@@ -2776,6 +2807,114 @@ static int write_plot_bundle_letour(const char *fname,
 
   fclose(fp);
   return 0;
+}
+
+static void log_improve_solution(const char *base,
+                                 const char *list_path,
+                                 int *step_io,
+                                 int Size,
+                                 int SelectedSize,
+                                 const int *letour,
+                                 int letour_len,
+                                 const int *Type,
+                                 const double *Amount,
+                                 const double *LatLonRad,
+                                 const ItemVec *items,
+                                 const ExData *ex) {
+  if (!base || !list_path || !step_io) return;
+  if (!letour || letour_len <= 0) return;
+  char *step_path = (char*)xmalloc(strlen(base) + 32);
+  sprintf(step_path, "%s.improve_%04d.txt", base, *step_io);
+  if (write_plot_bundle_letour(step_path, Size, SelectedSize, letour, letour_len,
+                               Type, Amount, LatLonRad, items, ex) == 0) {
+    FILE *fp = fopen(list_path, (*step_io == 0) ? "w" : "a");
+    if (fp) {
+      fprintf(fp, "%s\n", step_path);
+      fclose(fp);
+    }
+    (*step_io)++;
+  }
+  free(step_path);
+}
+
+static void write_trace_header(FILE *fp,
+                               int Size,
+                               int SelectedSize,
+                               const int *Type,
+                               const double *Amount,
+                               const double *LatLonRad,
+                               const ItemVec *items,
+                               const ExData *ex) {
+  if (!fp) return;
+  fprintf(fp, "PLOT_TRACE_V1\n");
+  fprintf(fp, "Size %d\n", Size);
+  fprintf(fp, "SelectedSize %d\n", SelectedSize);
+  fprintf(fp, "Type");
+  for (int i = 0; i < SelectedSize; i++) fprintf(fp, " %d", Type[i]);
+  fprintf(fp, "\n");
+  fprintf(fp, "Amount");
+  for (int i = 0; i < SelectedSize; i++) fprintf(fp, " %.17g", Amount[i]);
+  fprintf(fp, "\n");
+  fprintf(fp, "Name\n");
+  for (int i = 0; i < SelectedSize; i++) {
+    const char *name = NULL;
+    if (ex && ex->ItemIndex && i < ex->SelectedSize) {
+      int item_idx = ex->ItemIndex[i];
+      if (item_idx >= 0 && item_idx < items->n) {
+        name = items->a[item_idx].Name;
+      }
+    }
+    write_name_line(fp, name);
+    fputc('\n', fp);
+  }
+  fprintf(fp, "LatLonRad\n");
+  for (int i = 0; i < SelectedSize; i++) {
+    fprintf(fp, "%.17g %.17g %.17g %.17g\n",
+            LatLonRad[i*4+0], LatLonRad[i*4+1], LatLonRad[i*4+2], LatLonRad[i*4+3]);
+  }
+  fflush(fp);
+}
+
+static void write_trace_frame(FILE *fp,
+                              int *step_io,
+                              int pass,
+                              double total,
+                              const char *note,
+                              const int *letour,
+                              int letour_len) {
+  if (!fp || !step_io || !letour || letour_len <= 0) return;
+  const char *tag = (note && note[0]) ? note : "none";
+  fprintf(fp, "Frame %d pass=%d total=%.6f note=%s\n", *step_io, pass, total, tag);
+  fprintf(fp, "Tour %d", letour_len);
+  for (int i = 0; i < letour_len; i++) fprintf(fp, " %d", letour[i]);
+  fprintf(fp, "\n");
+  fflush(fp);
+  (*step_io)++;
+}
+
+static void trace_log_current_solution(FILE *fp,
+                                       int *step_io,
+                                       int pass,
+                                       const char *note,
+                                       const ExData *ex,
+                                       const Visit *visits,
+                                       int n_visits,
+                                       double seg_timelimit,
+                                       const double *dist,
+                                       int Size) {
+  if (!fp || !step_io) return;
+  int nseg = 0;
+  int *seg_tour = NULL;
+  int seg_tour_len = 0;
+  SegmentResult *segs = evaluate_visit_segments(ex, visits, n_visits, &nseg,
+                                                seg_timelimit, &seg_tour, &seg_tour_len);
+  if (!segs) return;
+  double total = (seg_tour && seg_tour_len > 0)
+                   ? letour_distance_total(seg_tour, seg_tour_len, dist, Size)
+                   : sum_segment_distance(segs, nseg);
+  write_trace_frame(fp, step_io, pass, total, note, seg_tour, seg_tour_len);
+  free(segs);
+  free(seg_tour);
 }
 
 static void free_exdata(ExData *ex){
@@ -4050,23 +4189,38 @@ int main(int argc, char **argv) {
     for (int i = 0; i < port_count; i++) dirty[i] = 1;
   }
 
+  char *out_base = NULL;
   char *plot_path = NULL;
   char *csv_path = NULL;
   char *cap_csv_path = NULL;
+  char *improve_list_path = NULL;
+  char *trace_path = NULL;
+  FILE *trace_fp = NULL;
+  int improve_step = 0;
+  int trace_step = 0;
   FILE *csv = NULL;
   FILE *cap_csv = NULL;
   if (write_dat) {
     const char *dot = strrchr(write_dat, '.');
     size_t base = dot ? (size_t)(dot - write_dat) : strlen(write_dat);
+    out_base = (char*)xmalloc(base + 1);
+    memcpy(out_base, write_dat, base);
+    out_base[base] = '\0';
     plot_path = (char*)xmalloc(base + 5);
-    memcpy(plot_path, write_dat, base);
+    memcpy(plot_path, out_base, base);
     memcpy(plot_path + base, ".txt", 5);
     csv_path = (char*)xmalloc(base + 5);
-    memcpy(csv_path, write_dat, base);
+    memcpy(csv_path, out_base, base);
     memcpy(csv_path + base, ".csv", 5);
     cap_csv_path = (char*)xmalloc(base + 9);
-    memcpy(cap_csv_path, write_dat, base);
+    memcpy(cap_csv_path, out_base, base);
     memcpy(cap_csv_path + base, ".cap.csv", 9);
+    improve_list_path = (char*)xmalloc(base + 13);
+    memcpy(improve_list_path, out_base, base);
+    memcpy(improve_list_path + base, ".improve.txt", 13);
+    trace_path = (char*)xmalloc(base + 11);
+    memcpy(trace_path, out_base, base);
+    memcpy(trace_path + base, ".trace.txt", 11);
   }
   if (csv_path) {
     csv = fopen(csv_path, "w");
@@ -4089,6 +4243,16 @@ int main(int argc, char **argv) {
     } else {
       fputs("pass,boundary,port_ex,left_stations,right_stations,load_left,load_right,n_nodes,status,solcount,obj,bound,gap,runtime,nodes,changed\n",
             cap_csv);
+    }
+  }
+  if (trace_path) {
+    trace_fp = fopen(trace_path, "w");
+    if (!trace_fp) {
+      perror("fopen(trace)");
+    } else {
+      write_trace_header(trace_fp, Size, ex.SelectedSize,
+                         ex.Type, ex.Amount, ex.LatLonRad,
+                         &items, &ex);
     }
   }
 
@@ -4126,6 +4290,13 @@ int main(int argc, char **argv) {
                                seg_tour_init, seg_tour_len_init,
                                ex.Type, ex.Amount, ex.LatLonRad,
                                &items, &ex);
+    }
+    log_improve_solution(out_base, improve_list_path, &improve_step,
+                         Size, ex.SelectedSize, seg_tour_init, seg_tour_len_init,
+                         ex.Type, ex.Amount, ex.LatLonRad, &items, &ex);
+    if (trace_fp) {
+      write_trace_frame(trace_fp, &trace_step, 0, total_init, "init",
+                        seg_tour_init, seg_tour_len_init);
     }
     printf("PROGRESS pass=0 changed=0 total=%.3f best=%.3f nseg=%d stall=0\n",
            total_init, best_total, nseg_init);
@@ -4169,6 +4340,7 @@ int main(int argc, char **argv) {
     changed = optimize_boundaries_one_pass(&visits, &n_visits, &ex, ShipCap,
                                            cap_timelimit, pass, dirty,
                                            port_count, cap_csv,
+                                           trace_fp, &trace_step,
                                            guard_env, seg_timelimit,
                                            cap_seed, cap_mipfocus,
                                            dist, Size,
@@ -4200,6 +4372,9 @@ int main(int argc, char **argv) {
                                  ex.Type, ex.Amount, ex.LatLonRad,
                                  &items, &ex);
       }
+      log_improve_solution(out_base, improve_list_path, &improve_step,
+                           Size, ex.SelectedSize, seg_tour_new, seg_tour_len_new,
+                           ex.Type, ex.Amount, ex.LatLonRad, &items, &ex);
     } else {
       stall_count++;
     }
@@ -4315,6 +4490,10 @@ int main(int argc, char **argv) {
   free(plot_path);
   if (csv) fclose(csv);
   free(csv_path);
+  if (trace_fp) fclose(trace_fp);
+  free(trace_path);
+  free(out_base);
+  free(improve_list_path);
   if (cap_csv) fclose(cap_csv);
   free(cap_csv_path);
   free_exdata(&ex);
