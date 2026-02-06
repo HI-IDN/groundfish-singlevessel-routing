@@ -214,7 +214,16 @@ def fmt(val, digits=3):
     return f"{val:.{digits}f}"
 
 
-def latex_table(rows, base_total_all=None, final_nseg_all=None):
+def fmt_trim(val, digits=3):
+    s = fmt(val, digits)
+    if s == "nan":
+        return s
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
+
+
+def latex_table(rows, base_total_all=None, final_nseg_all=None, init_desc=""):
     if base_total_all is None:
         base_total_all = []
     if final_nseg_all is None:
@@ -229,22 +238,26 @@ def latex_table(rows, base_total_all=None, final_nseg_all=None):
             "limit (s) & passes & distance & mean/med/max & solves & min/avg/max/std & (min) \\\\"
         )
         colspec = "r r r r r r r"
-        caption = (
-            "Summary of cap runs. Baseline total distance (pass 0) is "
-            f"{fmt(base_total_all[0])} for all runs. "
-        )
+        caption = ""
+        caption += f"Baseline total distance is {fmt(base_total_all[0])} for all runs"
         if nseg_same:
-            caption += f"Final number of segments is {fmt(final_nseg_all[0], 0)} for all runs. "
+            caption += f" and number of segments is {fmt(final_nseg_all[0], 0)} for all runs. "
         elif final_nseg_all:
             caption += (
-                f"Final number of segments ranges from "
+                f" and number of segments ranges from "
                 f"{fmt(min(final_nseg_all), 0)} to {fmt(max(final_nseg_all), 0)}. "
             )
+        else:
+            caption += ". "
+        if init_desc:
+            caption += init_desc.strip()
+            if not caption.endswith("."):
+                caption += "."
+            caption += " "
         caption += (
             "Columns show capacity MIP time limit (seconds), number of passes, final total distance, "
             "mean/median/max segments changed per pass, accepted/total capacity solves, "
-            "capacity MIP gap min/avg/max/std (percent), and total run time (minutes). "
-            "Initialization uses --init_timelimit if set (otherwise no limit)."
+            "capacity MIP gap min/avg/max/std (percent), and total run time (minutes)."
         )
     else:
         header_top = (
@@ -255,13 +268,14 @@ def latex_table(rows, base_total_all=None, final_nseg_all=None):
         )
         colspec = "r r r r r r r r"
         caption = (
-            "Summary of cap runs. Columns show capacity MIP time limit (seconds), number of passes, "
-            "baseline total distance (pass 0), "
-            "final total distance, mean/median/max segments changed per pass, "
+            "Columns show capacity MIP time limit (seconds), number of passes, "
+            "baseline total distance (pass 0), final total distance, "
+            "mean/median/max segments changed per pass, "
             "accepted/total capacity solves, capacity MIP gap "
-            "min/avg/max/std (percent), and total run time (minutes). "
-            "Initialization uses --init_timelimit if set (otherwise no limit)."
+            "min/avg/max/std (percent), and total run time (minutes)."
         )
+        if init_desc:
+            caption = init_desc.strip() + " " + caption
     lines = [
         "\\begin{table}[ht]",
         "\\centering",
@@ -276,8 +290,8 @@ def latex_table(rows, base_total_all=None, final_nseg_all=None):
         cap_acc = f"{r['cap_accept']}/{r['cap_solves']}" if r["cap_solves"] else "0/0"
         seg_chg = "/".join([
             fmt(r["avg_seg_changed"], 1),
-            fmt(r["med_seg_changed"], 1),
-            fmt(r["max_seg_changed"], 1),
+            fmt_trim(r["med_seg_changed"], 1),
+            fmt(r["max_seg_changed"], 0),
         ])
         gap_min = fmt(r["cap_gap_min"] * 100.0 if r["cap_gap_min"] is not None else None, 0)
         gap_avg = fmt(r["cap_gap_avg"] * 100.0 if r["cap_gap_avg"] is not None else None, 0)
@@ -410,6 +424,8 @@ def main():
                         help="Alias for --time-summary.")
     parser.add_argument("--init-time-limit", type=float, default=300.0,
                         help="Initialization time limit (seconds) for upper-bound calc.")
+    parser.add_argument("--init-desc", default="",
+                        help="Extra sentence(s) to include in the LaTeX caption about initialization.")
     args = parser.parse_args()
 
     run_files = {}
@@ -466,7 +482,12 @@ def main():
     out = []
     base_total_all = [s["base_total"] for s in summaries if s.get("base_total") is not None]
     final_nseg_all = [s["final_nseg"] for s in summaries if s.get("final_nseg") is not None]
-    out.append(latex_table(summaries, base_total_all=base_total_all, final_nseg_all=final_nseg_all))
+    out.append(latex_table(
+        summaries,
+        base_total_all=base_total_all,
+        final_nseg_all=final_nseg_all,
+        init_desc=args.init_desc,
+    ))
     if args.per_pass:
         for s in summaries:
             out.append("")
