@@ -3668,8 +3668,16 @@ typedef struct {
 static int edge_cmp(const void *a, const void *b) {
   const Edge *ea = (const Edge*)a;
   const Edge *eb = (const Edge*)b;
+  /* Deterministic total order (qsort is not stable). */
+  int a_nan = isnan(ea->w);
+  int b_nan = isnan(eb->w);
+  if (a_nan != b_nan) return a_nan ? 1 : -1;
   if (ea->w < eb->w) return -1;
   if (ea->w > eb->w) return 1;
+  if (ea->u < eb->u) return -1;
+  if (ea->u > eb->u) return 1;
+  if (ea->v < eb->v) return -1;
+  if (ea->v > eb->v) return 1;
   return 0;
 }
 
