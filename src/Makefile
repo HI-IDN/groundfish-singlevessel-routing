@@ -60,7 +60,7 @@ endif
 UTILS_LIB = -L$(LIB_DIR) -lutils $(UTILS_RPATH)
 
 # -------- Targets --------
-all: demo cap matheur matcapheur matcapmutheur matcapmutheur_v3 utils db
+all: demo cap matheur matcapheur matcapmutheur matcapmut_v2 matcapmutheur_v3 utils db
 
 demo: main.c utils
 	mkdir -p $(BIN_DIR)

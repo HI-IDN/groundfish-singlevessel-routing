@@ -3707,8 +3707,9 @@ static SegmentResult *evaluate_visit_segments(const ExData *ex,
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--init_timelimit <sec>] [--seg_timelimit <sec>] [--cap-time-limit <sec>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
-    fprintf(stderr, "  Note: --init_timelimit and --seg_timelimit default to 0 (no limit).\n");
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [--seg_timelimit <sec>] [--cap-time-limit <sec>] [--cap-seed <int>] [--cap-mipfocus <0..3>] [--write-dat <out.dat>] [--verbose-init]\n", argv[0]);
+    fprintf(stderr, "  Note: no-port TSP init runs without a time limit; --init_timelimit/--time-limit are ignored.\n");
+    fprintf(stderr, "        --seg_timelimit defaults to 0 (no limit).\n");
     return 1;
   }
 
@@ -3748,7 +3749,7 @@ int main(int argc, char **argv) {
         die("--seg_timelimit requires a value");
       }
     } else if (strcmp(argv[i], "--time-limit") == 0) {
-      /* Backward-compatible alias: applies to init only. */
+      /* Backward-compatible alias: kept but ignored for init. */
       if (i + 1 < argc) {
         init_timelimit = atof(argv[i + 1]);
         i++;
@@ -3789,7 +3790,7 @@ int main(int argc, char **argv) {
     } else if (strncmp(argv[i], "--seg-time-limit=", 17) == 0) {
       seg_timelimit = atof(argv[i] + 17);
     } else if (strncmp(argv[i], "--time-limit=", 13) == 0) {
-      /* Backward-compatible alias: applies to init only. */
+      /* Backward-compatible alias: kept but ignored for init. */
       init_timelimit = atof(argv[i] + 13);
     } else if (strncmp(argv[i], "--cap-time-limit=", 17) == 0) {
       cap_timelimit = atof(argv[i] + 17);
@@ -3800,9 +3801,12 @@ int main(int argc, char **argv) {
     } else if (strcmp(argv[i], "--verbose-init") == 0) {
       verbose_init = 1;
     } else {
-      /* Backward-compatible positional timelimit: applies to init only. */
+      /* Backward-compatible positional timelimit: kept but ignored for init. */
       init_timelimit = atof(argv[i]);
     }
+  }
+  if (init_timelimit > 0.0) {
+    printf("Note: --init_timelimit/--time-limit are ignored; init TSP runs without limit.\n");
   }
 
   const char *ship_names[] = { "Árni Friðriksson", "Bjarni Sæmundsson", "Gullver", "Breki" };
@@ -3866,7 +3870,7 @@ int main(int argc, char **argv) {
   int *init_tour = NULL;
   int init_len = 0;
   time_t init_solve_start = time(NULL);
-  if (solve_tsp_distance(init_env, dist_np, ex_np.Size, init_timelimit, verbose_init, &init_obj,
+  if (solve_tsp_distance(init_env, dist_np, ex_np.Size, 0.0, verbose_init, &init_obj,
                          &init_tour, &init_len) != 0) {
     die("initial no-port solve failed");
   }
@@ -3875,8 +3879,8 @@ int main(int argc, char **argv) {
   if (verbose_init) {
     printf("Initial no-port TSP wall time: %.0f s\n",
            difftime(init_solve_end, init_solve_start));
-    printf("Initial no-port TSP stats: status=%d solcount=%d grb_runtime=%.2f s (timelimit=%.1f)\n",
-           g_last_tsp_status, g_last_tsp_solcount, g_last_tsp_runtime, init_timelimit);
+    printf("Initial no-port TSP stats: status=%d solcount=%d grb_runtime=%.2f s (timelimit=none)\n",
+           g_last_tsp_status, g_last_tsp_solcount, g_last_tsp_runtime);
   }
   GRBfreeenv(init_env);
 
