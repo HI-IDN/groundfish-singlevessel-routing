@@ -99,7 +99,10 @@ utils: utils.c
 parse_dat_to_sqlite: parse_dat_to_sqlite.c utils
 	mkdir -p $(BIN_DIR)
 	$(CC) parse_dat_to_sqlite.c $(UTILS_LIB) -lsqlite3 -lm -o $(BIN_DIR)/parse_dat_to_sqlite
-db: parse_dat_to_sqlite
+sols_to_sqlite: sols_to_sqlite.c utils
+	mkdir -p $(BIN_DIR)
+	$(CC) sols_to_sqlite.c $(UTILS_LIB) -lsqlite3 -lm -o $(BIN_DIR)/sols_to_sqlite
+db: parse_dat_to_sqlite sols_to_sqlite
 
 clean:
 	rm -f $(BIN_DIR)/demo $(BIN_DIR)/cap $(BIN_DIR)/matheur $(BIN_DIR)/matcapheur $(BIN_DIR)/matcapmutheur $(BIN_DIR)/matcapmut_v2 $(BIN_DIR)/matcapmutheur_v3 \
