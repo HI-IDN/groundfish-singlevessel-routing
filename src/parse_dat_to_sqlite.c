@@ -215,18 +215,7 @@ int main(int argc, char **argv) {
     }
 
     FILE *f = fopen(infile, "r");
-    if (!f) {
-        /* Helpful message: user often mistakenly passes the output DB path as the input. */
-        if (strstr(infile, ".sqlite") || strstr(infile, ".db")) {
-            fprintf(stderr, "open %s: %s\n", infile, strerror(errno));
-            fprintf(stderr, "It looks like you passed a database path as the input file.\n");
-            fprintf(stderr, "Usage: %s input.dat [outdir] [island_bin] [--force]\n", argv[0]);
-            fprintf(stderr, "Example (recreate DB): %s dat/data2023spring.dat dat bin/island.bin --force\n", argv[0]);
-            return 1;
-        }
-        fprintf(stderr, "open %s: %s\n", infile, strerror(errno));
-        return 1;
-    }
+    if (!f) { fprintf(stderr, "open %s: %s\n", infile, strerror(errno)); return 1; }
 
     sqlite3 *db = NULL;
     if (sqlite3_open_v2(dbpath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL) != SQLITE_OK) {
@@ -246,7 +235,7 @@ int main(int argc, char **argv) {
         "CREATE UNIQUE INDEX IF NOT EXISTS locations_unique ON locations(lat_int,lon_int,type);"
         "CREATE TABLE IF NOT EXISTS boats(id INTEGER PRIMARY KEY, start_loc INTEGER, end_loc INTEGER, capacity INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, name TEXT, FOREIGN KEY(start_loc) REFERENCES locations(id), FOREIGN KEY(end_loc) REFERENCES locations(id));"
         "CREATE TABLE IF NOT EXISTS ports(id INTEGER PRIMARY KEY, loc_id INTEGER, name TEXT, flag INTEGER, FOREIGN KEY(loc_id) REFERENCES locations(id));"
-        "CREATE TABLE IF NOT EXISTS stations(id INTEGER PRIMARY KEY, ext_id INTEGER, start_loc INTEGER, end_loc INTEGER, catch INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, bottom_depth_cast INTEGER, bottom_depth_haul INTEGER, comment TEXT, FOREIGN KEY(start_loc) REFERENCES locations(id), FOREIGN KEY(end_loc) REFERENCES locations(id));"
+        "CREATE TABLE IF NOT EXISTS stations(id INTEGER PRIMARY KEY, ext_id INTEGER, start_loc INTEGER, end_loc INTEGER, remark TEXT, bottom_depth_cast INTEGER, bottom_depth_haul INTEGER, FOREIGN KEY(start_loc) REFERENCES locations(id), FOREIGN KEY(end_loc) REFERENCES locations(id));"
         "CREATE TABLE IF NOT EXISTS waypoints(id INTEGER PRIMARY KEY, loc_id INTEGER, flag INTEGER, FOREIGN KEY(loc_id) REFERENCES locations(id));";
     char *err = NULL;
     if (sqlite3_exec(db, schema, NULL, NULL, &err) != SQLITE_OK) {
@@ -257,85 +246,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Create an 'island' table and try to load island_path (binary float32: [lat0..latN-1, lon0..lonN-1]) */
-    if (sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS island(id INTEGER PRIMARY KEY, lat REAL, lon REAL);", NULL, NULL, &err) != SQLITE_OK) {
-        fprintf(stderr, "failed to create island table: %s\n", err ? err : "unknown");
-        sqlite3_free(err);
-    } else {
-         FILE *fis = fopen(island_path, "rb");
-         if (fis) {
-             long bytes;
-             if (fseek(fis, 0, SEEK_END) == 0) {
-                 bytes = ftell(fis);
-                 fseek(fis, 0, SEEK_SET);
-             } else bytes = -1;
-             if (bytes <= 0) {
-                 fprintf(stderr, "island file '%s' appears empty or unreadable\n", island_path);
-                 fclose(fis);
-             } else if ((bytes % sizeof(float)) != 0) {
-                 fprintf(stderr, "island file '%s' size not a multiple of float32 (skipping)\n", island_path);
-                 fclose(fis);
-             } else {
-                 size_t nfloat = (size_t)(bytes / sizeof(float));
-                 if ((nfloat % 2) != 0) {
-                     fprintf(stderr, "island file '%s' float count is odd (expect even), continuing with floor(n/2)\n", island_path);
-                 }
-                 size_t npts = nfloat / 2;
-                 float *landata = (float*)malloc(nfloat * sizeof(float));
-                 if (!landata) {
-                     fprintf(stderr, "out of memory reading island file\n");
-                     fclose(fis);
-                 } else {
-                     size_t got = fread(landata, sizeof(float), nfloat, fis);
-                     fclose(fis);
-                     if (got != nfloat) {
-                         fprintf(stderr, "warning: expected %zu floats from '%s' but got %zu\n", nfloat, island_path, got);
-                         /* adjust npts if needed */
-                         if (got >= 2) npts = (got / 2);
-                         else npts = 0;
-                     }
-
-                     if (npts > 0) {
-                         sqlite3_stmt *st_island = NULL;
-                         if (sqlite3_prepare_v2(db, "INSERT INTO island(lat,lon) VALUES(?,?);", -1, &st_island, NULL) == SQLITE_OK) {
-                             if (sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL) != SQLITE_OK) {
-                                 fprintf(stderr, "warning: failed to begin transaction for island insert: %s\n", sqlite3_errmsg(db));
-                            }
-                            for (size_t i = 0; i < npts; ++i) {
-                                sqlite3_bind_double(st_island, 1, (double)landata[i]);
-                                sqlite3_bind_double(st_island, 2, (double)landata[npts + i]);
-                                if (sqlite3_step(st_island) != SQLITE_DONE) {
-                                    fprintf(stderr, "sqlite insert island error at idx %zu: %s\n", i, sqlite3_errmsg(db));
-                                }
-                                sqlite3_reset(st_island);
-                                sqlite3_clear_bindings(st_island);
-                            }
-                            if (sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK) {
-                                fprintf(stderr, "warning: failed to commit island inserts: %s\n", sqlite3_errmsg(db));
-                            }
-                            sqlite3_finalize(st_island);
-                            fprintf(stderr, "Loaded island file '%s' with %zu points into table 'island'\n", island_path, npts);
-                         } else {
-                             fprintf(stderr, "failed to prepare island insert stmt: %s\n", sqlite3_errmsg(db));
-                         }
-                     } else {
-                         fprintf(stderr, "no island points found in '%s'\n", island_path);
-                     }
-                     free(landata);
-                 }
-             }
-         } else {
-             fprintf(stderr, "island file '%s' not found - skipping island load\n", island_path);
-         }
-     }
-
     sqlite3_stmt *st_loc_ins = NULL, *st_loc_sel = NULL;
     sqlite3_stmt *st_boat = NULL, *st_port = NULL, *st_stat = NULL, *st_wayp = NULL;
     if (sqlite3_prepare_v2(db, "INSERT OR IGNORE INTO locations(lat_int,lon_int,type) VALUES(?,?,?);", -1, &st_loc_ins, NULL) != SQLITE_OK ||
         sqlite3_prepare_v2(db, "SELECT id FROM locations WHERE lat_int=? AND lon_int=? AND type=?;", -1, &st_loc_sel, NULL) != SQLITE_OK ||
         sqlite3_prepare_v2(db, "INSERT INTO boats(start_loc,end_loc,capacity,c1,c2,c3,c4,c5,c6,name) VALUES(?,?,?,?,?,?,?,?,?,?);", -1, &st_boat, NULL) != SQLITE_OK ||
         sqlite3_prepare_v2(db, "INSERT INTO ports(loc_id,name,flag) VALUES(?,?,?);", -1, &st_port, NULL) != SQLITE_OK ||
-        sqlite3_prepare_v2(db, "INSERT INTO stations(ext_id,start_loc,end_loc,catch,c1,c2,c3,bottom_depth_cast,bottom_depth_haul,comment) VALUES(?,?,?,?,?,?,?,?,?,?);", -1, &st_stat, NULL) != SQLITE_OK ||
+        sqlite3_prepare_v2(db, "INSERT INTO stations(ext_id,start_loc,end_loc,remark,bottom_depth_cast,bottom_depth_haul) VALUES(?,?,?,?,?,?);", -1, &st_stat, NULL) != SQLITE_OK ||
         sqlite3_prepare_v2(db, "INSERT INTO waypoints(loc_id,flag) VALUES(?,?);", -1, &st_wayp, NULL) != SQLITE_OK) {
         fprintf(stderr, "sqlite prepare error: %s\n", sqlite3_errmsg(db));
         sqlite3_finalize(st_loc_ins); sqlite3_finalize(st_loc_sel);
@@ -473,7 +390,7 @@ int main(int argc, char **argv) {
             free(name);
 
         } else if (strcmp(tok, "STAT") == 0) {
-            /* STAT ext_id subid flag lat1 lon1 lat2 lon2 catch extraTime ... # comment */
+            /* STAT ext_id subid flag lat1 lon1 lat2 lon2 ... # comment */
             char *t1 = next_token(&p);
             char *t2 = next_token(&p);
             char *t3 = next_token(&p);
@@ -481,18 +398,14 @@ int main(int argc, char **argv) {
             char *slon1 = next_token(&p);
             char *slat2 = next_token(&p);
             char *slon2 = next_token(&p);
-            char *scatch = next_token(&p);
-            char *sextra = next_token(&p);
             if (!t1 || !slat1 || !slon1 || !slat2 || !slon2) {
                 fprintf(stderr, "line %d: STAT parse error\n", lineno);
-                free(t1); free(t2); free(t3); free(slat1); free(slon1); free(slat2); free(slon2); free(scatch); free(sextra);
+                free(t1); free(t2); free(t3); free(slat1); free(slon1); free(slat2); free(slon2);
                 free(tok); free(comment);
                 continue;
             }
             int ext_id = atoi(t1);
             int lat1 = atoi(slat1), lon1 = atoi(slon1), lat2 = atoi(slat2), lon2 = atoi(slon2);
-            int catch_v = scatch ? atoi(scatch) : 0;
-            int extra_v = sextra ? atoi(sextra) : 0;
             int bot_k = -1, bot_h = -1;
             char *remark = NULL;
             if (comment) {
@@ -524,18 +437,13 @@ int main(int argc, char **argv) {
                 }
             }
 
-            /* Bind according to new stations schema: ext_id,start_loc,end_loc,catch,c1,c2,c3,bottom_depth_cast,bottom_depth_haul,comment */
             sqlite3_bind_int(st_stat, 1, ext_id);
             sqlite3_bind_int(st_stat, 2, locs[li1].id);
             sqlite3_bind_int(st_stat, 3, locs[li2].id);
-            sqlite3_bind_int(st_stat, 4, catch_v);
-            if (t2) sqlite3_bind_int(st_stat, 5, atoi(t2)); else sqlite3_bind_null(st_stat, 5);
-            if (t3) sqlite3_bind_int(st_stat, 6, atoi(t3)); else sqlite3_bind_null(st_stat, 6);
-            /* store extraTime in c3 */
-            sqlite3_bind_int(st_stat, 7, extra_v);
-            if (bot_k >= 0) sqlite3_bind_int(st_stat, 8, bot_k); else sqlite3_bind_null(st_stat, 8);
-            if (bot_h >= 0) sqlite3_bind_int(st_stat, 9, bot_h); else sqlite3_bind_null(st_stat, 9);
-            if (remark) sqlite3_bind_text(st_stat, 10, remark, -1, SQLITE_TRANSIENT); else sqlite3_bind_null(st_stat, 10);
+            if (remark) sqlite3_bind_text(st_stat, 4, remark, -1, SQLITE_TRANSIENT);
+            else sqlite3_bind_null(st_stat, 4);
+            if (bot_k >= 0) sqlite3_bind_int(st_stat, 5, bot_k); else sqlite3_bind_null(st_stat, 5);
+            if (bot_h >= 0) sqlite3_bind_int(st_stat, 6, bot_h); else sqlite3_bind_null(st_stat, 6);
 
             if (sqlite3_step(st_stat) != SQLITE_DONE)
                 fprintf(stderr, "sqlite insert stat error: %s\n", sqlite3_errmsg(db));
@@ -543,7 +451,7 @@ int main(int argc, char **argv) {
             sqlite3_clear_bindings(st_stat);
 
             free(remark);
-            free(t1); free(t2); free(t3); free(slat1); free(slon1); free(slat2); free(slon2); free(scatch); free(sextra);
+            free(t1); free(t2); free(t3); free(slat1); free(slon1); free(slat2); free(slon2);
 
         } else if (strcmp(tok, "WAYP") == 0) {
             char *slat = next_token(&p);
@@ -606,8 +514,8 @@ int main(int argc, char **argv) {
     const char *create_v_locations =
         "CREATE VIEW IF NOT EXISTS v_locations AS "
         "SELECT id, lat_int, lon_int, "
-        "( (CASE WHEN ABS(lat_int) < 10000 THEN lat_int*100.0 ELSE lat_int END) + (200.0/3.0) * ( ((CASE WHEN ABS(lat_int) < 10000 THEN lat_int*100.0 ELSE lat_int END)/100.0) - floor((CASE WHEN ABS(lat_int) < 10000 THEN lat_int*100.0 ELSE lat_int END)/10000.0) * 100.0 ) ) / 10000.0 AS lat, "
-        "-((CASE WHEN ABS(lon_int) < 10000 THEN lon_int*100.0 ELSE lon_int END) + (200.0/3.0) * ( ((CASE WHEN ABS(lon_int) < 10000 THEN lon_int*100.0 ELSE lon_int END)/100.0) - floor((CASE WHEN ABS(lon_int) < 10000 THEN lon_int*100.0 ELSE lon_int END)/10000.0) * 100.0 ) ) / 10000.0 AS lon, "
+        "( (CASE WHEN ABS(lat_int) < 10000 THEN lat_int*100.0 ELSE lat_int END) + (200.0/3.0) * ( ((CASE WHEN ABS(lat_int) < 10000 THEN lat_int*100.0 ELSE lat_int END)/100.0) - floor((CASE WHEN ABS(lat_int) < 10000 THEN lat_int*100.0 ELSE lat_int END)/10000.0) * 100.0 ) ) / 10000.0 AS lat_deg, "
+        "( (CASE WHEN ABS(lon_int) < 10000 THEN lon_int*100.0 ELSE lon_int END) + (200.0/3.0) * ( ((CASE WHEN ABS(lon_int) < 10000 THEN lon_int*100.0 ELSE lon_int END)/100.0) - floor((CASE WHEN ABS(lon_int) < 10000 THEN lon_int*100.0 ELSE lon_int END)/10000.0) * 100.0 ) ) / 10000.0 AS lon_deg, "
         "type FROM locations;";
     char *verr = NULL;
     if (sqlite3_exec(db, create_v_locations, NULL, NULL, &verr) != SQLITE_OK) {
@@ -622,6 +530,7 @@ int main(int argc, char **argv) {
         "BEGIN;"
         "DROP TABLE IF EXISTS distances;"
         "CREATE TABLE distances(i INTEGER NOT NULL, j INTEGER NOT NULL, dist REAL NOT NULL, via_waypoint INTEGER NOT NULL);"
+        "CREATE INDEX IF NOT EXISTS distances_idx ON distances(i,j);"
         "COMMIT;",
         NULL, NULL, &err) != SQLITE_OK) {
         fprintf(stderr, "schema error (distances): %s\n", err ? err : "unknown");

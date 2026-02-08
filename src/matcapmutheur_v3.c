@@ -3716,6 +3716,27 @@ static double min_dist_from_start(const double *full_dist, int full_m, int to_ex
   return d0 < d1 ? d0 : d1;
 }
 
+static double min_dist_to_end(const double *full_dist, int full_m, int from_ex) {
+  int a0 = 2 * from_ex;
+  int a1 = 2 * from_ex + 1;
+  double d0 = full_dist[a0*full_m + 1];
+  double d1 = full_dist[a1*full_m + 1];
+  return d0 < d1 ? d0 : d1;
+}
+
+static double order_distance_minpair(const double *full_dist, int full_m,
+                                     const int *order, int n_station) {
+  if (!order || n_station <= 0) {
+    return full_dist ? full_dist[0*full_m + 1] : 0.0;
+  }
+  double total = min_dist_from_start(full_dist, full_m, order[0]);
+  for (int i = 0; i + 1 < n_station; i++) {
+    total += min_dist_ex(full_dist, full_m, order[i], order[i + 1]);
+  }
+  total += min_dist_to_end(full_dist, full_m, order[n_station - 1]);
+  return total;
+}
+
 static int *collect_station_list(const ExData *ex, int *out_n) {
   int n_station = 0;
   for (int i = 0; i < ex->Size; i++) {
@@ -4105,6 +4126,22 @@ static Visit *build_capacity_visits(const ExData *ex, const ItemVec *items,
   return visits;
 }
 
+static int *station_order_from_visits(const Visit *visits, int n_visits, int *out_n) {
+  int count = 0;
+  for (int i = 0; i < n_visits; i++) {
+    if (visits[i].type == tSTAT) count++;
+  }
+  int *order = (int*)xmalloc((size_t)count * sizeof(int));
+  int n = 0;
+  for (int i = 0; i < n_visits; i++) {
+    if (visits[i].type == tSTAT) {
+      order[n++] = visits[i].ex_idx;
+    }
+  }
+  *out_n = n;
+  return order;
+}
+
 static void print_visit_list(const ExData *ex, const ItemVec *items,
                              const Visit *visits, int n) {
   printf("Visit order (%d):", n);
@@ -4486,15 +4523,32 @@ int main(int argc, char **argv) {
   if (strcmp(init_strategy, "nearest") == 0) {
     if (verbose_init) printf("Init strategy: nearest (capacity-aware)\n");
     visits = build_greedy_visits(&ex, &items, full_dist, full_m, init_cap, &n_visits);
+    if (visits) {
+      int n_station = 0;
+      int *station_order = station_order_from_visits(visits, n_visits, &n_station);
+      if (station_order && n_station > 0) {
+        double order_len = order_distance_minpair(full_dist, full_m, station_order, n_station);
+        printf("Heuristic no-port order length (min-pair): %.3f\n", order_len);
+      }
+      free(station_order);
+    }
   } else {
     int n_station = 0;
     int *station_order = NULL;
     if (strcmp(init_strategy, "cheapest") == 0) {
       if (verbose_init) printf("Init strategy: cheapest insertion\n");
       station_order = tsp_cheapest_insertion(&ex, full_dist, full_m, &n_station);
+      if (station_order && n_station > 0) {
+        double order_len = order_distance_minpair(full_dist, full_m, station_order, n_station);
+        printf("Heuristic no-port order length (min-pair): %.3f\n", order_len);
+      }
     } else if (strcmp(init_strategy, "greedy-edge") == 0) {
       if (verbose_init) printf("Init strategy: greedy edge\n");
       station_order = tsp_greedy_edge(&ex, full_dist, full_m, &n_station);
+      if (station_order && n_station > 0) {
+        double order_len = order_distance_minpair(full_dist, full_m, station_order, n_station);
+        printf("Heuristic no-port order length (min-pair): %.3f\n", order_len);
+      }
     } else {
       die("Unknown --init-strategy (use nearest|cheapest|greedy-edge)");
     }
