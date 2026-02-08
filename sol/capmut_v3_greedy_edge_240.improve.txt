@@ -1,0 +1,3 @@
+/home/tpr/projects/matheuristic/sol/capmut_v3_greedy_edge_240.improve_0000.txt
+/home/tpr/projects/matheuristic/sol/capmut_v3_greedy_edge_240.improve_0001.txt
+/home/tpr/projects/matheuristic/sol/capmut_v3_greedy_edge_240.improve_0002.txt

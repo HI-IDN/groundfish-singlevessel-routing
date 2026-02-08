@@ -1,0 +1,11 @@
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0000.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0001.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0002.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0003.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0004.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0005.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0006.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0007.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0008.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0009.txt
+/home/tpr/projects/matheuristic/sol/capmut_480.improve_0010.txt
