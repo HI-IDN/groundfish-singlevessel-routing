@@ -49,7 +49,6 @@ htmlcov/
 *.zip
 
 # Logs and runtime files
-*.log
 *.pid
 *.seed
 *.pid.lock
