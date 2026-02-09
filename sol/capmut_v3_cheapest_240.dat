@@ -40,29 +40,28 @@ STAT 623 14 1 661842 231939 661634 231107 1895 12 #   \\ botndypi_kastad= 75 bot
 STAT 623 5 1 662820 232695 662463 233133 1102 14 #   \\ botndypi_kastad= 75 botndypi_hift= 150 \\
 STAT 623 2 1 663106 233442 662726 233162 1440 15 #   \\ botndypi_kastad= 115 botndypi_hift= 130 \\
 STAT 673 15 1 663505 234488 663248 233724 639 15 #   \\ botndypi_kastad= 134 botndypi_hift= 132 \\
-STAT 673 35 1 663757 232247 663580 233144 1139 13 #   \\ botndypi_kastad= 70 botndypi_hift= 73 \\
-STAT 672 35 1 663265 225226 663399 225596 15 13 #  Rifið undirbyrði. Endurtekið 2 sml \\ botndypi_kastad= 69 botndypi_hift= 79 \\
-STAT 672 14 0 663459 222274 663854 222383 632 12 #   \\ botndypi_kastad= 57 botndypi_hift= 62 \\
-STAT 672 11 0 664470 223544 664769 224211 353 13 #   \\ botndypi_kastad= 74 botndypi_hift= 95 \\
-STAT 672 16 0 664888 225313 664519 225677 2475 14 #   \\ botndypi_kastad= 124 botndypi_hift= 91 \\
-STAT 673 13 0 664508 231100 664412 232076 9482 15 #   \\ botndypi_kastad= 107 botndypi_hift= 132 \\
-STAT 673 12 0 665204 232918 665063 233863 198 17 #   \\ botndypi_kastad= 179 botndypi_hift= 177 \\
-STAT 673 11 0 664986 234160 665297 234785 203 16 #   \\ botndypi_kastad= 152 botndypi_hift= 170 \\
-STAT 673 14 1 664975 235111 665298 235697 1526 16 #   \\ botndypi_kastad= 151 botndypi_hift= 163 \\
 STAT 673 31 1 664028 235606 664002 234605 1929 14 #   \\ botndypi_kastad= 94 botndypi_hift= 103 \\
 STAT 674 16 1 664070 242269 664002 241278 203 17 #   \\ botndypi_kastad= 135 botndypi_hift= 239 \\
 STAT 674 4 1 664860 241520 664531 242082 325 17 #   \\ botndypi_kastad= 173 botndypi_hift= 199 \\
 STAT 673 6 1 665311 240051 664919 235883 296 16 #   \\ botndypi_kastad= 161 botndypi_hift= 144 \\
+STAT 673 14 1 664975 235111 665298 235697 1526 16 #   \\ botndypi_kastad= 151 botndypi_hift= 163 \\
+STAT 673 11 0 664986 234160 665297 234785 203 16 #   \\ botndypi_kastad= 152 botndypi_hift= 170 \\
 STAT 673 17 0 665502 235846 665744 235040 52 17 #   \\ botndypi_kastad= 174 botndypi_hift= 167 \\
 STAT 673 2 0 665800 234080 665798 233054 57 18 #   \\ botndypi_kastad= 200 botndypi_hift= 212 \\
 STAT 673 3 0 665761 233034 665402 232600 249 18 #   \\ botndypi_kastad= 215 botndypi_hift= 196 \\
+STAT 673 12 0 665204 232918 665063 233863 198 17 #   \\ botndypi_kastad= 179 botndypi_hift= 177 \\
 STAT 673 5 0 665099 232051 665186 231055 181 18 #   \\ botndypi_kastad= 213 botndypi_hift= 192 \\
 STAT 673 4 0 665386 231043 665572 230150 226 19 #   \\ botndypi_kastad= 227 botndypi_hift= 224 \\
+STAT 672 4 1 665404 225794 665658 225010 523 18 #   \\ botndypi_kastad= 204 botndypi_hift= 209 \\
 STAT 673 7 0 665523 225977 665145 230265 286 18 #   \\ botndypi_kastad= 210 botndypi_hift= 175 \\
-STAT 672 4 0 665404 225794 665658 225010 523 18 #   \\ botndypi_kastad= 204 botndypi_hift= 209 \\
-STAT 672 5 1 665902 223491 665591 224122 646 17 #   \\ botndypi_kastad= 186 botndypi_hift= 174 \\
-STAT 672 3 1 665395 223380 665677 222656 1089 16 #   \\ botndypi_kastad= 155 botndypi_hift= 168 \\
-STAT 672 12 0 665321 223461 665025 224141 1555 15 #   \\ botndypi_kastad= 143 botndypi_hift= 120 \\
+STAT 672 16 0 664888 225313 664519 225677 2475 14 #   \\ botndypi_kastad= 124 botndypi_hift= 91 \\
+STAT 673 13 0 664508 231100 664412 232076 9482 15 #   \\ botndypi_kastad= 107 botndypi_hift= 132 \\
+STAT 673 35 1 663757 232247 663580 233144 1139 13 #   \\ botndypi_kastad= 70 botndypi_hift= 73 \\
+STAT 672 35 1 663265 225226 663399 225596 15 13 #  Rifið undirbyrði. Endurtekið 2 sml \\ botndypi_kastad= 69 botndypi_hift= 79 \\
+STAT 672 14 0 663459 222274 663854 222383 632 12 #   \\ botndypi_kastad= 57 botndypi_hift= 62 \\
+STAT 672 11 0 664470 223544 664769 224211 353 13 #   \\ botndypi_kastad= 74 botndypi_hift= 95 \\
+STAT 672 12 1 665321 223461 665025 224141 1555 15 #   \\ botndypi_kastad= 143 botndypi_hift= 120 \\
+STAT 672 3 0 665395 223380 665677 222656 1089 16 #   \\ botndypi_kastad= 155 botndypi_hift= 168 \\
 STAT 672 6 1 665094 221433 665192 222415 1851 15 #   \\ botndypi_kastad= 119 botndypi_hift= 121 \\
 STAT 672 15 1 663961 220587 664350 220783 453 13 #   \\ botndypi_kastad= 79 botndypi_hift= 89 \\
 STAT 671 5 0 663615 215451 663716 214462 1643 12 #   \\ botndypi_kastad= 72 botndypi_hift= 88 \\
@@ -149,70 +148,30 @@ STAT 562 1 0 655009 120420 654759 115656 66 18 #   \\ botndypi_kastad= 200 botnd
 STAT 561 11 1 654018 114665 654415 114645 77 19 #   \\ botndypi_kastad= 227 botndypi_hift= 226 \\
 STAT 561 1 1 653584 113620 653925 113106 389 23 #   \\ botndypi_kastad= 259 botndypi_hift= 331 \\
 STAT 511 1 1 652722 114875 653035 114282 228 18 #   \\ botndypi_kastad= 200 botndypi_hift= 212 \\
-STAT 511 11 1 651602 115021 651791 115838 52 18 #   \\ botndypi_kastad= 204 botndypi_hift= 219 \\
-STAT 511 2 1 651442 113674 651706 114409 204 21 #   \\ botndypi_kastad= 269 botndypi_hift= 249 \\
-STAT 511 12 1 650604 113100 651000 113095 202 22 #   \\ botndypi_kastad= 268 botndypi_hift= 286 \\
-STAT 511 13 1 650110 114798 650501 114828 70 19 #   \\ botndypi_kastad= 213 botndypi_hift= 249 \\
-STAT 461 15 1 645522 120178 645894 115818 139 18 #   \\ botndypi_kastad= 200 botndypi_hift= 186 \\
-STAT 461 1 1 644738 114283 645025 113998 229 22 #  Tók í trollið eftir 3,1 64°50´25-11°39´98 \\ botndypi_kastad= 257 botndypi_hift= 313 \\
-STAT 461 2 1 645073 113440 644730 113962 343 27 #   \\ botndypi_kastad= 381 botndypi_hift= 332 \\
-STAT 461 12 0 644969 112019 644758 111322 73 35 #  Híft eftir 3,7sml botb orðin ljótur \\ botndypi_kastad= 513 botndypi_hift= 481 \\
-STAT 460 1 1 644408 104905 644791 104615 63 31 #   \\ botndypi_kastad= 431 botndypi_hift= 433 \\
-STAT 461 11 1 643409 113046 643525 112135 45 32 #  Tók í troll í 64°35´22 - 11°21´35. Fast í hífingu. Rifið undirbirði \\ botndypi_kastad= 451 botndypi_hift= 437 \\
-STAT 411 12 1 642094 112090 642000 112800 122 28 #  Híft ú festu 64°20´00-11°28´00. BB yfirvængur rifinn, heilt að öðru leiti \\ botndypi_kastad= 367 botndypi_hift= 387 \\
-STAT 411 2 1 641899 111207 641494 111391 216 25 #   \\ botndypi_kastad= 324 botndypi_hift= 335 \\
-STAT 411 3 1 641804 110784 642112 110181 427 26 #   \\ botndypi_kastad= 331 botndypi_hift= 349 \\
-STAT 411 4 1 641500 110202 641785 110871 133 26 #   \\ botndypi_kastad= 354 botndypi_hift= 327 \\
-STAT 410 11 1 640630 103742 640990 103327 78 32 #   \\ botndypi_kastad= 449 botndypi_hift= 462 \\
-STAT 360 1 1 635200 105490 635585 105201 18 30 #   \\ botndypi_kastad= 423 botndypi_hift= 435 \\
-STAT 311 1 0 633296 105995 632883 110130 198 26 #   \\ botndypi_kastad= 352 botndypi_hift= 334 \\
-STAT 311 31 1 632511 111436 632544 112332 241 26 #   \\ botndypi_kastad= 335 botndypi_hift= 348 \\
-STAT 310 1 1 632293 103943 632166 104731 68 30 #  teku i troll 64°22´00-10°45´04, 2,75sml \\ botndypi_kastad= 426 botndypi_hift= 430 \\
-STAT 310 11 1 631528 104826 631716 104046 39 29 #   \\ botndypi_kastad= 394 botndypi_hift= 413 \\
-STAT 311 12 1 630491 112041 630720 111240 50 32 #  Tó í troll eftir 1,8sml 65°05´96-11°16´55, járnarusl í belg, troll heilt \\ botndypi_kastad= 455 botndypi_hift= 449 \\
-STAT 311 11 1 631303 114190 631496 113395 54 30 #   \\ botndypi_kastad= 432 botndypi_hift= 419 \\
-STAT 312 1 0 631244 122149 631425 121359 152 31 #   \\ botndypi_kastad= 439 botndypi_hift= 416 \\
-STAT 311 2 0 632529 114363 632900 114070 91 29 #   \\ botndypi_kastad= 406 botndypi_hift= 382 \\
-STAT 361 11 1 634278 113939 634435 113414 51 27 #  Fast í 63°44´35-11°34´14, trollið heilt \\ botndypi_kastad= 361 botndypi_hift= 382 \\
-STAT 362 11 1 635000 121054 634600 121276 216 30 #   \\ botndypi_kastad= 420 botndypi_hift= 398 \\
-STAT 361 12 1 635566 115072 635170 115197 170 28 #   \\ botndypi_kastad= 386 botndypi_hift= 384 \\
-STAT 361 2 0 635501 113492 635919 113313 770 25 #   \\ botndypi_kastad= 316 botndypi_hift= 347 \\
-STAT 361 1 1 635853 111626 635533 112043 113 27 #   \\ botndypi_kastad= 367 botndypi_hift= 372 \\
-STAT 411 14 1 640334 112200 640009 111714 55 26 #   \\ botndypi_kastad= 344 botndypi_hift= 360 \\
-STAT 411 1 1 640967 113173 641080 112287 306 24 #   \\ botndypi_kastad= 318 botndypi_hift= 311 \\
-STAT 411 13 1 641000 115330 640998 114393 286 27 #   \\ botndypi_kastad= 382 botndypi_hift= 327 \\
-STAT 411 11 1 641850 113820 641490 114200 97 27 #   \\ botndypi_kastad= 370 botndypi_hift= 362 \\
-STAT 462 8 1 643940 121090 643563 121474 572 16 #   \\ botndypi_kastad= 168 botndypi_hift= 164 \\
-STAT 462 13 1 643830 122390 643974 121520 189 17 #   \\ botndypi_kastad= 178 botndypi_hift= 173 \\
-STAT 462 7 0 643916 122992 644322 123003 766 18 #   \\ botndypi_kastad= 157 botndypi_hift= 154 \\
-STAT 462 18 1 645849 122630 645450 122745 714 16 #   \\ botndypi_kastad= 160 botndypi_hift= 157 \\
-STAT 512 14 1 650509 121210 650391 122114 94 18 #   \\ botndypi_kastad= 200 botndypi_hift= 214 \\
-STAT 512 15 0 651503 120333 651314 121176 252 15 #   \\ botndypi_kastad= 160 botndypi_hift= 141 \\
+STAT 512 6 0 652311 123538 652328 124507 72 20 #   \\ botndypi_kastad= 233 botndypi_hift= 223 \\
+STAT 512 5 0 652333 124836 652333 125810 234 18 #  Dregið 50 fm norðan við stöð v/ sterkt suðurfall og festu \\ botndypi_kastad= 212 botndypi_hift= 180 \\
+STAT 513 11 0 652049 130777 652081 131694 492 18 #  Kastað 150fm A-við stöð vegna festu a vesturenda \\ botndypi_kastad= 213 botndypi_hift= 180 \\
 PORT 651701 135483 "Seyðisfjörður" 1
 STAT 512 7 0 651719 130004 651716 125064 807 16 #   \\ botndypi_kastad= 163 botndypi_hift= 191 \\
 STAT 512 11 0 651500 124982 651501 124100 701 15 #   \\ botndypi_kastad= 130 botndypi_hift= 161 \\
 STAT 512 13 0 651240 124600 650900 125300 366 15 #   \\ botndypi_kastad= 155 botndypi_hift= 148 \\
 STAT 513 2 0 650660 130290 650270 130280 499 15 #   \\ botndypi_kastad= 149 botndypi_hift= 143 \\
-STAT 462 4 1 643601 123483 643529 124434 868 19 #   \\ botndypi_kastad= 150 botndypi_hift= 192 \\
-STAT 462 3 1 643125 123454 643539 123523 420 19 #   \\ botndypi_kastad= 170 botndypi_hift= 160 \\
-STAT 462 2 0 643409 122475 643193 121647 1704 19 #   \\ botndypi_kastad= 223 botndypi_hift= 210 \\
-STAT 462 1 0 643353 120471 643697 115963 1967 20 #   \\ botndypi_kastad= 234 botndypi_hift= 260 \\
-STAT 412 16 1 642650 120542 643010 120297 200 28 #   \\ botndypi_kastad= 398 botndypi_hift= 365 \\
-STAT 412 6 1 642418 121900 642600 121075 977 24 #   \\ botndypi_kastad= 303 botndypi_hift= 311 \\
-STAT 412 12 1 642117 122781 642492 122401 1273 25 #   \\ botndypi_kastad= 270 botndypi_hift= 218 \\
-STAT 412 5 1 641819 123647 642030 122847 615 26 #   \\ botndypi_kastad= 243 botndypi_hift= 294 \\
-STAT 412 11 1 641498 124257 641656 123812 513 25 #  Fast eftir 2,5 sjm. híft. \\ botndypi_kastad= 251 botndypi_hift= 264 \\
-STAT 412 4 1 642125 123887 641792 124407 2726 20 #   \\ botndypi_kastad= 185 botndypi_hift= 172 \\
-STAT 412 2 0 642099 124891 642377 125549 761 18 #   \\ botndypi_kastad= 160 botndypi_hift= 140 \\
+STAT 512 3 0 650390 124889 650290 123960 453 16 #   \\ botndypi_kastad= 156 botndypi_hift= 174 \\
+STAT 462 18 0 645849 122630 645450 122745 714 16 #   \\ botndypi_kastad= 160 botndypi_hift= 157 \\
+STAT 462 6 0 644714 123613 644332 124033 1295 18 #   \\ botndypi_kastad= 152 botndypi_hift= 161 \\
+STAT 462 7 1 643916 122992 644322 123003 766 18 #   \\ botndypi_kastad= 157 botndypi_hift= 154 \\
+STAT 462 13 0 643830 122390 643974 121520 189 17 #   \\ botndypi_kastad= 178 botndypi_hift= 173 \\
+STAT 462 8 0 643940 121090 643563 121474 572 16 #   \\ botndypi_kastad= 168 botndypi_hift= 164 \\
+STAT 462 2 1 643409 122475 643193 121647 1704 19 #   \\ botndypi_kastad= 223 botndypi_hift= 210 \\
+STAT 462 3 0 643125 123454 643539 123523 420 19 #   \\ botndypi_kastad= 170 botndypi_hift= 160 \\
+STAT 462 4 0 643601 123483 643529 124434 868 19 #   \\ botndypi_kastad= 150 botndypi_hift= 192 \\
+STAT 462 5 0 643590 124387 643424 125220 661 20 #   \\ botndypi_kastad= 197 botndypi_hift= 148 \\
+STAT 462 17 1 643347 125487 643060 124924 929 17 #  Hlerar gengu saman eftir 3,9 sjm. híft \\ botndypi_kastad= 151 botndypi_hift= 147 \\
+STAT 463 1 0 643316 125856 643210 130736 1537 16 #   \\ botndypi_kastad= 140 botndypi_hift= 120 \\
+STAT 413 12 1 642502 130788 642305 131590 498 19 #   \\ botndypi_kastad= 177 botndypi_hift= 148 \\
+STAT 412 2 1 642099 124891 642377 125549 761 18 #   \\ botndypi_kastad= 160 botndypi_hift= 140 \\
 STAT 413 16 1 640977 130401 641381 130308 700 18 #   \\ botndypi_kastad= 152 botndypi_hift= 147 \\
-STAT 412 13 1 641401 125085 641018 125383 1679 21 #   \\ botndypi_kastad= 186 botndypi_hift= 234 \\
-STAT 412 3 1 640825 125458 641126 124862 590 31 #   \\ botndypi_kastad= 347 botndypi_hift= 335 \\
-STAT 412 1 1 640616 130107 640885 125467 418 28 #  Botnhiti 2,9-2,4°C. \\ botndypi_kastad= 302 botndypi_hift= 290 \\
-STAT 413 1 1 640219 131080 640506 130368 831 30 #  Botnhiti 6,4-2,7°C. \\ botndypi_kastad= 331 botndypi_hift= 300 \\
-STAT 413 3 0 640295 131290 640693 131398 636 19 #   \\ botndypi_kastad= 178 botndypi_hift= 164 \\
-STAT 413 4 0 640688 132403 641074 132701 394 18 #   \\ botndypi_kastad= 158 botndypi_hift= 170 \\
-STAT 413 18 0 640804 132999 640422 133283 339 17 #  Botnhiti 4,9-3,6°C. \\ botndypi_kastad= 150 botndypi_hift= 135 \\
-STAT 413 11 0 640314 132688 640499 131878 176 20 #   \\ botndypi_kastad= 170 botndypi_hift= 220 \\
+STAT 413 3 1 640295 131290 640693 131398 636 19 #   \\ botndypi_kastad= 178 botndypi_hift= 164 \\
 STAT 413 2 1 640110 132518 640104 131578 1252 29 #  Botnhiti 5,8-4,6°C. Vír 290-400 fm. \\ botndypi_kastad= 256 botndypi_hift= 400 \\
 STAT 413 17 1 640000 133513 640197 132714 266 18 #   \\ botndypi_kastad= 150 botndypi_hift= 180 \\
 STAT 363 11 1 635495 134445 635715 133685 232 21 #   \\ botndypi_kastad= 175 botndypi_hift= 248 \\
@@ -228,6 +187,7 @@ STAT 316 1 1 632311 161480 632299 160603 1224 28 #   \\ botndypi_kastad= 290 bot
 STAT 316 11 1 632505 160975 632497 161893 1625 17 #   \\ botndypi_kastad= 148 botndypi_hift= 132 \\
 STAT 366 12 1 633001 161482 632992 160628 146 15 #   \\ botndypi_kastad= 121 botndypi_hift= 120 \\
 STAT 366 11 1 633282 165804 633175 164955 1703 22 #   \\ botndypi_kastad= 194 botndypi_hift= 234 \\
+STAT 367 35 0 634525 170481 634510 171399 11973 11 #   \\ botndypi_kastad= 62 botndypi_hift= 65 \\
 STAT 367 12 1 633368 170743 633698 171278 624 20 #   \\ botndypi_kastad= 188 botndypi_hift= 166 \\
 STAT 367 11 1 633073 171483 633335 170815 410 17 #   \\ botndypi_kastad= 121 botndypi_hift= 190 \\
 STAT 317 12 1 631512 172099 631695 171265 1405 24 #   \\ botndypi_kastad= 285 botndypi_hift= 166 \\
@@ -236,7 +196,6 @@ PORT 632700 201600 "Vestmannaeyjar" 1
 STAT 317 11 0 632806 175313 632506 174711 1553 17 #   \\ botndypi_kastad= 128 botndypi_hift= 178 \\
 STAT 367 31 1 633542 174312 633136 174051 922 15 #   \\ botndypi_kastad= 108 botndypi_hift= 120 \\
 STAT 367 1 1 634104 174019 633757 174549 10461 9 #   \\ botndypi_kastad= 41 botndypi_hift= 35 \\
-STAT 367 35 1 634525 170481 634510 171399 11973 11 #   \\ botndypi_kastad= 62 botndypi_hift= 65 \\
 STAT 366 2 1 634491 162755 634635 163608 1885 11 #  Botnhiti 6,8-5,4°C. \\ botndypi_kastad= 66 botndypi_hift= 65 \\
 STAT 366 1 1 634503 162164 634891 162519 2338 12 #  Botnhiti 6,8-5,3°C. \\ botndypi_kastad= 85 botndypi_hift= 62 \\
 STAT 365 35 1 634861 155538 634525 155055 609 21 #   \\ botndypi_kastad= 200 botndypi_hift= 208 \\
@@ -251,31 +210,71 @@ STAT 413 14 1 642364 134540 642290 134980 33 17 #   \\ botndypi_kastad= 142 botn
 STAT 413 7 1 642173 133402 642374 133453 109 18 #   \\ botndypi_kastad= 160 botndypi_hift= 138 \\
 STAT 413 5 1 641778 133442 642058 134103 320 17 #   \\ botndypi_kastad= 143 botndypi_hift= 160 \\
 STAT 413 13 1 641989 132434 641807 133253 210 18 #   \\ botndypi_kastad= 138 botndypi_hift= 180 \\
-STAT 413 6 1 642217 132673 641909 132089 460 17 #   \\ botndypi_kastad= 142 botndypi_hift= 126 \\
-STAT 413 12 1 642502 130788 642305 131590 498 19 #   \\ botndypi_kastad= 177 botndypi_hift= 148 \\
-STAT 463 1 1 643316 125856 643210 130736 1537 16 #   \\ botndypi_kastad= 140 botndypi_hift= 120 \\
-STAT 462 17 0 643347 125487 643060 124924 929 17 #  Hlerar gengu saman eftir 3,9 sjm. híft \\ botndypi_kastad= 151 botndypi_hift= 147 \\
-STAT 462 5 1 643590 124387 643424 125220 661 20 #   \\ botndypi_kastad= 197 botndypi_hift= 148 \\
-STAT 462 6 1 644714 123613 644332 124033 1295 18 #   \\ botndypi_kastad= 152 botndypi_hift= 161 \\
-STAT 512 3 0 650390 124889 650290 123960 453 16 #   \\ botndypi_kastad= 156 botndypi_hift= 174 \\
+STAT 413 6 0 642217 132673 641909 132089 460 17 #   \\ botndypi_kastad= 142 botndypi_hift= 126 \\
+STAT 413 4 1 640688 132403 641074 132701 394 18 #   \\ botndypi_kastad= 158 botndypi_hift= 170 \\
+STAT 413 18 0 640804 132999 640422 133283 339 17 #  Botnhiti 4,9-3,6°C. \\ botndypi_kastad= 150 botndypi_hift= 135 \\
+STAT 413 11 0 640314 132688 640499 131878 176 20 #   \\ botndypi_kastad= 170 botndypi_hift= 220 \\
+STAT 413 1 0 640219 131080 640506 130368 831 30 #  Botnhiti 6,4-2,7°C. \\ botndypi_kastad= 331 botndypi_hift= 300 \\
+STAT 412 1 0 640616 130107 640885 125467 418 28 #  Botnhiti 2,9-2,4°C. \\ botndypi_kastad= 302 botndypi_hift= 290 \\
+STAT 412 3 0 640825 125458 641126 124862 590 31 #   \\ botndypi_kastad= 347 botndypi_hift= 335 \\
+STAT 412 13 1 641401 125085 641018 125383 1679 21 #   \\ botndypi_kastad= 186 botndypi_hift= 234 \\
+STAT 412 11 0 641498 124257 641656 123812 513 25 #  Fast eftir 2,5 sjm. híft. \\ botndypi_kastad= 251 botndypi_hift= 264 \\
+STAT 412 4 1 642125 123887 641792 124407 2726 20 #   \\ botndypi_kastad= 185 botndypi_hift= 172 \\
+STAT 412 5 0 641819 123647 642030 122847 615 26 #   \\ botndypi_kastad= 243 botndypi_hift= 294 \\
+STAT 412 12 0 642117 122781 642492 122401 1273 25 #   \\ botndypi_kastad= 270 botndypi_hift= 218 \\
+STAT 412 6 0 642418 121900 642600 121075 977 24 #   \\ botndypi_kastad= 303 botndypi_hift= 311 \\
+STAT 412 16 0 642650 120542 643010 120297 200 28 #   \\ botndypi_kastad= 398 botndypi_hift= 365 \\
+STAT 462 1 0 643353 120471 643697 115963 1967 20 #   \\ botndypi_kastad= 234 botndypi_hift= 260 \\
+STAT 461 11 0 643409 113046 643525 112135 45 32 #  Tók í troll í 64°35´22 - 11°21´35. Fast í hífingu. Rifið undirbirði \\ botndypi_kastad= 451 botndypi_hift= 437 \\
+STAT 411 12 0 642094 112090 642000 112800 122 28 #  Híft ú festu 64°20´00-11°28´00. BB yfirvængur rifinn, heilt að öðru leiti \\ botndypi_kastad= 367 botndypi_hift= 387 \\
+STAT 411 11 0 641850 113820 641490 114200 97 27 #   \\ botndypi_kastad= 370 botndypi_hift= 362 \\
+STAT 411 13 0 641000 115330 640998 114393 286 27 #   \\ botndypi_kastad= 382 botndypi_hift= 327 \\
+STAT 411 1 0 640967 113173 641080 112287 306 24 #   \\ botndypi_kastad= 318 botndypi_hift= 311 \\
+STAT 411 14 0 640334 112200 640009 111714 55 26 #   \\ botndypi_kastad= 344 botndypi_hift= 360 \\
+STAT 361 1 0 635853 111626 635533 112043 113 27 #   \\ botndypi_kastad= 367 botndypi_hift= 372 \\
+STAT 361 2 1 635501 113492 635919 113313 770 25 #   \\ botndypi_kastad= 316 botndypi_hift= 347 \\
+STAT 361 12 0 635566 115072 635170 115197 170 28 #   \\ botndypi_kastad= 386 botndypi_hift= 384 \\
+STAT 362 11 0 635000 121054 634600 121276 216 30 #   \\ botndypi_kastad= 420 botndypi_hift= 398 \\
+STAT 361 11 0 634278 113939 634435 113414 51 27 #  Fast í 63°44´35-11°34´14, trollið heilt \\ botndypi_kastad= 361 botndypi_hift= 382 \\
+STAT 311 2 1 632529 114363 632900 114070 91 29 #   \\ botndypi_kastad= 406 botndypi_hift= 382 \\
+STAT 312 1 1 631244 122149 631425 121359 152 31 #   \\ botndypi_kastad= 439 botndypi_hift= 416 \\
+STAT 311 11 0 631303 114190 631496 113395 54 30 #   \\ botndypi_kastad= 432 botndypi_hift= 419 \\
+STAT 311 12 0 630491 112041 630720 111240 50 32 #  Tó í troll eftir 1,8sml 65°05´96-11°16´55, járnarusl í belg, troll heilt \\ botndypi_kastad= 455 botndypi_hift= 449 \\
+STAT 310 11 0 631528 104826 631716 104046 39 29 #   \\ botndypi_kastad= 394 botndypi_hift= 413 \\
+STAT 310 1 0 632293 103943 632166 104731 68 30 #  teku i troll 64°22´00-10°45´04, 2,75sml \\ botndypi_kastad= 426 botndypi_hift= 430 \\
+STAT 311 31 0 632511 111436 632544 112332 241 26 #   \\ botndypi_kastad= 335 botndypi_hift= 348 \\
+STAT 311 1 1 633296 105995 632883 110130 198 26 #   \\ botndypi_kastad= 352 botndypi_hift= 334 \\
+STAT 360 1 0 635200 105490 635585 105201 18 30 #   \\ botndypi_kastad= 423 botndypi_hift= 435 \\
+STAT 410 11 0 640630 103742 640990 103327 78 32 #   \\ botndypi_kastad= 449 botndypi_hift= 462 \\
+STAT 411 4 0 641500 110202 641785 110871 133 26 #   \\ botndypi_kastad= 354 botndypi_hift= 327 \\
+STAT 411 2 1 641899 111207 641494 111391 216 25 #   \\ botndypi_kastad= 324 botndypi_hift= 335 \\
+STAT 411 3 0 641804 110784 642112 110181 427 26 #   \\ botndypi_kastad= 331 botndypi_hift= 349 \\
+STAT 460 1 0 644408 104905 644791 104615 63 31 #   \\ botndypi_kastad= 431 botndypi_hift= 433 \\
+STAT 461 12 1 644969 112019 644758 111322 73 35 #  Híft eftir 3,7sml botb orðin ljótur \\ botndypi_kastad= 513 botndypi_hift= 481 \\
+STAT 461 2 0 645073 113440 644730 113962 343 27 #   \\ botndypi_kastad= 381 botndypi_hift= 332 \\
+STAT 461 1 0 644738 114283 645025 113998 229 22 #  Tók í trollið eftir 3,1 64°50´25-11°39´98 \\ botndypi_kastad= 257 botndypi_hift= 313 \\
+STAT 461 15 0 645522 120178 645894 115818 139 18 #   \\ botndypi_kastad= 200 botndypi_hift= 186 \\
+STAT 511 13 0 650110 114798 650501 114828 70 19 #   \\ botndypi_kastad= 213 botndypi_hift= 249 \\
+STAT 511 12 0 650604 113100 651000 113095 202 22 #   \\ botndypi_kastad= 268 botndypi_hift= 286 \\
+STAT 511 2 0 651442 113674 651706 114409 204 21 #   \\ botndypi_kastad= 269 botndypi_hift= 249 \\
+STAT 511 11 0 651602 115021 651791 115838 52 18 #   \\ botndypi_kastad= 204 botndypi_hift= 219 \\
+STAT 512 15 0 651503 120333 651314 121176 252 15 #   \\ botndypi_kastad= 160 botndypi_hift= 141 \\
+STAT 512 14 0 650509 121210 650391 122114 94 18 #   \\ botndypi_kastad= 200 botndypi_hift= 214 \\
 STAT 512 2 0 650964 122975 651327 122558 276 18 #   \\ botndypi_kastad= 225 botndypi_hift= 163 \\
 STAT 512 12 0 651645 122266 651936 122917 102 17 #   \\ botndypi_kastad= 173 botndypi_hift= 217 \\
 STAT 512 1 0 652520 121135 652505 120175 212 18 #   \\ botndypi_kastad= 190 botndypi_hift= 234 \\
-STAT 512 16 0 653012 120330 652914 121288 151 17 #  Höfuðlínustykki losaralegt öðru megin.Fest betur \\ botndypi_kastad= 185 botndypi_hift= 171 \\
+STAT 512 16 1 653012 120330 652914 121288 151 17 #  Höfuðlínustykki losaralegt öðru megin.Fest betur \\ botndypi_kastad= 185 botndypi_hift= 171 \\
+STAT 562 6 1 653388 121187 653113 120444 55 18 #   \\ botndypi_kastad= 197 botndypi_hift= 201 \\
 STAT 562 5 1 653301 123355 653216 122375 268 16 #   \\ botndypi_kastad= 161 botndypi_hift= 172 \\
 STAT 562 4 1 653102 125318 653068 124350 1658 14 #   \\ botndypi_kastad= 124 botndypi_hift= 135 \\
-STAT 512 6 0 652311 123538 652328 124507 72 20 #   \\ botndypi_kastad= 233 botndypi_hift= 223 \\
-STAT 512 5 0 652333 124836 652333 125810 234 18 #  Dregið 50 fm norðan við stöð v/ sterkt suðurfall og festu \\ botndypi_kastad= 212 botndypi_hift= 180 \\
-STAT 513 11 0 652049 130777 652081 131694 492 18 #  Kastað 150fm A-við stöð vegna festu a vesturenda \\ botndypi_kastad= 213 botndypi_hift= 180 \\
-PORT 651701 135483 "Seyðisfjörður" 1
 STAT 563 2 0 653661 132528 653789 133443 756 13 #   \\ botndypi_kastad= 116 botndypi_hift= 120 \\
-STAT 563 13 0 654534 134419 654904 134762 139 18 #   \\ botndypi_kastad= 193 botndypi_hift= 239 \\
+STAT 563 13 1 654534 134419 654904 134762 139 18 #   \\ botndypi_kastad= 193 botndypi_hift= 239 \\
+PORT 651701 135483 "Seyðisfjörður" 1
 STAT 564 1 1 655072 141360 654961 140424 1419 15 #   \\ botndypi_kastad= 150 botndypi_hift= 151 \\
 STAT 563 1 0 655806 134725 655626 133847 87 17 #   \\ botndypi_kastad= 178 botndypi_hift= 208 \\
 STAT 563 12 1 654996 131962 654835 132874 52 20 #   \\ botndypi_kastad= 252 botndypi_hift= 233 \\
 STAT 563 11 0 653992 130899 653694 130235 54 18 #   \\ botndypi_kastad= 210 botndypi_hift= 187 \\
 STAT 562 11 0 653507 123059 653505 122086 22 19 #   \\ botndypi_kastad= 217 botndypi_hift= 226 \\
-STAT 562 6 0 653388 121187 653113 120444 55 18 #   \\ botndypi_kastad= 197 botndypi_hift= 201 \\
 STAT 561 2 0 653507 115002 653916 115034 248 19 #   \\ botndypi_kastad= 224 botndypi_hift= 223 \\
 STAT 561 12 0 654539 115396 654944 115420 51 20 #   \\ botndypi_kastad= 252 botndypi_hift= 191 \\
 STAT 562 12 0 655500 115920 655501 120908 25 22 #   \\ botndypi_kastad= 261 botndypi_hift= 293 \\
@@ -387,6 +386,7 @@ STAT 722 13 0 670422 222804 670051 222449 520 19 #   \\ botndypi_kastad= 227 bot
 STAT 672 1 0 665613 221339 665302 220712 1338 16 #   \\ botndypi_kastad= 154 botndypi_hift= 144 \\
 STAT 672 2 1 665896 222575 665899 221557 398 18 #   \\ botndypi_kastad= 185 botndypi_hift= 188 \\
 STAT 722 12 0 670102 222708 670010 223701 507 18 #   \\ botndypi_kastad= 191 botndypi_hift= 202 \\
+STAT 672 5 0 665902 223491 665591 224122 646 17 #   \\ botndypi_kastad= 186 botndypi_hift= 174 \\
 STAT 722 1 0 670000 224837 670000 225852 492 19 #   \\ botndypi_kastad= 221 botndypi_hift= 237 \\
 STAT 722 3 0 670260 225008 670655 224994 178 20 #   \\ botndypi_kastad= 232 botndypi_hift= 246 \\
 STAT 722 16 0 671098 224649 671195 225633 41 21 #   \\ botndypi_kastad= 271 botndypi_hift= 247 \\
@@ -449,25 +449,26 @@ STAT 626 1 0 660178 260377 660068 260779 218 17 #  Endurtekið tog 2 sml, fast �
 STAT 576 5 1 660050 261782 655880 260930 450 20 #   \\ botndypi_kastad= 243 botndypi_hift= 241 \\
 STAT 576 15 0 655891 262766 655538 263219 457 21 #   \\ botndypi_kastad= 275 botndypi_hift= 269 \\
 STAT 576 2 1 653879 263602 654239 263161 2163 17 #   \\ botndypi_kastad= 167 botndypi_hift= 171 \\
-STAT 526 1 0 652611 263290 652389 264082 231 17 #  töluvert af svampi \\ botndypi_kastad= 174 botndypi_hift= 184 \\
-STAT 526 3 1 652540 262609 652141 262623 325 16 #   \\ botndypi_kastad= 149 botndypi_hift= 148 \\
-STAT 576 6 1 653562 261375 653167 261264 273 16 #   \\ botndypi_kastad= 164 botndypi_hift= 146 \\
 STAT 576 16 1 654005 260923 653922 261868 313 17 #   \\ botndypi_kastad= 155 botndypi_hift= 189 \\
-STAT 575 16 1 653477 254822 653790 255410 967 15 #   \\ botndypi_kastad= 116 botndypi_hift= 119 \\
-STAT 575 13 1 652867 254268 653265 254325 1756 14 #   \\ botndypi_kastad= 111 botndypi_hift= 105 \\
-STAT 525 14 1 652985 251290 653186 251303 330 13 #  Rifið og gat á poka. enddurtekið \\ botndypi_kastad= 78 botndypi_hift= 80 \\
-STAT 525 12 0 652456 251780 652591 252135 450 14 #   \\ botndypi_kastad= 93 botndypi_hift= 92 \\
-STAT 525 11 1 651696 255676 651940 254922 572 15 #   \\ botndypi_kastad= 133 botndypi_hift= 126 \\
-STAT 525 13 0 651493 255263 651263 260045 276 15 #   \\ botndypi_kastad= 134 botndypi_hift= 141 \\
-STAT 526 13 0 650959 260921 650658 261552 689 16 #   \\ botndypi_kastad= 147 botndypi_hift= 157 \\
+STAT 576 6 0 653562 261375 653167 261264 273 16 #   \\ botndypi_kastad= 164 botndypi_hift= 146 \\
+STAT 526 1 0 652611 263290 652389 264082 231 17 #  töluvert af svampi \\ botndypi_kastad= 174 botndypi_hift= 184 \\
+STAT 526 3 0 652540 262609 652141 262623 325 16 #   \\ botndypi_kastad= 149 botndypi_hift= 148 \\
 STAT 526 11 0 650948 262619 650823 263530 4258 16 #   \\ botndypi_kastad= 150 botndypi_hift= 168 \\
 STAT 426 2 1 641600 265392 641953 265860 3138 35 #   \\ botndypi_kastad= 390 botndypi_hift= 414 \\
 STAT 426 1 1 640012 264167 640373 264571 1214 37 #   \\ botndypi_kastad= 410 botndypi_hift= 420 \\
 STAT 376 1 1 635379 262102 635213 262893 9565 27 #  Vír 290-330 fm. \\ botndypi_kastad= 262 botndypi_hift= 320 \\
-STAT 525 1 0 650312 260156 650232 255232 322 17 #  töluvert af benthosi  \\ botndypi_kastad= 161 botndypi_hift= 162 \\
-STAT 525 3 0 650054 254817 650052 253877 190 16 #  Töluvert af benthos ígulker og rækja \\ botndypi_kastad= 163 botndypi_hift= 153 \\
-STAT 475 3 0 645603 254051 645548 253122 188 17 #  töluvert benthos ígulker o.fl. \\ botndypi_kastad= 175 botndypi_hift= 161 \\
-STAT 524 12 1 651044 250001 650647 250006 544 14 #   \\ botndypi_kastad= 100 botndypi_hift= 109 \\
+STAT 425 2 1 642225 252714 641822 252629 1235 25 #  Tog fært (1-1,5 sjm.) vestar vegna línulagna \\ botndypi_kastad= 262 botndypi_hift= 248 \\
+STAT 475 3 1 645603 254051 645548 253122 188 17 #  töluvert benthos ígulker o.fl. \\ botndypi_kastad= 175 botndypi_hift= 161 \\
+STAT 525 3 1 650054 254817 650052 253877 190 16 #  Töluvert af benthos ígulker og rækja \\ botndypi_kastad= 163 botndypi_hift= 153 \\
+STAT 525 1 1 650312 260156 650232 255232 322 17 #  töluvert af benthosi  \\ botndypi_kastad= 161 botndypi_hift= 162 \\
+STAT 526 13 1 650959 260921 650658 261552 689 16 #   \\ botndypi_kastad= 147 botndypi_hift= 157 \\
+STAT 525 13 1 651493 255263 651263 260045 276 15 #   \\ botndypi_kastad= 134 botndypi_hift= 141 \\
+STAT 525 11 0 651696 255676 651940 254922 572 15 #   \\ botndypi_kastad= 133 botndypi_hift= 126 \\
+STAT 575 13 0 652867 254268 653265 254325 1756 14 #   \\ botndypi_kastad= 111 botndypi_hift= 105 \\
+STAT 575 16 0 653477 254822 653790 255410 967 15 #   \\ botndypi_kastad= 116 botndypi_hift= 119 \\
+STAT 525 14 1 652985 251290 653186 251303 330 13 #  Rifið og gat á poka. enddurtekið \\ botndypi_kastad= 78 botndypi_hift= 80 \\
+STAT 525 12 1 652456 251780 652591 252135 450 14 #   \\ botndypi_kastad= 93 botndypi_hift= 92 \\
+STAT 524 12 0 651044 250001 650647 250006 544 14 #   \\ botndypi_kastad= 100 botndypi_hift= 109 \\
 STAT 524 11 1 651463 245087 651072 245247 1470 13 #   \\ botndypi_kastad= 84 botndypi_hift= 98 \\
 STAT 524 1 1 651329 244247 651529 244202 138 13 #  Fastur rifið endurtekið \\ botndypi_kastad= 81 botndypi_hift= 77 \\
 STAT 523 38 1 650898 235607 650791 240519 711 12 #   \\ botndypi_kastad= 67 botndypi_hift= 96 \\
@@ -484,7 +485,6 @@ STAT 474 4 0 644222 241510 643863 241075 1146 15 #   \\ botndypi_kastad= 130 bot
 STAT 473 11 0 643670 233515 643519 234345 540 15 #   \\ botndypi_kastad= 111 botndypi_hift= 120 \\
 STAT 474 1 0 643122 242193 642942 242987 2400 17 #   \\ botndypi_kastad= 199 botndypi_hift= 151 \\
 STAT 425 1 1 642096 250131 642504 250103 1336 23 #   \\ botndypi_kastad= 222 botndypi_hift= 216 \\
-STAT 425 2 0 642225 252714 641822 252629 1235 25 #  Tog fært (1-1,5 sjm.) vestar vegna línulagna \\ botndypi_kastad= 262 botndypi_hift= 248 \\
 STAT 425 12 0 640181 252774 640038 253616 2167 22 #   \\ botndypi_kastad= 222 botndypi_hift= 212 \\
 STAT 375 11 1 635126 253664 634997 254540 14375 23 #   \\ botndypi_kastad= 223 botndypi_hift= 231 \\
 STAT 374 13 1 634197 245085 634491 245690 380 38 #   \\ botndypi_kastad= 434 botndypi_hift= 428 \\
@@ -540,7 +540,29 @@ STAT 319 32 1 632920 195358 632921 194450 3117 12 #  Vír 140-90 fm. \\ botndypi
 PORT 632700 201600 "Vestmannaeyjar" 1
 STAT 372 1 1 633717 222109 633442 221453 1118 22 #   \\ botndypi_kastad= 210 botndypi_hift= 214 \\
 STAT 372 11 1 633400 224375 633495 223497 511 21 #   \\ botndypi_kastad= 192 botndypi_hift= 205 \\
-STAT 323 2 0 632420 230799 632029 230796 2027 24 #   \\ botndypi_kastad= 231 botndypi_hift= 270 \\
+STAT 323 2 1 632420 230799 632029 230796 2027 24 #   \\ botndypi_kastad= 231 botndypi_hift= 270 \\
+STAT 372 31 1 635370 224742 634952 224531 759 11 #   \\ botndypi_kastad= 75 botndypi_hift= 36 \\
+STAT 372 2 1 635748 225551 635349 225484 407 14 #   \\ botndypi_kastad= 94 botndypi_hift= 105 \\
+STAT 422 12 1 640694 225886 640293 225948 1326 12 #   \\ botndypi_kastad= 76 botndypi_hift= 84 \\
+STAT 422 36 1 640437 222854 640033 222746 931 9 #   \\ botndypi_kastad= 30 botndypi_hift= 31 \\
+STAT 422 31 1 640656 222344 640600 223260 5668 9 #   \\ botndypi_kastad= 33 botndypi_hift= 31 \\
+STAT 422 32 1 641129 220951 640939 221805 1966 9 #  Endurtekið tog, því poki sprakk í rennu í fyrra togi vegna mikils afla. Náðust inn um 14 tonn þá. Verið líklega alls 30-40 t. \\ botndypi_kastad= 35 botndypi_hift= 23 \\
+STAT 421 35 1 641337 220295 641229 215415 930 9 #   \\ botndypi_kastad= 42 botndypi_hift= 30 \\
+STAT 422 35 1 641642 221900 641457 221077 756 11 #  Botnhiti 5,7-4,4°C. \\ botndypi_kastad= 52 botndypi_hift= 58 \\
+STAT 422 1 1 642154 224768 642107 223852 1186 11 #   \\ botndypi_kastad= 64 botndypi_hift= 66 \\
+STAT 422 11 1 642491 224809 642092 224812 1292 12 #   \\ botndypi_kastad= 82 botndypi_hift= 60 \\
+STAT 472 11 0 643450 224868 643839 224473 86 12 #   \\ botndypi_kastad= 63 botndypi_hift= 45 \\
+STAT 473 1 0 643451 230243 643082 230583 1247 13 #   \\ botndypi_kastad= 66 botndypi_hift= 96 \\
+STAT 423 3 1 642747 231160 642703 230237 256 16 #  y \\ botndypi_kastad= 138 botndypi_hift= 112 \\
+STAT 423 2 1 641078 233237 641443 233035 610 15 #   \\ botndypi_kastad= 119 botndypi_hift= 119 \\
+STAT 423 1 1 640560 233023 640781 233062 416 15 #   \\ botndypi_kastad= 115 botndypi_hift= 114 \\
+STAT 423 12 1 641370 233894 641007 234316 748 16 #   \\ botndypi_kastad= 120 botndypi_hift= 126 \\
+STAT 423 13 1 640917 235862 641267 235370 403 28 #  Tók í toll þegar byrjað var að hífa. Rifið udirbyrði. Tog gilt. Botnhiti 6,4-5,9°C. \\ botndypi_kastad= 281 botndypi_hift= 302 \\
+STAT 423 11 1 640000 233320 635908 234212 1132 16 #   \\ botndypi_kastad= 131 botndypi_hift= 134 \\
+STAT 373 3 1 635715 232576 635929 231843 647 16 #   \\ botndypi_kastad= 128 botndypi_hift= 117 \\
+STAT 373 1 1 635378 232923 635693 232394 1106 16 #   \\ botndypi_kastad= 138 botndypi_hift= 125 \\
+STAT 373 12 1 634740 233679 635022 234324 519 18 #   \\ botndypi_kastad= 150 botndypi_hift= 150 \\
+STAT 373 11 1 634489 234087 634400 233205 331 18 #   \\ botndypi_kastad= 164 botndypi_hift= 130 \\
 STAT 373 13 0 633478 240000 633880 240000 772 18 #   \\ botndypi_kastad= 163 botndypi_hift= 150 \\
 STAT 374 11 0 634516 241181 634914 241240 713 18 #   \\ botndypi_kastad= 154 botndypi_hift= 168 \\
 STAT 374 12 0 634490 241597 634313 242408 1327 20 #   \\ botndypi_kastad= 164 botndypi_hift= 210 \\
@@ -552,45 +574,23 @@ STAT 424 12 1 641000 245171 640827 244868 174 20 #  Gat á poka, ógilt. Endurte
 STAT 424 11 0 641064 245830 640671 245960 704 21 #  Botnhiti 6,1-5,4°C. \\ botndypi_kastad= 190 botndypi_hift= 197 \\
 STAT 375 1 1 635505 251667 635881 251359 560 24 #   \\ botndypi_kastad= 240 botndypi_hift= 230 \\
 STAT 425 11 0 641147 251705 641529 251443 1614 25 #   \\ botndypi_kastad= 260 botndypi_hift= 260 \\
-STAT 426 12 0 642199 262090 642552 262587 369 29 #   \\ botndypi_kastad= 309 botndypi_hift= 314 \\
+STAT 424 1 1 641651 244472 641491 245331 1311 19 #  Vír 195-205 fm. \\ botndypi_kastad= 170 botndypi_hift= 180 \\
+STAT 424 13 1 641533 242640 641347 243538 902 22 #   \\ botndypi_kastad= 220 botndypi_hift= 201 \\
+STAT 424 2 1 641957 242574 641799 243409 911 20 #  Vír 195-220 fm. \\ botndypi_kastad= 180 botndypi_hift= 174 \\
+STAT 474 13 0 643348 242948 643570 243657 648 20 #   \\ botndypi_kastad= 232 botndypi_hift= 254 \\
+STAT 474 11 1 643716 243203 643571 244043 341 21 #   \\ botndypi_kastad= 275 botndypi_hift= 240 \\
+STAT 474 12 1 645138 241148 644815 241687 1956 24 #   \\ botndypi_kastad= 222 botndypi_hift= 277 \\
+PORT 645500 234000 "Ólafsvík" 1
+STAT 524 2 0 650141 242612 650226 243528 1200 15 #   \\ botndypi_kastad= 124 botndypi_hift= 108 \\
+STAT 474 2 0 645619 244764 645482 245647 624 18 #   \\ botndypi_kastad= 157 botndypi_hift= 144 \\
+STAT 475 2 0 644611 252676 644457 253524 440 17 #   \\ botndypi_kastad= 178 botndypi_hift= 193 \\
+STAT 475 11 0 644610 254475 644984 254770 829 17 #   \\ botndypi_kastad= 180 botndypi_hift= 182 \\
+STAT 476 1 1 644429 262661 644782 263086 4963 18 #   \\ botndypi_kastad= 183 botndypi_hift= 197 \\
+STAT 426 12 1 642199 262090 642552 262587 369 29 #   \\ botndypi_kastad= 309 botndypi_hift= 314 \\
 STAT 426 11 0 642538 261936 642663 261270 278 27 #  Híft ertir 3.3 sjm. Mynd datt út af  stykki. Snúinn vængur. \\ botndypi_kastad= 293 botndypi_hift= 278 \\
 STAT 475 12 1 643669 255987 643273 255984 2519 19 #   \\ botndypi_kastad= 231 botndypi_hift= 205 \\
-STAT 476 1 0 644429 262661 644782 263086 4963 18 #   \\ botndypi_kastad= 183 botndypi_hift= 197 \\
 STAT 475 1 1 644209 254628 644067 255487 1540 19 #   \\ botndypi_kastad= 204 botndypi_hift= 214 \\
-STAT 475 11 0 644610 254475 644984 254770 829 17 #   \\ botndypi_kastad= 180 botndypi_hift= 182 \\
-STAT 475 2 1 644611 252676 644457 253524 440 17 #   \\ botndypi_kastad= 178 botndypi_hift= 193 \\
 STAT 475 13 1 644127 250445 643982 251290 451 18 #   \\ botndypi_kastad= 195 botndypi_hift= 192 \\
-STAT 474 2 1 645619 244764 645482 245647 624 18 #   \\ botndypi_kastad= 157 botndypi_hift= 144 \\
-STAT 524 2 1 650141 242612 650226 243528 1200 15 #   \\ botndypi_kastad= 124 botndypi_hift= 108 \\
-PORT 645500 234000 "Ólafsvík" 1
-STAT 474 12 0 645138 241148 644815 241687 1956 24 #   \\ botndypi_kastad= 222 botndypi_hift= 277 \\
-STAT 474 11 0 643716 243203 643571 244043 341 21 #   \\ botndypi_kastad= 275 botndypi_hift= 240 \\
-STAT 474 13 1 643348 242948 643570 243657 648 20 #   \\ botndypi_kastad= 232 botndypi_hift= 254 \\
-STAT 424 2 0 641957 242574 641799 243409 911 20 #  Vír 195-220 fm. \\ botndypi_kastad= 180 botndypi_hift= 174 \\
-STAT 424 1 0 641651 244472 641491 245331 1311 19 #  Vír 195-205 fm. \\ botndypi_kastad= 170 botndypi_hift= 180 \\
-STAT 424 13 1 641533 242640 641347 243538 902 22 #   \\ botndypi_kastad= 220 botndypi_hift= 201 \\
-STAT 423 13 0 640917 235862 641267 235370 403 28 #  Tók í toll þegar byrjað var að hífa. Rifið udirbyrði. Tog gilt. Botnhiti 6,4-5,9°C. \\ botndypi_kastad= 281 botndypi_hift= 302 \\
-STAT 423 12 1 641370 233894 641007 234316 748 16 #   \\ botndypi_kastad= 120 botndypi_hift= 126 \\
-STAT 423 2 1 641078 233237 641443 233035 610 15 #   \\ botndypi_kastad= 119 botndypi_hift= 119 \\
-STAT 423 1 1 640560 233023 640781 233062 416 15 #   \\ botndypi_kastad= 115 botndypi_hift= 114 \\
-STAT 423 11 0 640000 233320 635908 234212 1132 16 #   \\ botndypi_kastad= 131 botndypi_hift= 134 \\
-STAT 373 12 1 634740 233679 635022 234324 519 18 #   \\ botndypi_kastad= 150 botndypi_hift= 150 \\
-STAT 373 11 0 634489 234087 634400 233205 331 18 #   \\ botndypi_kastad= 164 botndypi_hift= 130 \\
-STAT 373 1 0 635378 232923 635693 232394 1106 16 #   \\ botndypi_kastad= 138 botndypi_hift= 125 \\
-STAT 373 3 0 635715 232576 635929 231843 647 16 #   \\ botndypi_kastad= 128 botndypi_hift= 117 \\
-STAT 372 31 0 635370 224742 634952 224531 759 11 #   \\ botndypi_kastad= 75 botndypi_hift= 36 \\
-STAT 372 2 1 635748 225551 635349 225484 407 14 #   \\ botndypi_kastad= 94 botndypi_hift= 105 \\
-STAT 422 12 1 640694 225886 640293 225948 1326 12 #   \\ botndypi_kastad= 76 botndypi_hift= 84 \\
-STAT 423 3 1 642747 231160 642703 230237 256 16 #  y \\ botndypi_kastad= 138 botndypi_hift= 112 \\
-STAT 473 1 1 643451 230243 643082 230583 1247 13 #   \\ botndypi_kastad= 66 botndypi_hift= 96 \\
-STAT 472 11 1 643450 224868 643839 224473 86 12 #   \\ botndypi_kastad= 63 botndypi_hift= 45 \\
-STAT 422 11 0 642491 224809 642092 224812 1292 12 #   \\ botndypi_kastad= 82 botndypi_hift= 60 \\
-STAT 422 1 0 642154 224768 642107 223852 1186 11 #   \\ botndypi_kastad= 64 botndypi_hift= 66 \\
-STAT 422 35 0 641642 221900 641457 221077 756 11 #  Botnhiti 5,7-4,4°C. \\ botndypi_kastad= 52 botndypi_hift= 58 \\
-STAT 421 35 0 641337 220295 641229 215415 930 9 #   \\ botndypi_kastad= 42 botndypi_hift= 30 \\
-STAT 422 32 0 641129 220951 640939 221805 1966 9 #  Endurtekið tog, því poki sprakk í rennu í fyrra togi vegna mikils afla. Náðust inn um 14 tonn þá. Verið líklega alls 30-40 t. \\ botndypi_kastad= 35 botndypi_hift= 23 \\
-STAT 422 31 0 640656 222344 640600 223260 5668 9 #   \\ botndypi_kastad= 33 botndypi_hift= 31 \\
-STAT 422 36 0 640437 222854 640033 222746 931 9 #   \\ botndypi_kastad= 30 botndypi_hift= 31 \\
 PORT 634973 212245 "Þorlákshöfn" 0 # 
 PORT 634880 222477 "Grindarvík" 0 # 
 PORT 640060 223204 "Keflavík" 0 # 
