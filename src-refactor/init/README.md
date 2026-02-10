@@ -123,12 +123,12 @@ Strategies
    - Each station visited exactly once
    - Single cycle (Hamiltonian cycle via subtour elimination)
    - No explicit port/endpoint constraints
-2. Solve via Gurobi MIP (exact branch-and-bound or heuristic if time-limited)
+2. Solve via Gurobi MIP (exact branch-and-bound)
 3. Extract tour from optimal MIP solution
 
 **Properties:**
-- **Runtime:** Seconds to minutes (depends on instance size and time limit)
-- **Solution quality:** Optimal (or near-optimal if time-limited)
+- **Runtime:** Depends on instance size; runs until completion
+- **Solution quality:** Optimal
 - **No-port solution:** MIP solver guarantees a single cycle through all stations
 - **Requires Gurobi license**
 
@@ -190,9 +190,9 @@ CLI Usage
 ./bin/init --db data.sqlite --strategy ci --output csv > init_ci.csv
 ```
 
-**Exact optimization with 60-second time limit:**
+**Exact optimization (no time limit):**
 ```bash
-./bin/init --db data.sqlite --strategy opt --time-limit 60 --mip-threads 4
+./bin/init --db data.sqlite --strategy opt --mip-threads 4
 ```
 
 **Save all results to database:**
@@ -280,3 +280,10 @@ References
 - Greedy Edge: Kruskal-like edge-based construction
 - Paper: "Groundfish Survey Routing: A Scalable Matheuristic"
 
+Troubleshooting
+---------------
+
+- **Database not found:** Ensure preprocessing stage ran first; check `--db` path
+- **No stations in database:** Check that parser correctly loaded data
+- **OPT strategy slow:** For large instances, consider using a heuristic strategy or running on more powerful hardware
+- **NN/CI/GE produce identical tours:** May indicate small instance or poor heuristic seed; try `--seed` variations
