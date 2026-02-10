@@ -1,61 +1,63 @@
-# Matheuristic Optimization
+Repository overview
+===================
 
-This repository contains C implementations of optimization models and matheuristics, plus Python utilities to visualize routes and report results. The C binaries use commercial solvers (Gurobi or SCIP) and generate plot bundles that the Python scripts can render. For the current workflow, focus on `capacity.c` and `matcapmutheur.c`; other C files are kept for historical comparison only.
+This folder is the root for the build and test workflow described below. It contains the survey-routing matheuristic codebase and a small, pure-C toolchain for preprocessing, initialization, and sweep evaluation.
 
-## Repository Layout
-- `src/`: C sources and the `Makefile` (primary entry points: `capacity.c` and `matcapmutheur.c`; other C files are historical).
-- `bin/`: compiled executables and runtime assets (e.g., `island.bin`).
-- `lib/`: shared libraries produced by `make` (e.g., `libutils.*`).
-- `dat/`: input datasets (`*.dat`).
-- `sol/`: solution outputs, plots, and exported tables.
-- `py/`: plotting and analysis scripts.
-- `tex/`: working paper and figures.
+This README documents the environment checks you should run first, how to build the minimal smoke-tests (SQLite + Gurobi), and how to proceed once the environment is confirmed. These checks ensure the system has the required C development libraries and solver available before you perform larger refactors.
 
-## Build and Run
-The build expects local solver installs. Set environment variables as needed:
-- `GUROBI_HOME=/Library/gurobi1300/macos_universal2`
-- `SCIP_HOME=$HOME/.local/scipoptsuite-10.0.0`
+Layout
+------
+- `src/` - pure-C implementation and Makefile (build targets and tests live here).
+- `src-old/` - previous source tree (kept as reference).
+- `dat/` - raw .dat files (e.g. `singleboatdata2023spring.dat`).
+- `sol/` - solutions and outputs produced by runs.
+- `bin/` - legacy binaries (kept for compatibility).
+- `tools/` - small helper programs and environment smoke-tests.
+- `config/` - YAML experiment configuration files.
 
-Build and place binaries in `bin/`:
-```sh
-make -C src cap matcapmutheur
+Prerequisites
+-------------
+You need a C toolchain (GCC/Clang), the SQLite development headers and library, and Gurobi (headers, libs and a valid license). These instructions assume Linux/macOS or Windows under MSYS2/WSL.
+
+1) C toolchain
+- Linux (Debian/Ubuntu): `sudo apt install build-essential`
+- macOS (Homebrew): `brew install gcc`
+- Windows (MSYS2/MinGW): use the MSYS2 package manager to install `mingw-w64-x86_64-gcc`.
+
+2) SQLite (development headers)
+- Linux (Debian/Ubuntu): `sudo apt install libsqlite3-dev`
+- macOS (Homebrew): `brew install sqlite`
+- Windows (MSYS2): `pacman -S mingw-w64-x86_64-sqlite3`
+
+3) Gurobi
+- Download and install Gurobi for your platform from https://www.gurobi.com/downloads/.
+- Ensure you have a functioning license (for example, a `gurobi.lic` file or `GRB_LICENSE_FILE` pointing to a license).
+- Set `GUROBI_HOME` to the installation directory. Example you provided in MSYS:
+  ```bash
+  export GUROBI_HOME="/c/gurobi1301/win64"
+  export PATH="$GUROBI_HOME/bin:$PATH"
+  export LD_LIBRARY_PATH="$GUROBI_HOME/lib:${LD_LIBRARY_PATH:-}"
+  ```
+- Ensure the compiler can find headers at `$GUROBI_HOME/include` and the linker at `$GUROBI_HOME/lib`.
+
+Smoke-tests (verify environment)
+--------------------------------
+Two tiny C programs and a shell runner validate SQLite and Gurobi are available and linkable from your C toolchain.
+
+Run the tests from this directory (the project root):
+
+```bash
+make -C tools test-env
 ```
 
-Run the capacity MIP directly:
-```sh
-./bin/cap dat/data2023spring.dat 1
-```
+Expected output (both tests must PASS):
 
-Run the capacity-boundary matheuristic with mutation:
-```sh
-./bin/matcapmutheur dat/data2023spring.dat 1 --cap-time-limit 180 --write-dat sol/capmut_1.dat --verbose-init
-```
+- `SQLITE_TEST: PASS` — SQLite headers and library are usable.
+- `GUROBI_TEST: PASS - status=<status> elapsed=<s> s` — Gurobi headers and basic env allocation succeed.
 
-## Plotting Results
-C executables write a plot bundle (default `solution_plot.txt`) in the working directory. Render it with:
-```sh
-python3 py/plot_solution.py --sol solution_plot.txt --save sol/out.png
-```
+If those tests pass, you can proceed to building and running the full pipeline.
 
-For convergence monitoring and hill-climb diagnostics:
-```sh
-python3 py/plot_hillclimb.py
-```
-
-Remark: the land mask `island.bin` is loaded relative to the current working directory. If plotting with `--recompute`, run from `bin/` so `island.bin` is found:
-```sh
-cd bin && ../py/plot_solution.py --sol ../sol/all_res_1.txt --recompute
-```
-
-## Algorithm Overview (Capacity + Boundary Mutation)
-- **Initialization**: solve a no‑port TSP to get a station order, compute the **minimum** segment count as `ceil(total_amount / ship_capacity)`, then walk the order and **greedily fill to ship capacity**, inserting the nearest port **before** a station if `load + amt > ship_cap` (and load > 0) or **after** a station if `load >= ship_cap` (and more stations remain). This always respects capacity; it may create **extra segments** above the minimum when the fixed order would otherwise overflow.
-- **Capacity MIP (`capacity.c`)**: a full MIP with capacity flow constraints and waypoint‑aware distances. Used for benchmarking and for small subproblems.
-- **Boundary sweep (`matcapmutheur.c`)**: iterate over adjacent segment pairs and solve a **time‑limited capacity MIP** to reassign stations across the boundary port. Accept only if the **real two‑segment distance** (after re‑optimizing each segment) improves and no segment is infeasible (distance ≥ 100000).
-- **Mutation fallback**: if the boundary MIP rejects a change, attempt a **single‑station injection** from outside the pair. Choose the station closest to any station in the pair, insert it into the closest of the two segments (capacity‑feasible), and accept only if the **net change across (left + right + donor)** segments improves.
-- **Termination**: stop after a full pass with no accepted changes.
-
-For reproducibility, record solver versions and any run flags (e.g., time limits) in your experiment notes.
-
-## Notes
-- `sol/` is intended for generated outputs; keep large artifacts only when needed for paper figures.
-- The plotting scripts rely on `py/survey_utils.py` and may recompute distance matrices if requested.
+Troubleshooting
+---------------
+- If the sqlite test fails: ensure `sqlite3.h` is installed and the `-lsqlite3` library is available. On Debian/Ubuntu install `libsqlite3-dev`.
+- If the Gurobi test fails: ensure `GUROBI_HOME` is set and points to your Gurobi installation (headers under `$GUROBI_HOME/include` and libs under `$GUROBI_HOME/lib`). Also verify your Gurobi license is valid.
