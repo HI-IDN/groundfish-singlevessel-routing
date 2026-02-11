@@ -19,7 +19,7 @@ else
 endif
 
 # Source files
-SRCS = dat_parser.c distance.c logging.c sql_utils.c
+SRCS = dat_parser.c distance.c logging.c sql_utils.c coastline_db.c
 OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)
 
 # Data files
@@ -27,22 +27,22 @@ DAT_FILE = ../../dat/data2023spring.dat
 DB_FILE = ../../dat/gsp_data.db
 
 # Executable - data preparation utility
-PREP_PROG = $(BUILD_DIR)/prep_data
+PREP_PROG = $(BUILD_DIR)/preprocessing
 
 # Main targets
-.PHONY: all clean run prep
+.PHONY: all clean run preprocessing
 
 all: $(PREP_PROG)
-	@echo "✓ Built prep_data utility"
+	@echo "✓ Built preprocessing utility"
 
 # Data preparation utility
-$(PREP_PROG): prep_data.c $(OBJS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ prep_data.c $(OBJS) \
+$(PREP_PROG): preprocessing.c $(OBJS) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ preprocessing.c $(OBJS) \
 		$(UTILS_LIB) $(UTILS_RPATH) $(SQLITE_LIB) -lm
 	@echo "✓ Linked $@"
 
 # Parse and prepare data
-prep: $(PREP_PROG)
+preprocessing: $(PREP_PROG)
 	@echo ""
 	@echo "=== Preparing Data ==="
 	@echo "  Input: $(DAT_FILE)"
@@ -51,22 +51,7 @@ prep: $(PREP_PROG)
 	@# Copy utils DLL to build directory on Windows (if it exists)
 	@if [ -f "$(LIB_DIR)/utils.dll" ]; then cp -f "$(LIB_DIR)/utils.dll" $(BUILD_DIR)/ 2>/dev/null || true; fi
 	@if [ -f "$(BIN_DIR)/utils.dll" ]; then cp -f "$(BIN_DIR)/utils.dll" $(BUILD_DIR)/ 2>/dev/null || true; fi
-	cd $(BUILD_DIR) && ./prep_data ../$(DAT_FILE) ../$(DB_FILE)
-
-# Force recreate database
-prep-force: $(PREP_PROG)
-	@echo ""
-	@echo "=== Preparing Data (FORCE RECREATE) ==="
-	@echo "  Input: $(DAT_FILE)"
-	@echo "  Database: $(DB_FILE)"
-	@echo ""
-	@# Copy utils DLL to build directory on Windows (if it exists)
-	@if [ -f "$(LIB_DIR)/utils.dll" ]; then cp -f "$(LIB_DIR)/utils.dll" $(BUILD_DIR)/ 2>/dev/null || true; fi
-	@if [ -f "$(BIN_DIR)/utils.dll" ]; then cp -f "$(BIN_DIR)/utils.dll" $(BUILD_DIR)/ 2>/dev/null || true; fi
-	cd $(BUILD_DIR) && ./prep_data --force ../$(DAT_FILE) ../$(DB_FILE)
-
-# Legacy alias
-run: prep
+	cd $(BUILD_DIR) && ./preprocessing ../$(DAT_FILE) ../$(DB_FILE)
 
 # Create build directory
 $(BUILD_DIR):

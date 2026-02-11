@@ -9,6 +9,10 @@
 #include <math.h>
 #include "../include/distance.h"
 #include "../include/constants.h"
+#include "../include/geo_utils.h"
+
+/* Forward declaration - implementation in coastline_db.c */
+extern double *load_island_bin(const char *fname, int *out_n);
 
 static void die(const char *msg) {
     fprintf(stderr, "%s\n", msg);
@@ -30,12 +34,12 @@ static void *xcalloc(size_t n, size_t s) {
 
 /* Build waypoint-aware distance and feasibility matrices */
 void build_waypoint_dist(const location_data *ex,
-                        const double *Land, int nLand,
+                        const double *land, int n_land,
                         double **out_dist, int **out_fsb,
                         double **out_full_dist, int **out_full_fsb,
                         int *out_full_m) {
-    (void)Land;
-    (void)nLand;
+    (void)land;
+    (void)n_land;
 
     int m = ex->SelectedSize;
     int M = 2 * ex->SelectedSize;
@@ -71,7 +75,7 @@ void build_waypoint_dist(const location_data *ex,
 
     /* Call internal distance_link function (Dijkstra routing with land obstacles) */
     if (distance_link(D, F, type_main, latlon_cols, start_end, ex->Size, ex->SelectedSize) != 0) {
-        die("distance_link link failed (could not read map?)");
+        die("distance_link link failed");
     }
 
     for (int k = 0; k < 4; k++) free(latlon_cols[k]);
@@ -101,113 +105,21 @@ void build_waypoint_dist(const location_data *ex,
 /* ===== MAP Structure for Island Data ===== */
 
 /* MAP structure for land polygon data */
-typedef struct {
+/* External MAP structure (defined and initialized in coastline_db.c) */
+extern struct {
     int n;
-    int N[1];
-    double *LatDeg[1];
-    double *LonDeg[1];
-    double MAXLAT, MINLAT, MAXLON, MINLON;
-} MAP_TYPE;
+    int N[10];
+    double *LatDeg[10];
+    double *LonDeg[10];
+    double MINLAT, MAXLAT, MINLON, MAXLON;
+} MAP[1];
 
-static MAP_TYPE MAP[1];
 static int iMAP = 0;
 
-/* Load island.bin file (land polygon data) - initializes global MAP structure */
-double *load_island_bin(const char *fname, int *out_n) {
-    int i;
-    FILE *fp;
-    float *land_data;
-    size_t fileSize, numElements;
-
-    if (!fname) {
-        fprintf(stderr, "Error: island.bin path is NULL\n");
-        return NULL;
-    }
-
-    fp = fopen(fname, "rb");
-    if (!fp) {
-        perror("fopen island.bin");
-        return NULL;
-    }
-
-    fseek(fp, 0, SEEK_END);
-    fileSize = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    if (fileSize <= 0 || (fileSize % 4) != 0) {
-        fprintf(stderr, "island.bin size invalid\n");
-        fclose(fp);
-        return NULL;
-    }
-
-    numElements = fileSize / sizeof(float);
-    if ((numElements % 2) != 0) {
-        fprintf(stderr, "island.bin float count must be even\n");
-        fclose(fp);
-        return NULL;
-    }
-
-    land_data = (float *)malloc(fileSize);
-    if (!land_data) {
-        perror("Memory allocation failed");
-        fclose(fp);
-        return NULL;
-    }
-
-    if (fread(land_data, sizeof(float), numElements, fp) != numElements) {
-        fprintf(stderr, "Failed to read island.bin\n");
-        free(land_data);
-        fclose(fp);
-        return NULL;
-    }
-    fclose(fp);
-
-    /* Initialize global MAP structure (required by readMAP and distance_link) */
-    MAP[0].n = 1;
-    MAP[0].N[0] = numElements / 2;
-    MAP[0].LatDeg[0] = (double *) malloc(MAP[0].N[0] * sizeof(double));
-    MAP[0].LonDeg[0] = (double *) malloc(MAP[0].N[0] * sizeof(double));
-
-    if (!MAP[0].LatDeg[0] || !MAP[0].LonDeg[0]) {
-        fprintf(stderr, "Memory allocation failed for MAP\n");
-        free(land_data);
-        free(MAP[0].LatDeg[0]);
-        free(MAP[0].LonDeg[0]);
-        return NULL;
-    }
-
-    /* Convert float land data to double arrays */
-    for (i = 0; i < MAP[0].N[0]; i++) {
-        MAP[0].LatDeg[0][i] = (double)land_data[i];
-        MAP[0].LonDeg[0][i] = (double)land_data[MAP[0].N[0] + i];
-    }
-
-    /* Set Iceland bounds for land crossing checks */
-    MAP[0].MAXLON = -4;
-    MAP[0].MAXLAT = 70;
-    MAP[0].MINLAT = 60;
-    MAP[0].MINLON = -32;
-
-    /* Convert and return as double array */
-    double *Land = (double*)xmalloc((size_t)numElements * sizeof(double));
-    for (long j = 0; j < (long)numElements; j++) {
-        Land[j] = (double)land_data[j];
-    }
-    free(land_data);
-
-    *out_n = MAP[0].N[0];
-    return Land;
-}
 
 /*
  * Compute distance matrix for locations using waypoint-aware Dijkstra routing
- *
- * @param n_locs - Number of locations (excluding waypoints)
- * @param latlon_rad - Array of lat/lon in radians [4][n_locs] (lat_start, lon_start, lat_end, lon_end)
- * @param types - Array of location types
- * @param island_bin_path - Path to island.bin file for land obstacles
- * @param out_dist - Output distance matrix [n_locs * n_locs]
- * @return 0 on success, -1 on error
+ * ...existing code...
  */
 int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
                             const char *island_bin_path, double **out_dist) {
@@ -220,10 +132,10 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
 
     /* Load island.bin for land contours */
     int n_land = 0;
-    double *Land = NULL;
+    double *land = NULL;
     if (island_bin_path) {
-        Land = load_island_bin(island_bin_path, &n_land);
-        if (!Land) {
+        land = load_island_bin(island_bin_path, &n_land);
+        if (!land) {
             fprintf(stderr, "  ✗ Failed to load island.bin\n");
             return -1;
         }
@@ -253,7 +165,7 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
         fprintf(stderr, "  ✗ distance_link failed (error %d)\n", rc);
         free(D);
         free(F);
-        if (Land) free(Land);
+        if (land) free(land);
         return -1;
     }
 
@@ -261,7 +173,7 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
 
     /* Cleanup and return */
     free(F);
-    if (Land) free(Land);
+    if (land) free(land);
 
     *out_dist = D;  /* Caller must free */
     return 0;
@@ -292,6 +204,7 @@ static double arc_distance(double lat1, double lon1, double lat2, double lon2) {
     double c = 2*atan2(sqrt(a), sqrt(1-a));
     return 6371.0 * c;  /* Earth radius in km */
 }
+
 
 /* Check if line segment crosses land polygon */
 static int crosses_land(double x1, double y1, double x2, double y2,
@@ -347,7 +260,7 @@ static double dijkstra_dist_(double *graph, int M, int src, int dest) {
 }
 
 /* Create feasibility matrix - check for land crossings */
-static int createfeasiblelinkmatrix(PARAMS params) {
+static int create_feasibility_matrix(PARAMS params) {
     int i, j, k;
     int m = params.SelectedSize, M = 2*params.SelectedSize;
     double x1, y1, x2, y2;
@@ -364,31 +277,31 @@ static int createfeasiblelinkmatrix(PARAMS params) {
     for (i = 0; i < m; i++) {
         for (j = i + 1; j < m; j++) {
 
-            x1 = 180.0*params.LatLonRad[0][i] / PI;
-            y1 = 180.0*params.LatLonRad[1][i] / PI;
-            x2 = 180.0*params.LatLonRad[0][j] / PI;
-            y2 = 180.0*params.LatLonRad[1][j] / PI;
+            x1 = rad_to_deg(params.LatLonRad[0][i]);
+            y1 = rad_to_deg(params.LatLonRad[1][i]);
+            x2 = rad_to_deg(params.LatLonRad[0][j]);
+            y2 = rad_to_deg(params.LatLonRad[1][j]);
             k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             F[(2*i)+M*(2*j)] = k; F[(2*j)+M*(2*i)] = k;
 
-            x1 = 180.0*params.LatLonRad[0][i] / PI;
-            y1 = 180.0*params.LatLonRad[1][i] / PI;
-            x2 = 180.0*params.LatLonRad[2][j] / PI;
-            y2 = 180.0*params.LatLonRad[3][j] / PI;
+            x1 = rad_to_deg(params.LatLonRad[0][i]);
+            y1 = rad_to_deg(params.LatLonRad[1][i]);
+            x2 = rad_to_deg(params.LatLonRad[2][j]);
+            y2 = rad_to_deg(params.LatLonRad[3][j]);
             k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             F[(2*i)+M*(2*j+1)] = k; F[(2*j+1)+M*(2*i)] = k;
 
-            x1 = 180.0*params.LatLonRad[2][i] / PI;
-            y1 = 180.0*params.LatLonRad[3][i] / PI;
-            x2 = 180.0*params.LatLonRad[0][j] / PI;
-            y2 = 180.0*params.LatLonRad[1][j] / PI;
+            x1 = rad_to_deg(params.LatLonRad[2][i]);
+            y1 = rad_to_deg(params.LatLonRad[3][i]);
+            x2 = rad_to_deg(params.LatLonRad[0][j]);
+            y2 = rad_to_deg(params.LatLonRad[1][j]);
             k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             F[(2*i+1)+M*(2*j)] = k; F[(2*j)+M*(2*i+1)] = k;
 
-            x1 = 180.0*params.LatLonRad[2][i] / PI;
-            y1 = 180.0*params.LatLonRad[3][i] / PI;
-            x2 = 180.0*params.LatLonRad[2][j] / PI;
-            y2 = 180.0*params.LatLonRad[3][j] / PI;
+            x1 = rad_to_deg(params.LatLonRad[2][i]);
+            y1 = rad_to_deg(params.LatLonRad[3][i]);
+            x2 = rad_to_deg(params.LatLonRad[2][j]);
+            y2 = rad_to_deg(params.LatLonRad[3][j]);
             k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             F[(2*i+1)+M*(2*j+1)] = k; F[(2*j+1)+M*(2*i+1)] = k;
         }
@@ -397,7 +310,7 @@ static int createfeasiblelinkmatrix(PARAMS params) {
 }
 
 /* Create distance matrix */
-static void CreateDistanceMatrix(PARAMS params) {
+static void create_distance_matrix(PARAMS params) {
     int i, j;
     int m = params.SelectedSize, M = 2*params.SelectedSize;
     double x1, y1, x2, y2, d;
@@ -525,8 +438,8 @@ int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
     for (i=0; i<4; i++)
         params.LatLonRad[i] = LatLon[i];
 
-    createfeasiblelinkmatrix(params);
-    CreateDistanceMatrix(params);
+    create_feasibility_matrix(params);
+    create_distance_matrix(params);
 
     free(params.Graph);
     return 0;

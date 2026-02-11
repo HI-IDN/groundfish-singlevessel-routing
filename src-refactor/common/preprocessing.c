@@ -5,7 +5,9 @@
 
 #include "../include/dat_parser.h"
 #include "../include/distance.h"
+#include "../include/coastline_db.h"
 #include "../include/constants.h"
+#include "../include/geo_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,7 +86,7 @@ static int compute_and_store_distances(sqlite3 *db, const char *island_bin_path)
 
     /* Query all non-waypoint locations */
     const char *query_sql =
-        "SELECT id, lat_deg, lon_deg, type FROM v_locations WHERE type != ? ORDER BY id;";
+        "SELECT id, lat, lon, type FROM locations WHERE type != ? ORDER BY id;";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db, query_sql, -1, &stmt, NULL);
@@ -123,12 +125,15 @@ static int compute_and_store_distances(sqlite3 *db, const char *island_bin_path)
     sqlite3_bind_int(stmt, 1, NODE_TYPE_WAYPOINT);
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         loc_ids[i] = sqlite3_column_int(stmt, 0);
-        double lat_deg = sqlite3_column_double(stmt, 1);
-        double lon_deg = sqlite3_column_double(stmt, 2);
+        int easting = sqlite3_column_int(stmt, 1);
+        int northing = sqlite3_column_int(stmt, 2);
         types[i] = sqlite3_column_int(stmt, 3);
 
-        double lat_rad = lat_deg * PI / 180.0;
-        double lon_rad = lon_deg * PI / 180.0;
+        /* Convert degmin to decimal degrees, then to radians */
+        double lat_deg = degmin_to_deg(easting);
+        double lon_deg = degmin_to_deg_lon(northing);  /* Applies western hemisphere negation */
+        double lat_rad = deg_to_rad(lat_deg);
+        double lon_rad = deg_to_rad(lon_deg);
 
         /* Column-major format for DistanceLink */
         latlon_rad[0][i] = lat_rad;  /* lat_start */
@@ -209,8 +214,39 @@ static int compute_and_store_distances(sqlite3 *db, const char *island_bin_path)
     return SQLITE_OK;
 }
 
+/* Helper function to strip quotes from names */
+static char* strip_quotes(const char *name) {
+    if (!name) return NULL;
+    const char *start = name;
+    const char *end = name + strlen(name);
+    if (*start == '"') start++;
+    if (end > start && *(end-1) == '"') end--;
+    size_t len = end - start;
+    char *result = malloc(len + 1);
+    memcpy(result, start, len);
+    result[len] = '\0';
+    return result;
+}
+
+/* Helper to insert location and return its ID */
+static int insert_location(sqlite3_stmt *stmt, int type, int lat_degmin, int lon_degmin) {
+    /* Convert degmin integers to decimal degrees using helper function */
+    double lat_deg = degmin_to_deg(lat_degmin);
+    double lon_deg = degmin_to_deg_lon(lon_degmin);  /* Applies western hemisphere negation */
+
+    sqlite3_bind_int(stmt, 1, type);
+    sqlite3_bind_int(stmt, 2, lat_degmin);
+    sqlite3_bind_int(stmt, 3, lon_degmin);
+    sqlite3_bind_double(stmt, 4, lat_deg);
+    sqlite3_bind_double(stmt, 5, lon_deg);
+    sqlite3_step(stmt);
+    int loc_id = (int)sqlite3_last_insert_rowid(sqlite3_db_handle(stmt));
+    sqlite3_reset(stmt);
+    return loc_id;
+}
+
 /* Write parsed data to SQLite database */
-static int write_to_sqlite(const char *db_path, const ItemVec *items, const char *source_file, int force_recreate) {
+static int write_to_sqlite(const char *db_path, const ItemVec *items, const char *source_file) {
     sqlite3 *db;
     int rc = sqlite3_open(db_path, &db);
 
@@ -220,34 +256,17 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         return rc;
     }
 
-    /* Check if database already exists */
-    sqlite3_stmt *check_stmt;
-    rc = sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='boats';", -1, &check_stmt, NULL);
-    if (rc == SQLITE_OK) {
-        if (sqlite3_step(check_stmt) == SQLITE_ROW) {
-            /* Database exists */
-            if (!force_recreate) {
-                fprintf(stderr, "  ✗ Database already exists. Use --force to recreate.\n");
-                sqlite3_finalize(check_stmt);
-                sqlite3_close(db);
-                return SQLITE_ERROR;
-            }
-            /* Force recreate - drop all tables */
-            sqlite3_finalize(check_stmt);
-            printf("  → Force recreate: dropping existing tables...\n");
-            sqlite3_exec(db, "DROP TABLE IF EXISTS boats;", NULL, NULL, NULL);
-            sqlite3_exec(db, "DROP TABLE IF EXISTS stations;", NULL, NULL, NULL);
-            sqlite3_exec(db, "DROP TABLE IF EXISTS ports;", NULL, NULL, NULL);
-            sqlite3_exec(db, "DROP TABLE IF EXISTS waypoints;", NULL, NULL, NULL);
-            sqlite3_exec(db, "DROP TABLE IF EXISTS locations;", NULL, NULL, NULL);
-            sqlite3_exec(db, "DROP TABLE IF EXISTS survey_2023;", NULL, NULL, NULL);
-            sqlite3_exec(db, "DROP TABLE IF EXISTS distances;", NULL, NULL, NULL);
-            sqlite3_exec(db, "DROP TABLE IF EXISTS metadata;", NULL, NULL, NULL);
-            sqlite3_exec(db, "DROP VIEW IF EXISTS v_locations;", NULL, NULL, NULL);
-        } else {
-            sqlite3_finalize(check_stmt);
-        }
-    }
+    /* Drop existing tables if they exist */
+    printf("  → Dropping existing tables (if any)...\n");
+    sqlite3_exec(db, "DROP TABLE IF EXISTS boats;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS stations;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS ports;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS waypoints;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS locations;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS survey_2023;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS distances;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS coastline;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DROP TABLE IF EXISTS metadata;", NULL, NULL, NULL);
 
     /* Create normalized schema with survey assignment table */
     char *err_msg = NULL;
@@ -256,15 +275,17 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         "CREATE TABLE locations ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  type INT,"
-        "  lat_degmin REAL,"
-        "  lon_degmin REAL"
+        "  easting INT,"
+        "  northing INT,"
+        "  lat REAL,"
+        "  lon REAL"
         ");"
 
         /* Boats table */
         "CREATE TABLE boats ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  name TEXT NOT NULL,"
-        "  capacity REAL NOT NULL,"
+        "  capacity INT NOT NULL,"
         "  location_id INTEGER,"
         "  FOREIGN KEY (location_id) REFERENCES locations(id)"
         ");"
@@ -308,6 +329,13 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         "  FOREIGN KEY (boat_id) REFERENCES boats(id)"
         ");"
 
+        /* Coastline table for island polygon data */
+        "CREATE TABLE coastline ("
+        "  id INTEGER PRIMARY KEY,"
+        "  lat REAL,"       /* Decimal degrees (from island.bin) */
+        "  lon REAL"        /* Decimal degrees (from island.bin) */
+        ");"
+
         /* Metadata table */
         "CREATE TABLE metadata ("
         "  key TEXT PRIMARY KEY,"
@@ -320,14 +348,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         "  from_location_id INTEGER REFERENCES locations(id),"
         "  to_location_id INTEGER REFERENCES locations(id),"
         "  distance_nm REAL"
-        ");"
-
-        /* View for locations with degree conversion */
-        "CREATE VIEW v_locations AS "
-        "SELECT id, type, lat_degmin, lon_degmin, "
-        "  (lat_degmin + (200.0/3.0) * ((lat_degmin/100.0) - CAST(lat_degmin/10000.0 AS INTEGER) * 100.0)) / 10000.0 AS lat_deg, "
-        "  (lon_degmin + (200.0/3.0) * ((lon_degmin/100.0) - CAST(lon_degmin/10000.0 AS INTEGER) * 100.0)) / 10000.0 AS lon_deg "
-        "FROM locations;";
+        ");";
 
     rc = sqlite3_exec(db, sql_schema, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
@@ -342,7 +363,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
     /* Prepare statements */
     sqlite3_stmt *loc_stmt, *boat_stmt, *stat_stmt, *port_stmt, *wayp_stmt, *survey_stmt;
-    sqlite3_prepare_v2(db, "INSERT INTO locations (type, lat_degmin, lon_degmin) VALUES (?, ?, ?);", -1, &loc_stmt, NULL);
+    sqlite3_prepare_v2(db, "INSERT INTO locations (type, easting, northing, lat, lon) VALUES (?, ?, ?, ?, ?);", -1, &loc_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO boats (name, capacity, location_id) VALUES (?, ?, ?);", -1, &boat_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO stations (amount, start_location_id, end_location_id, depth_thrown, depth_haul, comment) VALUES (?, ?, ?, ?, ?, ?);", -1, &stat_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO ports (name, selected, location_id) VALUES (?, ?, ?);", -1, &port_stmt, NULL);
@@ -353,30 +374,6 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     int current_boat_id = 0;
     int order_num = 0;
 
-    /* Helper function to strip quotes from names */
-    char* strip_quotes(const char *name) {
-        if (!name) return NULL;
-        const char *start = name;
-        const char *end = name + strlen(name);
-        if (*start == '"') start++;
-        if (end > start && *(end-1) == '"') end--;
-        size_t len = end - start;
-        char *result = malloc(len + 1);
-        memcpy(result, start, len);
-        result[len] = '\0';
-        return result;
-    }
-
-    /* Helper to insert location and return its ID */
-    int insert_location(sqlite3_stmt *stmt, int type, double lat_degmin, double lon_degmin) {
-        sqlite3_bind_int(stmt, 1, type);
-        sqlite3_bind_double(stmt, 2, lat_degmin);
-        sqlite3_bind_double(stmt, 3, lon_degmin);
-        sqlite3_step(stmt);
-        int loc_id = (int)sqlite3_last_insert_rowid(sqlite3_db_handle(stmt));
-        sqlite3_reset(stmt);
-        return loc_id;
-    }
 
     for (int i = 0; i < items->n; i++) {
         if (items->a[i].Type == tSHIP) {
@@ -498,8 +495,17 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     /* Commit */
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
 
-    /* Compute distance matrix for all non-waypoint locations */
+    /* Import coastline data from island.bin */
     const char *island_bin_path = "../../../dat/island.bin";
+    printf("\n=== Importing Coastline Data ===\n");
+    int coastline_rc = import_coastline_to_db(db, island_bin_path);
+    if (coastline_rc == SQLITE_OK) {
+        printf("  ✓ Coastline data imported successfully\n");
+    } else {
+        printf("  ⚠ Coastline import failed (continuing anyway)\n");
+    }
+
+    /* Compute distance matrix for all non-waypoint locations */
     int dist_rc = compute_and_store_distances(db, island_bin_path);
 
     if (dist_rc == SQLITE_OK) {
@@ -535,15 +541,12 @@ int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOFBF, 1000);
 #endif
 
-    int force_recreate = 0;
     const char *dat_file = NULL;
     const char *db_path = NULL;
 
     /* Parse arguments */
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--force") == 0) {
-            force_recreate = 1;
-        } else if (dat_file == NULL) {
+        if (dat_file == NULL) {
             dat_file = argv[i];
         } else if (db_path == NULL) {
             db_path = argv[i];
@@ -551,17 +554,14 @@ int main(int argc, char **argv) {
     }
 
     if (dat_file == NULL) {
-        fprintf(stderr, "Usage: %s [--force] <datafile.dat> [database.db]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <datafile.dat> [database.db]\n", argv[0]);
         fprintf(stderr, "  Parses .dat file and prepares data for optimization\n");
-        fprintf(stderr, "\nOptions:\n");
-        fprintf(stderr, "  --force    Force recreate database (drops existing tables)\n");
         fprintf(stderr, "\nArguments:\n");
         fprintf(stderr, "  datafile.dat    Input .dat file to parse\n");
         fprintf(stderr, "  database.db     Output SQLite database (default: ../../../dat/gsp_data.db)\n");
         fprintf(stderr, "\nExample:\n");
         fprintf(stderr, "  %s ../../dat/data2023spring.dat\n", argv[0]);
         fprintf(stderr, "  %s ../../dat/data2023spring.dat ../../dat/custom.db\n", argv[0]);
-        fprintf(stderr, "  %s --force ../../dat/data2023spring.dat\n", argv[0]);
         return 1;
     }
 
@@ -662,11 +662,8 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     printf("  Database: %s\n", db_path);
-    if (force_recreate) {
-        printf("  Mode: Force recreate (--force)\n");
-    }
 
-    int db_rc = write_to_sqlite(db_path, &all_items, dat_file, force_recreate);
+    int db_rc = write_to_sqlite(db_path, &all_items, dat_file);
     if (db_rc == SQLITE_OK) {
         printf("  ✓ Successfully wrote data to database\n");
     } else {

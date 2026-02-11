@@ -1,6 +1,6 @@
 # Root Makefile for src-refactor
 
-.PHONY: all clean prep-data prep-data-force help
+.PHONY: all clean preprocessing help
 
 all:
 	@echo "Building src-refactor modules..."
@@ -15,8 +15,8 @@ clean:
 	$(MAKE) -C sweep clean
 	@echo "✓ Clean complete"
 
-# Prepare data - parse .dat file (all boats) and display summary
-prep-data:
+# Prepare data - parse .dat file and display summary
+preprocessing:
 	@echo "=== Data Preparation ==="
 	@echo "Checking for libutils..."
 	@if [ ! -f ../lib/libutils.so ] && [ ! -f ../lib/libutils.dylib ] && [ ! -f ../lib/utils.dll ] && [ ! -f ../bin/utils.dll ]; then \
@@ -26,27 +26,13 @@ prep-data:
 		echo "✓ libutils found"; \
 	fi
 	@echo ""
-	$(MAKE) -C common prep
-
-# Force recreate database
-prep-data-force:
-	@echo "=== Data Preparation (FORCE RECREATE) ==="
-	@echo "Checking for libutils..."
-	@if [ ! -f ../lib/libutils.so ] && [ ! -f ../lib/libutils.dylib ] && [ ! -f ../lib/utils.dll ] && [ ! -f ../bin/utils.dll ]; then \
-		echo "libutils not found. Building from src/..."; \
-		$(MAKE) -C ../src utils; \
-	else \
-		echo "✓ libutils found"; \
-	fi
-	@echo ""
-	$(MAKE) -C common prep-force
+	$(MAKE) -C common preprocessing
 
 # Help target
 help:
 	@echo "Available targets:"
 	@echo "  make all                - Build all modules"
 	@echo "  make clean              - Clean all build artifacts"
-	@echo "  make prep-data          - Parse .dat file and prepare data (all boats)"
-	@echo "  make prep-data-force    - Force recreate database (drops existing)"
+	@echo "  make preprocessing      - Parse .dat file and prepare data (including distance calculations)"
 	@echo "  make help               - Show this help message"
 
