@@ -4,7 +4,6 @@
  */
 
 #include "../include/dat_parser.h"
-#include "../include/exdata.h"
 #include "../include/distance.h"
 #include "../include/constants.h"
 #include <stdio.h>
@@ -72,6 +71,142 @@ static void parse_station_comment(const char *raw_comment, int *depth_thrown, in
     }
 
     free(comment_copy);
+}
+
+/*
+ * Compute and store distance matrix in database
+ * Queries locations from database, calls distance computation, stores results
+ */
+static int compute_and_store_distances(sqlite3 *db, const char *island_bin_path) {
+    printf("\n=== Computing Distance Matrix ===\n");
+    printf("  Computing distances for all non-waypoint locations\n");
+    printf("  Using Dijkstra routing with island.bin contours\n");
+
+    /* Query all non-waypoint locations */
+    const char *query_sql =
+        "SELECT id, lat_deg, lon_deg, type FROM v_locations WHERE type != ? ORDER BY id;";
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db, query_sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "  ✗ SQL error: %s\n", sqlite3_errmsg(db));
+        return rc;
+    }
+
+    sqlite3_bind_int(stmt, 1, NODE_TYPE_WAYPOINT);
+
+    /* Count locations */
+    int n = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        n++;
+    }
+    sqlite3_reset(stmt);
+
+    if (n == 0) {
+        fprintf(stderr, "  ✗ No non-waypoint locations found\n");
+        sqlite3_finalize(stmt);
+        return SQLITE_ERROR;
+    }
+
+    printf("  ✓ Found %d non-waypoint locations\n", n);
+
+    /* Allocate arrays */
+    int *loc_ids = (int*)calloc(n, sizeof(int));
+    int *types = (int*)calloc(n, sizeof(int));
+    double *latlon_rad[4];
+    for (int k = 0; k < 4; k++) {
+        latlon_rad[k] = (double*)malloc(n * sizeof(double));
+    }
+
+    /* Fill arrays */
+    int i = 0;
+    sqlite3_bind_int(stmt, 1, NODE_TYPE_WAYPOINT);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        loc_ids[i] = sqlite3_column_int(stmt, 0);
+        double lat_deg = sqlite3_column_double(stmt, 1);
+        double lon_deg = sqlite3_column_double(stmt, 2);
+        types[i] = sqlite3_column_int(stmt, 3);
+
+        double lat_rad = lat_deg * PI / 180.0;
+        double lon_rad = lon_deg * PI / 180.0;
+
+        /* Column-major format for DistanceLink */
+        latlon_rad[0][i] = lat_rad;  /* lat_start */
+        latlon_rad[1][i] = lon_rad;  /* lon_start */
+        latlon_rad[2][i] = lat_rad;  /* lat_end */
+        latlon_rad[3][i] = lon_rad;  /* lon_end */
+        i++;
+    }
+    sqlite3_finalize(stmt);
+
+    /* Call distance computation (pure function, no DB logic) */
+    double *D = NULL;
+    rc = compute_distance_matrix(n, latlon_rad, types, island_bin_path, &D);
+
+    if (rc != 0 || !D) {
+        fprintf(stderr, "  ✗ Distance computation failed\n");
+        free(loc_ids);
+        free(types);
+        for (int k = 0; k < 4; k++) free(latlon_rad[k]);
+        return SQLITE_ERROR;
+    }
+
+    /* Store in database */
+    printf("  → Storing distances in database...\n");
+
+    const char *insert_sql =
+        "INSERT INTO distances (from_location_id, to_location_id, distance_nm) VALUES (?, ?, ?);";
+
+    sqlite3_stmt *insert_stmt;
+    rc = sqlite3_prepare_v2(db, insert_sql, -1, &insert_stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "  ✗ SQL prepare error: %s\n", sqlite3_errmsg(db));
+        free(D);
+        free(loc_ids);
+        free(types);
+        for (int k = 0; k < 4; k++) free(latlon_rad[k]);
+        return rc;
+    }
+
+    /* Begin transaction */
+    sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+
+    int stored = 0;
+    for (i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            double dist = (i == j) ? 0.0 : D[i * n + j];
+
+            sqlite3_bind_int(insert_stmt, 1, loc_ids[i]);
+            sqlite3_bind_int(insert_stmt, 2, loc_ids[j]);
+            sqlite3_bind_double(insert_stmt, 3, dist);
+
+            if (sqlite3_step(insert_stmt) != SQLITE_DONE) {
+                fprintf(stderr, "  ✗ Insert error: %s\n", sqlite3_errmsg(db));
+                sqlite3_finalize(insert_stmt);
+                sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+                free(D);
+                free(loc_ids);
+                free(types);
+                for (int k = 0; k < 4; k++) free(latlon_rad[k]);
+                return SQLITE_ERROR;
+            }
+            sqlite3_reset(insert_stmt);
+            stored++;
+        }
+    }
+
+    sqlite3_finalize(insert_stmt);
+    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+
+    printf("  ✓ Stored %d distance pairs\n", stored);
+
+    /* Cleanup */
+    free(D);
+    free(loc_ids);
+    free(types);
+    for (int k = 0; k < 4; k++) free(latlon_rad[k]);
+
+    return SQLITE_OK;
 }
 
 /* Write parsed data to SQLite database */
@@ -364,11 +499,8 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
 
     /* Compute distance matrix for all non-waypoint locations */
-    printf("\n=== Computing Distance Matrix ===\n");
-    fflush(stdout);
-
     const char *island_bin_path = "../../../dat/island.bin";
-    int dist_rc = compute_all_distances_db(db, island_bin_path);
+    int dist_rc = compute_and_store_distances(db, island_bin_path);
 
     if (dist_rc == SQLITE_OK) {
         printf("  ✓ Distance matrix computed successfully\n");

@@ -19,7 +19,7 @@ else
 endif
 
 # Source files
-SRCS = dat_parser.c exdata.c distance.c logging.c
+SRCS = dat_parser.c distance.c logging.c sql_utils.c
 OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)
 
 # Data files
