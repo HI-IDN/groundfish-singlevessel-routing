@@ -128,6 +128,43 @@ CREATE TABLE metadata (
 
 Stores: `source_file`, `import_time`
 
+### distances (Computed Distances)
+Single distance matrix for all pairwise distances between **non-waypoint locations** in **nautical miles**.
+
+```sql
+CREATE TABLE distances (
+    id INTEGER PRIMARY KEY,
+    from_location_id INTEGER REFERENCES locations(id),
+    to_location_id INTEGER REFERENCES locations(id),
+    distance_nm REAL                   -- Nautical miles
+);
+```
+
+**Distance Computation:**
+- Computes ONE distance matrix for all non-waypoint locations (type != 'W')
+- All pairwise distances: from_location_i → to_location_j where i,j ≠ waypoints
+- Uses Dijkstra algorithm with waypoint routing (via `build_waypoint_dist()`)
+- Loads `island.bin` for land contour navigation
+- Returns distances in **nautical miles (NM)**
+
+## Distance Computation
+
+Single distance matrix computed using the DistanceLink library (same as matcapmutheur_v3.c):
+
+1. **Query all non-waypoint locations** from database (B, S1, S2, P)
+2. **Load waypoints** for Dijkstra navigation (not part of distance matrix, used for routing)
+3. **Load island.bin** for land polygon routing
+4. **Call DistanceLink**:
+   - Input: lat/lon in radians for all non-waypoint locations
+   - Output: **nautical mile distances (NM)** for all i,j pairs with feasibility flags
+5. **Store in distances** table (one entry per direction: i→j and j→i)
+
+**Coordinates:**
+- Raw: degmin in `locations` table
+- View: decimal degrees via `v_locations`
+- DistanceLink: radians (converted from decimal degrees)
+- **Output: nautical miles (NM)**
+
 ## Query Examples
 
 ### Get all boats with their locations (decimal degrees)

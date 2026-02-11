@@ -6,6 +6,7 @@
 #include "../include/dat_parser.h"
 #include "../include/exdata.h"
 #include "../include/distance.h"
+#include "../include/constants.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -105,6 +106,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
             sqlite3_exec(db, "DROP TABLE IF EXISTS waypoints;", NULL, NULL, NULL);
             sqlite3_exec(db, "DROP TABLE IF EXISTS locations;", NULL, NULL, NULL);
             sqlite3_exec(db, "DROP TABLE IF EXISTS survey_2023;", NULL, NULL, NULL);
+            sqlite3_exec(db, "DROP TABLE IF EXISTS distances;", NULL, NULL, NULL);
             sqlite3_exec(db, "DROP TABLE IF EXISTS metadata;", NULL, NULL, NULL);
             sqlite3_exec(db, "DROP VIEW IF EXISTS v_locations;", NULL, NULL, NULL);
         } else {
@@ -118,7 +120,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         /* Locations table - stores raw degmin format only */
         "CREATE TABLE locations ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  type TEXT CHECK(type IN ('B', 'S1', 'S2', 'P', 'W')),"
+        "  type INT,"
         "  lat_degmin REAL,"
         "  lon_degmin REAL"
         ");"
@@ -165,7 +167,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         "CREATE TABLE survey_2023 ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  boat_id INTEGER NOT NULL,"
-        "  location_type TEXT CHECK(location_type IN ('S', 'P')),"  /* S=Station, P=Port */
+        "  location_type INTEGER,"  /* NODE_TYPE_STATION or NODE_TYPE_PORT */
         "  location_id INTEGER NOT NULL,"  /* FK to stations.id or ports.id */
         "  order_num INTEGER,"  /* Order in the survey route */
         "  FOREIGN KEY (boat_id) REFERENCES boats(id)"
@@ -175,6 +177,14 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         "CREATE TABLE metadata ("
         "  key TEXT PRIMARY KEY,"
         "  value TEXT"
+        ");"
+
+        /* Distances table - single distance matrix for all non-waypoint locations */
+        "CREATE TABLE distances ("
+        "  id INTEGER PRIMARY KEY,"
+        "  from_location_id INTEGER REFERENCES locations(id),"
+        "  to_location_id INTEGER REFERENCES locations(id),"
+        "  distance_nm REAL"
         ");"
 
         /* View for locations with degree conversion */
@@ -223,8 +233,8 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     }
 
     /* Helper to insert location and return its ID */
-    int insert_location(sqlite3_stmt *stmt, const char *type, double lat_degmin, double lon_degmin) {
-        sqlite3_bind_text(stmt, 1, type, -1, SQLITE_STATIC);
+    int insert_location(sqlite3_stmt *stmt, int type, double lat_degmin, double lon_degmin) {
+        sqlite3_bind_int(stmt, 1, type);
         sqlite3_bind_double(stmt, 2, lat_degmin);
         sqlite3_bind_double(stmt, 3, lon_degmin);
         sqlite3_step(stmt);
@@ -236,7 +246,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     for (int i = 0; i < items->n; i++) {
         if (items->a[i].Type == tSHIP) {
             /* Insert boat location */
-            int loc_id = insert_location(loc_stmt, "B",
+            int loc_id = insert_location(loc_stmt, NODE_TYPE_BOAT,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
             loc_count++;
 
@@ -256,12 +266,12 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
         } else if (items->a[i].Type == tSTAT && current_boat_id > 0) {
             /* Insert start location */
-            int start_loc_id = insert_location(loc_stmt, "S1",
+            int start_loc_id = insert_location(loc_stmt, NODE_TYPE_STATION,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
             loc_count++;
 
             /* Insert end location */
-            int end_loc_id = insert_location(loc_stmt, "S2",
+            int end_loc_id = insert_location(loc_stmt, NODE_TYPE_STATION,
                 items->a[i].LatLonDegMin[2], items->a[i].LatLonDegMin[3]);
             loc_count++;
 
@@ -287,7 +297,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
             /* Insert into survey_2023 table */
             sqlite3_bind_int(survey_stmt, 1, current_boat_id);
-            sqlite3_bind_text(survey_stmt, 2, "S", -1, SQLITE_STATIC);
+            sqlite3_bind_int(survey_stmt, 2, NODE_TYPE_STATION);
             sqlite3_bind_int(survey_stmt, 3, station_id);
             sqlite3_bind_int(survey_stmt, 4, order_num++);
             sqlite3_step(survey_stmt);
@@ -296,7 +306,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
         } else if (items->a[i].Type == tPORT && current_boat_id > 0) {
             /* Insert port location */
-            int loc_id = insert_location(loc_stmt, "P",
+            int loc_id = insert_location(loc_stmt, NODE_TYPE_PORT,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
             loc_count++;
 
@@ -313,7 +323,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
             /* Insert into survey_2023 table */
             sqlite3_bind_int(survey_stmt, 1, current_boat_id);
-            sqlite3_bind_text(survey_stmt, 2, "P", -1, SQLITE_STATIC);
+            sqlite3_bind_int(survey_stmt, 2, NODE_TYPE_PORT);
             sqlite3_bind_int(survey_stmt, 3, port_id);
             sqlite3_bind_int(survey_stmt, 4, order_num++);
             sqlite3_step(survey_stmt);
@@ -322,7 +332,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
         } else if (items->a[i].Type == tWAYP) {
             /* Insert waypoint location */
-            int loc_id = insert_location(loc_stmt, "W",
+            int loc_id = insert_location(loc_stmt, NODE_TYPE_WAYPOINT,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
             loc_count++;
 
@@ -352,6 +362,31 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
     /* Commit */
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+
+    /* Compute distance matrix for all non-waypoint locations */
+    printf("\n=== Computing Distance Matrix ===\n");
+    fflush(stdout);
+
+    const char *island_bin_path = "../../../dat/island.bin";
+    int dist_rc = compute_all_distances_db(db, island_bin_path);
+
+    if (dist_rc == SQLITE_OK) {
+        printf("  ✓ Distance matrix computed successfully\n");
+
+        /* Query and report distances computed */
+        sqlite3_stmt *count_stmt;
+        if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM distances;", -1, &count_stmt, NULL) == SQLITE_OK) {
+            if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+                int dist_count = sqlite3_column_int(count_stmt, 0);
+                printf("  ✓ Stored %d distance pairs in distances table\n", dist_count);
+            }
+            sqlite3_finalize(count_stmt);
+        }
+    } else {
+        printf("  ✗ Failed to compute distances (error code: %d)\n", dist_rc);
+    }
+
+    fflush(stdout);
     sqlite3_close(db);
 
     printf("  ✓ Wrote %d locations, %d boats, %d stations, %d ports, %d waypoints\n",
@@ -508,14 +543,16 @@ int main(int argc, char **argv) {
 
     printf("\n=== Next Steps ===\n");
     fflush(stdout);
-    printf("  ✓ DONE: Parsed data written to SQLite\n");
-    printf("  TODO: Compute distance matrices for each boat\n");
-    printf("  TODO: Cache distance matrices in database\n");
+    printf("  ✓ DONE: Data parsed and written to SQLite\n");
+    printf("  ✓ DONE: Distance matrix computed and cached\n");
+    printf("  TODO: Run init/ to select boat and compute initial routes\n");
+    printf("  TODO: Run sweep/ for optimization\n");
     printf("\nData preparation complete.\n");
-    printf("\nDatabase created at: dat/gsp_data.db\n");
+    printf("\nDatabase location: dat/gsp_data.db\n");
     printf("\nQuery examples:\n");
+    printf("  sqlite3 dat/gsp_data.db \"SELECT COUNT(*) FROM distances;\"\n");
     printf("  sqlite3 dat/gsp_data.db \"SELECT * FROM boats;\"\n");
-    printf("  sqlite3 dat/gsp_data.db \"SELECT COUNT(*) FROM stations WHERE boat_id=1;\"\n");
+    printf("  sqlite3 dat/gsp_data.db \"SELECT * FROM distances LIMIT 10;\"\n");
     fflush(stdout);
 
     /* Cleanup */
