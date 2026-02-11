@@ -105,3 +105,4 @@ tex.cache/
 # Derived files
 dat/parsed_data.sqlite
 sol/solutions.sqlite
+dat/gsp_data.db
