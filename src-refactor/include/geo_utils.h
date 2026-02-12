@@ -62,6 +62,30 @@ static inline double degmin_to_deg_lon(int degmin_int) {
     return -degmin_to_deg(degmin_int);
 }
 
+/**
+ * Convert degmin integer format to radians
+ *
+ * degmin format: Integer representing DDMM.mm * 100
+ * Example: 663381 = 6633.81 = 66 degrees 33.81 minutes = 66.5635 degrees = 1.161 radians
+ *
+ * @param degmin_int Degmin value as integer (e.g., 663381 for 66°33.81')
+ * @return Radians
+ */
+static inline double degmin_to_rad(int degmin_int) {
+    return deg_to_rad(degmin_to_deg(degmin_int));
+}
+
+/**
+ * Convert degmin integer format to radians for LONGITUDE (Iceland convention)
+ *
+ * @param degmin_int Degmin value as integer (positive for west)
+ * @return Radians (negative for western hemisphere)
+ */
+static inline double degmin_to_rad_lon(int degmin_int) {
+    return deg_to_rad(degmin_to_deg_lon(degmin_int));
+}
+
+
 #endif /* GSP_GEO_UTILS_H */
 
 

@@ -8,15 +8,13 @@
 #include <ctype.h>
 #include <math.h>
 
-#ifndef PI
-#define PI 3.14159265358979323846
-#endif
+#include "../include/dat_parser.h"
+#include "../include/geo_utils.h"  /* Use centralized geo utilities */
 
 /* Explicit declarations for math functions (workaround for some compilers) */
 extern double fabs(double);
 extern double floor(double);
 
-#include "../include/dat_parser.h"
 
 /* Utility helpers */
 static void die(const char *msg) {
@@ -105,19 +103,6 @@ void free_tokens(char **tok, int cnt) {
     free(tok);
 }
 
-/* Coordinate conversion */
-double degmin2rad(double degmin_in) {
-    double degmin = degmin_in;
-    if (fabs(degmin) < 10000.0) degmin *= 100.0;
-    double m = (degmin / 100.0) - floor(degmin / 10000.0) * 100.0;
-    double deg = (degmin + (200.0 / 3.0) * m) / 10000.0;
-    return deg * PI / 180.0;
-}
-
-double degmin2deg(double degmin) {
-    double m = (degmin / 100.0) - floor(degmin / 10000.0) * 100.0;
-    return (degmin + (200.0 / 3.0) * m) / 10000.0;
-}
 
 /* DAT file reading */
 void read_dat_file(const char *fname, const char *ship_name_plain,
@@ -181,7 +166,7 @@ void read_dat_file(const char *fname, const char *ship_name_plain,
                 it.LatLonDegMin[2] = data[2];
                 it.LatLonDegMin[3] = data[3];
                 for (int k = 0; k < 4; k++) {
-                    it.LatLonRad[k] = degmin2rad(it.LatLonDegMin[k]);
+                    it.LatLonRad[k] = degmin_to_rad(it.LatLonDegMin[k]);
                 }
 
                 item_vec_push(out_items, it);
@@ -222,7 +207,7 @@ void read_dat_file(const char *fname, const char *ship_name_plain,
                     it.LatLonDegMin[3] = (double)datai[6];
 
                     for (int k = 0; k < 4; k++) {
-                        it.LatLonRad[k] = degmin2rad(it.LatLonDegMin[k]);
+                        it.LatLonRad[k] = degmin_to_rad(it.LatLonDegMin[k]);
                     }
 
                     item_vec_push(out_items, it);
@@ -255,7 +240,7 @@ void read_dat_file(const char *fname, const char *ship_name_plain,
                 it.LatLonDegMin[3] = it.LatLonDegMin[1];
 
                 for (int k = 0; k < 4; k++) {
-                    it.LatLonRad[k] = degmin2rad(it.LatLonDegMin[k]);
+                    it.LatLonRad[k] = degmin_to_rad(it.LatLonDegMin[k]);
                 }
 
                 item_vec_push(out_items, it);
@@ -285,7 +270,7 @@ void read_dat_file(const char *fname, const char *ship_name_plain,
                 it.LatLonDegMin[3] = it.LatLonDegMin[1];
 
                 for (int k = 0; k < 4; k++) {
-                    it.LatLonRad[k] = degmin2rad(it.LatLonDegMin[k]);
+                    it.LatLonRad[k] = degmin_to_rad(it.LatLonDegMin[k]);
                 }
 
                 item_vec_push(out_items, it);
@@ -353,7 +338,7 @@ void read_dat_file_all_boats(const char *fname, ItemVec *out_items, int skip_por
                 it.LatLonDegMin[2] = data[2];
                 it.LatLonDegMin[3] = data[3];
                 for (int k = 0; k < 4; k++) {
-                    it.LatLonRad[k] = degmin2rad(it.LatLonDegMin[k]);
+                    it.LatLonRad[k] = degmin_to_rad(it.LatLonDegMin[k]);
                 }
 
                 item_vec_push(out_items, it);
@@ -395,7 +380,7 @@ void read_dat_file_all_boats(const char *fname, ItemVec *out_items, int skip_por
                     it.LatLonDegMin[3] = (double)datai[6];
 
                     for (int k = 0; k < 4; k++) {
-                        it.LatLonRad[k] = degmin2rad(it.LatLonDegMin[k]);
+                        it.LatLonRad[k] = degmin_to_rad(it.LatLonDegMin[k]);
                     }
 
                     item_vec_push(out_items, it);
@@ -428,7 +413,7 @@ void read_dat_file_all_boats(const char *fname, ItemVec *out_items, int skip_por
                 it.LatLonDegMin[3] = it.LatLonDegMin[1];
 
                 for (int k = 0; k < 4; k++) {
-                    it.LatLonRad[k] = degmin2rad(it.LatLonDegMin[k]);
+                    it.LatLonRad[k] = degmin_to_rad(it.LatLonDegMin[k]);
                 }
 
                 item_vec_push(out_items, it);
@@ -458,7 +443,7 @@ void read_dat_file_all_boats(const char *fname, ItemVec *out_items, int skip_por
                 it.LatLonDegMin[3] = it.LatLonDegMin[1];
 
                 for (int k = 0; k < 4; k++) {
-                    it.LatLonRad[k] = degmin2rad(it.LatLonDegMin[k]);
+                    it.LatLonRad[k] = degmin_to_rad(it.LatLonDegMin[k]);
                 }
 
                 item_vec_push(out_items, it);
