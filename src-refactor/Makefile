@@ -1,38 +1,81 @@
-# Root Makefile for src-refactor
+# Lightweight Makefile - CMake wrapper
+# Build directory is at ../build (root level)
 
-.PHONY: all clean preprocessing help
+BUILD_DIR = ../build
 
-all:
-	@echo "Building src-refactor modules..."
-	$(MAKE) -C common all
-	@echo "✓ Build complete"
+.PHONY: all clean config build preprocessing init init_nn init_ge init_ci init_opt help
 
+# Default target
+all: build
+
+# Configure CMake (only if not already configured)
+config:
+	@mkdir -p $(BUILD_DIR)
+	@cd $(BUILD_DIR) && cmake -DCMAKE_BUILD_TYPE=Release ../src-refactor
+
+# Build everything
+build: config
+	@cd $(BUILD_DIR) && $(MAKE)
+
+# Alias for build
+init: build
+
+# Data preprocessing
+preprocessing: config
+	@cd $(BUILD_DIR) && $(MAKE) preprocess
+
+# Run Phase 0 strategies
+init_nn: build
+	@cd $(BUILD_DIR) && $(MAKE) run_init_nn
+
+init_ge: build
+	@cd $(BUILD_DIR) && $(MAKE) run_init_ge
+
+init_ci: build
+	@cd $(BUILD_DIR) && $(MAKE) run_init_ci
+
+init_opt: build
+	@cd $(BUILD_DIR) && $(MAKE) run_init_opt
+
+# Clean build directory
 clean:
-	@echo "Cleaning src-refactor modules..."
-	$(MAKE) -C common clean
-	$(MAKE) -C init clean
-	$(MAKE) -C mip clean
-	$(MAKE) -C sweep clean
-	@echo "✓ Clean complete"
+	@echo "Cleaning build directory..."
+	@rm -rf $(BUILD_DIR)
+	@echo "✓ Build directory removed"
 
-# Prepare data - parse .dat file and display summary
-preprocessing:
-	@echo "=== Data Preparation ==="
-	@echo "Checking for libutils..."
-	@if [ ! -f ../lib/libutils.so ] && [ ! -f ../lib/libutils.dylib ] && [ ! -f ../lib/utils.dll ] && [ ! -f ../bin/utils.dll ]; then \
-		echo "libutils not found. Building from src/..."; \
-		$(MAKE) -C ../src utils; \
-	else \
-		echo "✓ libutils found"; \
-	fi
-	@echo ""
-	$(MAKE) -C common preprocessing
+# Reconfigure (clean + config)
+reconfigure: clean config
+	@echo "✓ Reconfigured"
 
-# Help target
+# Help message
 help:
-	@echo "Available targets:"
-	@echo "  make all                - Build all modules"
-	@echo "  make clean              - Clean all build artifacts"
-	@echo "  make preprocessing      - Parse .dat file and prepare data (including distance calculations)"
-	@echo "  make help               - Show this help message"
+	@echo ""
+	@echo "GSP Solver - Lightweight Makefile"
+	@echo "=================================="
+	@echo ""
+	@echo "Build directory: ../build (root level)"
+	@echo ""
+	@echo "Quick Start:"
+	@echo "  make                    Build gsp_init solver"
+	@echo "  make preprocessing      Parse .dat and build database"
+	@echo "  make init_nn            Run Nearest Neighbor (NN)"
+	@echo ""
+	@echo "All Targets:"
+	@echo "  make build              Build all targets"
+	@echo "  make config             Configure CMake (if needed)"
+	@echo "  make preprocessing      Step 1: Parse data"
+	@echo "  make init / make        Step 2: Build Phase 0 solver"
+	@echo "  make init_nn            Run NN strategy (IMPLEMENTED)"
+	@echo "  make init_ge            Run GE strategy (not yet implemented)"
+	@echo "  make init_ci            Run CI strategy (not yet implemented)"
+	@echo "  make init_opt           Run OPT strategy (not yet implemented)"
+	@echo "  make clean              Remove build directory"
+	@echo "  make reconfigure        Clean and reconfigure CMake"
+	@echo ""
+	@echo "Or use CMake directly:"
+	@echo "  cd ../build"
+	@echo "  cmake -DCMAKE_BUILD_TYPE=Release ../src-refactor"
+	@echo "  make"
+	@echo "  make run_init_nn"
+	@echo ""
 

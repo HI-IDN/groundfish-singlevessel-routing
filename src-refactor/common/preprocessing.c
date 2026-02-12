@@ -496,7 +496,17 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
 
     /* Import coastline data from island.bin */
-    const char *island_bin_path = "../../../dat/island.bin";
+    /* Derive island.bin path from database path (same directory) */
+    char island_bin_path[512];
+    snprintf(island_bin_path, sizeof(island_bin_path), "%s", db_path);
+    char *last_slash = strrchr(island_bin_path, '/');
+    if (!last_slash) last_slash = strrchr(island_bin_path, '\\');
+    if (last_slash) {
+        strcpy(last_slash + 1, "island.bin");
+    } else {
+        strcpy(island_bin_path, "island.bin");
+    }
+
     printf("\n=== Importing Coastline Data ===\n");
     int coastline_rc = import_coastline_to_db(db, island_bin_path);
     if (coastline_rc == SQLITE_OK) {
@@ -670,12 +680,6 @@ int main(int argc, char **argv) {
         printf("  ✗ Failed to write to database (error code: %d)\n", db_rc);
     }
 
-    printf("\n=== Next Steps ===\n");
-    fflush(stdout);
-    printf("  ✓ DONE: Data parsed and written to SQLite\n");
-    printf("  ✓ DONE: Distance matrix computed and cached\n");
-    printf("  TODO: Run init/ to select boat and compute initial routes\n");
-    printf("  TODO: Run sweep/ for optimization\n");
     printf("\nData preparation complete.\n");
     printf("\nDatabase location: dat/gsp_data.db\n");
     printf("\nQuery examples:\n");
