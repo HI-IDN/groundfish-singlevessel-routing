@@ -42,5 +42,6 @@ enum {
 #define INFEASIBLE_LINK_PENALTY 100000.0  /* Penalty added to infeasible links that cross land */
 #define DIJKSTRA_INFINITY 10000000000.0    /* Infinity value for Dijkstra algorithm */
 
+
 #endif
 

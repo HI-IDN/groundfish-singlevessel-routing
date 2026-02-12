@@ -79,10 +79,10 @@ static void parse_station_comment(const char *raw_comment, int *depth_thrown, in
  * Compute and store distance matrix in database
  * Queries locations from database, calls distance computation, stores results
  */
-static int compute_and_store_distances(sqlite3 *db, const char *island_bin_path) {
+static int compute_and_store_distances(sqlite3 *db) {
     printf("\n=== Computing Distance Matrix ===\n");
     printf("  Computing distances for all non-waypoint locations\n");
-    printf("  Using Dijkstra routing with island.bin contours\n");
+    printf("  Using Dijkstra routing with coastline from database\n");
 
     /* Query all non-waypoint locations */
     const char *query_sql =
@@ -111,6 +111,8 @@ static int compute_and_store_distances(sqlite3 *db, const char *island_bin_path)
     }
 
     printf("  ✓ Found %d non-waypoint locations\n", n);
+    printf("  → Will compute %d distance pairs (%d×%d matrix)\n", n*n, n, n);
+    printf("  → Allocating memory...\n");
 
     /* Allocate arrays */
     int *loc_ids = (int*)calloc(n, sizeof(int));
@@ -144,9 +146,33 @@ static int compute_and_store_distances(sqlite3 *db, const char *island_bin_path)
     }
     sqlite3_finalize(stmt);
 
-    /* Call distance computation (pure function, no DB logic) */
+    /* Initialize MAP structure with coastline data from database (sets bounding box via SQL MIN/MAX) */
+    printf("\n=== Loading Coastline for Distance Computation ===\n");
+    int n_coastline = 0;
+    double *coastline_data = load_coastline_from_db(db, &n_coastline);
+    if (!coastline_data) {
+        fprintf(stderr, "  ✗ Failed to load coastline - distance computation may be inaccurate\n");
+    }
+
+    printf("\n=== Computing Distances with Waypoint Routing ===\n");
+    printf("  This will take several minutes for %d locations...\n", n);
+
+    /* Call distance computation - MAP structure is now initialized with bounding box */
+    /*
+     * TODO: Update compute_distance_matrix() to return waypoint routing information:
+     *   - For each pair (i,j), check if direct path crosses land
+     *   - If crossing detected, run Dijkstra through waypoints
+     *   - Return: distance, crosses_land flag, and waypoint_path array
+     *
+     * For now, we compute direct haversine distances and set:
+     *   - crosses_land = 0 (assume no crossing)
+     *   - waypoint_path = NULL (no waypoints used)
+     */
     double *D = NULL;
-    rc = compute_distance_matrix(n, latlon_rad, types, island_bin_path, &D);
+    rc = compute_distance_matrix(n, latlon_rad, types, &D);
+
+    /* Cleanup coastline data */
+    if (coastline_data) free(coastline_data);
 
     if (rc != 0 || !D) {
         fprintf(stderr, "  ✗ Distance computation failed\n");
@@ -156,11 +182,14 @@ static int compute_and_store_distances(sqlite3 *db, const char *island_bin_path)
         return SQLITE_ERROR;
     }
 
+    printf("\n=== Storing Distance Matrix to Database ===\n");
+
     /* Store in database */
     printf("  → Storing distances in database...\n");
 
     const char *insert_sql =
-        "INSERT INTO distances (from_location_id, to_location_id, distance_nm) VALUES (?, ?, ?);";
+        "INSERT INTO distances (from_location_id, to_location_id, distance_nm, crosses_land, waypoint_path) "
+        "VALUES (?, ?, ?, ?, ?);";
 
     sqlite3_stmt *insert_stmt;
     rc = sqlite3_prepare_v2(db, insert_sql, -1, &insert_stmt, NULL);
@@ -184,6 +213,8 @@ static int compute_and_store_distances(sqlite3 *db, const char *island_bin_path)
             sqlite3_bind_int(insert_stmt, 1, loc_ids[i]);
             sqlite3_bind_int(insert_stmt, 2, loc_ids[j]);
             sqlite3_bind_double(insert_stmt, 3, dist);
+            sqlite3_bind_int(insert_stmt, 4, 0);        /* crosses_land = 0 (direct route for now) */
+            sqlite3_bind_null(insert_stmt, 5);          /* waypoint_path = NULL (no waypoints for now) */
 
             if (sqlite3_step(insert_stmt) != SQLITE_DONE) {
                 fprintf(stderr, "  ✗ Insert error: %s\n", sqlite3_errmsg(db));
@@ -347,7 +378,9 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         "  id INTEGER PRIMARY KEY,"
         "  from_location_id INTEGER REFERENCES locations(id),"
         "  to_location_id INTEGER REFERENCES locations(id),"
-        "  distance_nm REAL"
+        "  distance_nm REAL,"
+        "  crosses_land INTEGER DEFAULT 0,"  /* 1 if direct route crosses land, 0 otherwise */
+        "  waypoint_path TEXT"               /* JSON array of waypoint location IDs used (NULL if direct) */
         ");";
 
     rc = sqlite3_exec(db, sql_schema, NULL, NULL, &err_msg);
@@ -516,7 +549,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     }
 
     /* Compute distance matrix for all non-waypoint locations */
-    int dist_rc = compute_and_store_distances(db, island_bin_path);
+    int dist_rc = compute_and_store_distances(db);
 
     if (dist_rc == SQLITE_OK) {
         printf("  ✓ Distance matrix computed successfully\n");

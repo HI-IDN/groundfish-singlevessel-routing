@@ -87,11 +87,23 @@ double *load_island_bin(const char *fname, int *out_n) {
         MAP[0].LonDeg[0][i] = (double)land_data[MAP[0].N[0] + i];
     }
 
-    /* Set Iceland bounds for land crossing checks */
-    MAP[0].MAXLON = -4;
-    MAP[0].MAXLAT = 70;
-    MAP[0].MINLAT = 60;
-    MAP[0].MINLON = -32;
+    /* Compute actual Iceland bounds from polygon data */
+    MAP[0].MINLAT = MAP[0].MAXLAT = MAP[0].LatDeg[0][0];
+    MAP[0].MINLON = MAP[0].MAXLON = MAP[0].LonDeg[0][0];
+
+    for (i = 1; i < MAP[0].N[0]; i++) {
+        double lat = MAP[0].LatDeg[0][i];
+        double lon = MAP[0].LonDeg[0][i];
+
+        if (lat < MAP[0].MINLAT) MAP[0].MINLAT = lat;
+        if (lat > MAP[0].MAXLAT) MAP[0].MAXLAT = lat;
+        if (lon < MAP[0].MINLON) MAP[0].MINLON = lon;
+        if (lon > MAP[0].MAXLON) MAP[0].MAXLON = lon;
+    }
+
+    printf("  Iceland bounding box: Lat [%.2f, %.2f], Lon [%.2f, %.2f]\n",
+           MAP[0].MINLAT, MAP[0].MAXLAT, MAP[0].MINLON, MAP[0].MAXLON);
+
 
     /* Convert and return as double array */
     double *land = (double*)malloc((size_t)numElements * sizeof(double));
@@ -195,23 +207,52 @@ int import_coastline_to_db(sqlite3 *db, const char *island_bin_path) {
 
 /* Load island polygon data from database (stub - needs MAP structure access) */
 double *load_coastline_from_db(sqlite3 *db, int *out_n) {
-    /* Count coastline points */
-    const char *count_sql = "SELECT COUNT(*) FROM coastline;";
-    sqlite3_stmt *count_stmt;
+    /* Get bounding box and count in one query */
+    const char *bounds_sql =
+        "SELECT COUNT(*), MIN(lat), MAX(lat), MIN(lon), MAX(lon) FROM coastline;";
+    sqlite3_stmt *bounds_stmt;
 
-    if (sqlite3_prepare_v2(db, count_sql, -1, &count_stmt, NULL) != SQLITE_OK) {
-        fprintf(stderr, "Error: Failed to query coastline count\n");
+    if (sqlite3_prepare_v2(db, bounds_sql, -1, &bounds_stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Error: Failed to query coastline bounds\n");
         return NULL;
     }
 
     int num_points = 0;
-    if (sqlite3_step(count_stmt) == SQLITE_ROW) {
-        num_points = sqlite3_column_int(count_stmt, 0);
+    double min_lat, max_lat, min_lon, max_lon;
+
+    if (sqlite3_step(bounds_stmt) == SQLITE_ROW) {
+        num_points = sqlite3_column_int(bounds_stmt, 0);
+        min_lat = sqlite3_column_double(bounds_stmt, 1);
+        max_lat = sqlite3_column_double(bounds_stmt, 2);
+        min_lon = sqlite3_column_double(bounds_stmt, 3);
+        max_lon = sqlite3_column_double(bounds_stmt, 4);
     }
-    sqlite3_finalize(count_stmt);
+    sqlite3_finalize(bounds_stmt);
 
     if (num_points == 0) {
         fprintf(stderr, "Error: No coastline data in database\n");
+        return NULL;
+    }
+
+    /* Set MAP bounding box (no margin - exact bounds) */
+    MAP[0].MINLAT = min_lat;
+    MAP[0].MAXLAT = max_lat;
+    MAP[0].MINLON = min_lon;
+    MAP[0].MAXLON = max_lon;
+
+    printf("  Iceland bounding box: Lat [%.2f, %.2f], Lon [%.2f, %.2f]\n",
+           MAP[0].MINLAT, MAP[0].MAXLAT, MAP[0].MINLON, MAP[0].MAXLON);
+
+    /* Initialize MAP structure */
+    MAP[0].n = 1;
+    MAP[0].N[0] = num_points;
+    MAP[0].LatDeg[0] = (double*)malloc((size_t)num_points * sizeof(double));
+    MAP[0].LonDeg[0] = (double*)malloc((size_t)num_points * sizeof(double));
+
+    if (!MAP[0].LatDeg[0] || !MAP[0].LonDeg[0]) {
+        fprintf(stderr, "Error: Memory allocation failed for MAP\n");
+        free(MAP[0].LatDeg[0]);
+        free(MAP[0].LonDeg[0]);
         return NULL;
     }
 
@@ -221,6 +262,8 @@ double *load_coastline_from_db(sqlite3 *db, int *out_n) {
 
     if (sqlite3_prepare_v2(db, query_sql, -1, &stmt, NULL) != SQLITE_OK) {
         fprintf(stderr, "Error: Failed to query coastline data\n");
+        free(MAP[0].LatDeg[0]);
+        free(MAP[0].LonDeg[0]);
         return NULL;
     }
 
@@ -229,13 +272,23 @@ double *load_coastline_from_db(sqlite3 *db, int *out_n) {
     if (!land) {
         fprintf(stderr, "Error: Memory allocation failed\n");
         sqlite3_finalize(stmt);
+        free(MAP[0].LatDeg[0]);
+        free(MAP[0].LonDeg[0]);
         return NULL;
     }
 
     int i = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        land[i] = sqlite3_column_double(stmt, 0);                    /* lat */
-        land[num_points + i] = sqlite3_column_double(stmt, 1);       /* lon */
+        double lat = sqlite3_column_double(stmt, 0);
+        double lon = sqlite3_column_double(stmt, 1);
+
+        land[i] = lat;
+        land[num_points + i] = lon;
+
+        /* Also populate MAP structure for distance_link */
+        MAP[0].LatDeg[0][i] = lat;
+        MAP[0].LonDeg[0][i] = lon;
+
         i++;
     }
     sqlite3_finalize(stmt);

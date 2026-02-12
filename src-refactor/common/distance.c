@@ -122,7 +122,7 @@ static int iMAP = 0;
  * ...existing code...
  */
 int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
-                            const char *island_bin_path, double **out_dist) {
+                            double **out_dist) {
     if (n_locs <= 0 || !latlon_rad || !types || !out_dist) {
         fprintf(stderr, "Error: Invalid parameters to compute_distance_matrix\n");
         return -1;
@@ -130,16 +130,9 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
 
     printf("  → Computing %d×%d distance matrix\n", n_locs, n_locs);
 
-    /* Load island.bin for land contours */
-    int n_land = 0;
-    double *land = NULL;
-    if (island_bin_path) {
-        land = load_island_bin(island_bin_path, &n_land);
-        if (!land) {
-            fprintf(stderr, "  ✗ Failed to load island.bin\n");
-            return -1;
-        }
-        printf("  ✓ Loaded island.bin: %d land polygon points\n", n_land);
+    /* MAP structure should already be initialized by caller (via load_coastline_from_db or load_island_bin) */
+    if (MAP[0].N[0] <= 0 || !MAP[0].LatDeg[0] || !MAP[0].LonDeg[0]) {
+        fprintf(stderr, "  ⚠ Warning: MAP not initialized - land-crossing detection disabled\n");
     }
 
     /* Allocate distance and feasibility matrices */
@@ -165,7 +158,6 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
         fprintf(stderr, "  ✗ distance_link failed (error %d)\n", rc);
         free(D);
         free(F);
-        if (land) free(land);
         return -1;
     }
 
@@ -173,7 +165,7 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
 
     /* Cleanup and return */
     free(F);
-    if (land) free(land);
+    /* Note: MAP structure is global and managed by caller, don't free here */
 
     *out_dist = D;  /* Caller must free */
     return 0;
@@ -205,18 +197,55 @@ static double arc_distance(double lat1, double lon1, double lat2, double lon2) {
     return 6371.0 * c;  /* Earth radius in km */
 }
 
+/* Line segment intersection helper */
+static int ccw(double ax, double ay, double bx, double by, double cx, double cy) {
+    return (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
+}
 
-/* Check if line segment crosses land polygon */
-static int crosses_land(double x1, double y1, double x2, double y2,
-                       double *LatDeg __attribute__((unused)),
-                       double *LonDeg __attribute__((unused)),
-                       int n __attribute__((unused))) {
-    /* Simple check: if entirely within Iceland bounds, check for intersection */
-    if (x1 > MAP[0].MAXLAT || x2 > MAP[0].MAXLAT) return 1;
-    if (x1 < MAP[0].MINLAT || x2 < MAP[0].MINLAT) return 1;
-    if (y1 > MAP[0].MAXLON || y2 > MAP[0].MAXLON) return 1;
-    if (y1 < MAP[0].MINLON || y2 < MAP[0].MINLON) return 1;
-    return 1;  /* Assume no crossing for now - simplified */
+static int segments_intersect(double x1, double y1, double x2, double y2,
+                              double x3, double y3, double x4, double y4) {
+    /* Check if line segment (x1,y1)-(x2,y2) intersects with (x3,y3)-(x4,y4) */
+    return (ccw(x1,y1,x3,y3,x4,y4) != ccw(x2,y2,x3,y3,x4,y4)) &&
+           (ccw(x1,y1,x2,y2,x3,y3) != ccw(x1,y1,x2,y2,x4,y4));
+}
+
+/* Check if line segment crosses land
+ *
+ * Quick filter: if both endpoints are outside the Iceland bbox, treat as safe.
+ * If either endpoint is inside, confirm by polygon edge intersection.
+ *
+ * Returns: 1 if crosses land (infeasible), 0 if safe.
+ */
+static int crosses_land(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg,
+                        const double *LatDeg, const double *LonDeg, int n) {
+
+    if (!LatDeg || !LonDeg || n < 3) return 0;
+
+    double min_lat = MAP[iMAP].MINLAT;
+    double max_lat = MAP[iMAP].MAXLAT;
+    double min_lon = MAP[iMAP].MINLON;
+    double max_lon = MAP[iMAP].MAXLON;
+
+    int p1_inside_bbox = (lat1_deg >= min_lat && lat1_deg <= max_lat &&
+                          lon1_deg >= min_lon && lon1_deg <= max_lon);
+    int p2_inside_bbox = (lat2_deg >= min_lat && lat2_deg <= max_lat &&
+                          lon2_deg >= min_lon && lon2_deg <= max_lon);
+
+    /* If both endpoints are outside, skip polygon check. */
+    if (!p1_inside_bbox && !p2_inside_bbox) {
+        return 0;
+    }
+
+    /* Either endpoint inside => confirm with polygon edge intersection. */
+    for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n;
+        if (segments_intersect(lat1_deg, lon1_deg, lat2_deg, lon2_deg,
+                               LatDeg[i], LonDeg[i], LatDeg[j], LonDeg[j])) {
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 /* Dijkstra's algorithm */
@@ -269,43 +298,105 @@ static int create_feasibility_matrix(PARAMS params) {
     double *LatDeg = MAP[iMAP].LatDeg[0];
     double *LonDeg = MAP[iMAP].LonDeg[0];
 
+    printf("  → Checking land crossings for %d locations...\n", m);
+
     /* Set diagonal to 1 (feasible) - COLUMN-MAJOR: F[i + M*i] */
     for (i = 0; i < M; i++) {
         F[i + M*i] = 1;
     }
 
+    /* Precompute deg coords and bbox-inside flags for each location start/end */
+    double min_lat = MAP[iMAP].MINLAT;
+    double max_lat = MAP[iMAP].MAXLAT;
+    double min_lon = MAP[iMAP].MINLON;
+    double max_lon = MAP[iMAP].MAXLON;
+
+    double *lat_s = (double*)xmalloc((size_t)m * sizeof(double));
+    double *lon_s = (double*)xmalloc((size_t)m * sizeof(double));
+    double *lat_e = (double*)xmalloc((size_t)m * sizeof(double));
+    double *lon_e = (double*)xmalloc((size_t)m * sizeof(double));
+    unsigned char *bbox_s = (unsigned char*)xcalloc((size_t)m, sizeof(unsigned char));
+    unsigned char *bbox_e = (unsigned char*)xcalloc((size_t)m, sizeof(unsigned char));
+
+    for (i = 0; i < m; i++) {
+        lat_s[i] = rad_to_deg(params.LatLonRad[0][i]);
+        lon_s[i] = rad_to_deg(params.LatLonRad[1][i]);
+        lat_e[i] = rad_to_deg(params.LatLonRad[2][i]);
+        lon_e[i] = rad_to_deg(params.LatLonRad[3][i]);
+
+        bbox_s[i] = (lat_s[i] >= min_lat && lat_s[i] <= max_lat &&
+                     lon_s[i] >= min_lon && lon_s[i] <= max_lon) ? 1 : 0;
+        bbox_e[i] = (lat_e[i] >= min_lat && lat_e[i] <= max_lat &&
+                     lon_e[i] >= min_lon && lon_e[i] <= max_lon) ? 1 : 0;
+    }
+
+    int pairs_checked = 0;
+    int land_crossings = 0;
+
+    /* Upper-triangle only: j starts at i+1 to avoid duplicate work.
+     * We set both (i,j) and (j,i) for symmetry on each update. */
     for (i = 0; i < m; i++) {
         for (j = i + 1; j < m; j++) {
+            /* Pair 1: start-start */
+            if (!bbox_s[i] && !bbox_s[j]) {
+                k = 0;
+            } else {
+                x1 = lat_s[i]; y1 = lon_s[i];
+                x2 = lat_s[j]; y2 = lon_s[j];
+                k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
+            }
+            if (k) land_crossings++;
+            F[(2*i)+M*(2*j)] = !k; F[(2*j)+M*(2*i)] = !k;
 
-            x1 = rad_to_deg(params.LatLonRad[0][i]);
-            y1 = rad_to_deg(params.LatLonRad[1][i]);
-            x2 = rad_to_deg(params.LatLonRad[0][j]);
-            y2 = rad_to_deg(params.LatLonRad[1][j]);
-            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            F[(2*i)+M*(2*j)] = k; F[(2*j)+M*(2*i)] = k;
+            /* Pair 2: start-end */
+            if (!bbox_s[i] && !bbox_e[j]) {
+                k = 0;
+            } else {
+                x1 = lat_s[i]; y1 = lon_s[i];
+                x2 = lat_e[j]; y2 = lon_e[j];
+                k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
+            }
+            if (k) land_crossings++;
+            F[(2*i)+M*(2*j+1)] = !k; F[(2*j+1)+M*(2*i)] = !k;
 
-            x1 = rad_to_deg(params.LatLonRad[0][i]);
-            y1 = rad_to_deg(params.LatLonRad[1][i]);
-            x2 = rad_to_deg(params.LatLonRad[2][j]);
-            y2 = rad_to_deg(params.LatLonRad[3][j]);
-            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            F[(2*i)+M*(2*j+1)] = k; F[(2*j+1)+M*(2*i)] = k;
+            /* Pair 3: end-start */
+            if (!bbox_e[i] && !bbox_s[j]) {
+                k = 0;
+            } else {
+                x1 = lat_e[i]; y1 = lon_e[i];
+                x2 = lat_s[j]; y2 = lon_s[j];
+                k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
+            }
+            if (k) land_crossings++;
+            F[(2*i+1)+M*(2*j)] = !k; F[(2*j)+M*(2*i+1)] = !k;
 
-            x1 = rad_to_deg(params.LatLonRad[2][i]);
-            y1 = rad_to_deg(params.LatLonRad[3][i]);
-            x2 = rad_to_deg(params.LatLonRad[0][j]);
-            y2 = rad_to_deg(params.LatLonRad[1][j]);
-            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            F[(2*i+1)+M*(2*j)] = k; F[(2*j)+M*(2*i+1)] = k;
+            /* Pair 4: end-end */
+            if (!bbox_e[i] && !bbox_e[j]) {
+                k = 0;
+            } else {
+                x1 = lat_e[i]; y1 = lon_e[i];
+                x2 = lat_e[j]; y2 = lon_e[j];
+                k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
+            }
+            if (k) land_crossings++;
+            F[(2*i+1)+M*(2*j+1)] = !k; F[(2*j+1)+M*(2*i+1)] = !k;
 
-            x1 = rad_to_deg(params.LatLonRad[2][i]);
-            y1 = rad_to_deg(params.LatLonRad[3][i]);
-            x2 = rad_to_deg(params.LatLonRad[2][j]);
-            y2 = rad_to_deg(params.LatLonRad[3][j]);
-            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            F[(2*i+1)+M*(2*j+1)] = k; F[(2*j+1)+M*(2*i+1)] = k;
+            pairs_checked++;
         }
     }
+
+    free(lat_s);
+    free(lon_s);
+    free(lat_e);
+    free(lon_e);
+    free(bbox_s);
+    free(bbox_e);
+
+    int total_routes = pairs_checked * 4;
+    printf("  ✓ Land-crossing check: %d crossings detected (%.1f%% of %d route pairs)\n",
+           land_crossings, (100.0 * land_crossings) / total_routes, total_routes);
+    fflush(stdout);
+
     return 0;
 }
 
@@ -318,11 +409,16 @@ static void create_distance_matrix(PARAMS params) {
     double* D = params.DistMtrx;
     double* G = params.Graph;
 
+    printf("  → Computing haversine distances...\n");
+
     /* Set diagonal to 0 - COLUMN-MAJOR: D[i + M*i] */
     for (i = 0; i < M; i++)
         D[i+M*i] = 0.0;
 
-    /* Calculate distances between all location pairs */
+    int dijkstra_routes = 0;
+    int infeasible_links = 0;
+
+    /* Calculate distances between all location pairs (fast) */
     for (i = 0; i < m; i++) {
         for (j = i + 1; j < m; j++) {
             x1 = params.LatLonRad[0][i];
@@ -330,8 +426,10 @@ static void create_distance_matrix(PARAMS params) {
             x2 = params.LatLonRad[0][j];
             y2 = params.LatLonRad[1][j];
             d = arc_distance(x1, y1, x2, y2);
-            if (F[(2*i)+(2*j)*M] == 0)
+            if (F[(2*i)+(2*j)*M] == 0) {
                 d += INFEASIBLE_LINK_PENALTY;
+                infeasible_links++;
+            }
             D[(2*i)+(2*j)*M] = d;
             D[(2*j)+(2*i)*M] = d;
 
@@ -340,8 +438,10 @@ static void create_distance_matrix(PARAMS params) {
             x2 = params.LatLonRad[2][j];
             y2 = params.LatLonRad[3][j];
             d = arc_distance(x1, y1, x2, y2);
-            if (F[(2*i)+(2*j+1)*M] == 0)
+            if (F[(2*i)+(2*j+1)*M] == 0) {
                 d += INFEASIBLE_LINK_PENALTY;
+                infeasible_links++;
+            }
             D[(2*i)+(2*j+1)*M] = d;
             D[(2*j+1)+(2*i)*M] = d;
 
@@ -350,8 +450,10 @@ static void create_distance_matrix(PARAMS params) {
             x2 = params.LatLonRad[0][j];
             y2 = params.LatLonRad[1][j];
             d = arc_distance(x1, y1, x2, y2);
-            if (F[(2*i+1)+(2*j)*M] == 0)
+            if (F[(2*i+1)+(2*j)*M] == 0) {
                 d += INFEASIBLE_LINK_PENALTY;
+                infeasible_links++;
+            }
             D[(2*i+1)+(2*j)*M] = d;
             D[(2*j)+(2*i+1)*M] = d;
 
@@ -360,40 +462,66 @@ static void create_distance_matrix(PARAMS params) {
             x2 = params.LatLonRad[2][j];
             y2 = params.LatLonRad[3][j];
             d = arc_distance(x1, y1, x2, y2);
-            if (F[(2*i+1)+(2*j+1)*M] == 0)
+            if (F[(2*i+1)+(2*j+1)*M] == 0) {
                 d += INFEASIBLE_LINK_PENALTY;
+                infeasible_links++;
+            }
             D[(2*i+1)+(2*j+1)*M] = d;
             D[(2*j+1)+(2*i+1)*M] = d;
         }
     }
 
+    printf("  → Infeasible links flagged for Dijkstra: %d\n", infeasible_links);
+    fflush(stdout);
+
+    if (infeasible_links == 0) {
+        printf("  ✓ No infeasible links; skipping Dijkstra.\n");
+        fflush(stdout);
+        return;
+    }
+
     memcpy(G, D, M*M*sizeof(double));
 
-    /* Apply Dijkstra routing for infeasible links */
+    printf("  → Computing Dijkstra waypoint routes (this may take a while)...\n");
+    fflush(stdout);
+
+    /* Apply Dijkstra routing for infeasible links (slow - needs progress) */
     for (i = 0; i < m; i++) {
+        /* Progress logging every 100 locations for slow Dijkstra phase */
+        if (i > 0 && i % 100 == 0) {
+            printf("    Dijkstra: %d/%d locations (%.1f%%) - %d waypoint routes computed\n",
+                   i, m, (100.0 * i) / m, dijkstra_routes);
+        }
+
         for (j = i + 1; j < m; j++) {
             if (F[(2*i)+(2*j)*M] == 0) {
                 d = dijkstra_dist_(G, M, 2*i, 2*j);
                 D[(2*i)+(2*j)*M] = d;
                 D[(2*j)+(2*i)*M] = d;
+                dijkstra_routes++;
             }
             if (F[(2*i)+(2*j+1)*M] == 0) {
                 d = dijkstra_dist_(G, M, 2*i, 2*j+1);
                 D[(2*i)+(2*j+1)*M] = d;
                 D[(2*j+1)+(2*i)*M] = d;
+                dijkstra_routes++;
             }
             if (F[(2*i+1)+(2*j)*M] == 0) {
                 d = dijkstra_dist_(G, M, 2*i+1, 2*j);
                 D[(2*i+1)+(2*j)*M] = d;
                 D[(2*j)+(2*i+1)*M] = d;
+                dijkstra_routes++;
             }
             if (F[(2*i+1)+(2*j+1)*M] == 0) {
                 d = dijkstra_dist_(G, M, 2*i+1, 2*j+1);
                 D[(2*i+1)+(2*j+1)*M] = d;
                 D[(2*j+1)+(2*i+1)*M] = d;
+                dijkstra_routes++;
             }
         }
     }
+
+    printf("  ✓ Distance matrix complete: %d waypoint routes via Dijkstra\n", dijkstra_routes);
 }
 
 /* Main distance_link function */

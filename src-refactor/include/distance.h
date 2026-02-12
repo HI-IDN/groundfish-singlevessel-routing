@@ -40,17 +40,17 @@ void build_waypoint_dist(const location_data *ex,
 
 /**
  * Compute distance matrix for locations using waypoint-aware Dijkstra routing
- * Pure computation function - no database operations
+ * Note: MAP structure must be initialized first (via load_coastline_from_db or load_island_bin)
+ *       which sets the bounding box using SQL MIN/MAX or data scan
  *
  * @param n_locs          Number of locations (excluding waypoints)
  * @param latlon_rad      Array of lat/lon in radians [4][n_locs]
  * @param types           Array of location types
- * @param island_bin_path Path to island.bin file
  * @param out_dist        Output distance matrix [n_locs * n_locs] (caller must free)
  * @return 0 on success, -1 on error
  */
 int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
-                            const char *island_bin_path, double **out_dist);
+                            double **out_dist);
 
 #endif
 
