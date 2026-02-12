@@ -1,0 +1,62 @@
+# GSP Solver Configuration
+# Groundfish Survey Routing Optimization
+
+# Default boat configuration
+boat:
+  id: 2                                  # Árnì Friðriksson (boat_id in database)
+  name: "Árni Friðriksson"
+
+# Phase 0: Initialization Strategies
+init:
+  strategies:
+    - opt                                # OPT: Optimal NP-MIP (expensive)
+    - nn                                 # NN: Nearest Neighbor (fast)
+    - ge                                 # GE: Greedy Edge (fast)
+    - ci                                 # CI: Cheapest Insertion (moderate)
+
+  opt:
+    # NP-MIP solution mapped to a legal capacity feasible tour
+    time_limit_seconds: 7200             # 2 hours
+
+  nn:
+    # Nearest Neighbor - greedy heuristic, no time limit needed
+    time_limit_seconds: 0
+
+  ge:
+    # Greedy Edge - construction heuristic, no time limit needed
+    time_limit_seconds: 0
+
+  ci:
+    # Cheapest Insertion - construction heuristic, no time limit needed
+    time_limit_seconds: 0
+
+# Phase 1: Matheuristic Sweep Parameters
+sweep:
+  # L2SEG: segment length in stations
+  l2seg_values: [60, 120, 180, 240, 300, 360, 420, 480]
+
+  # L1SEG: time limit per segment MIP solve (in seconds)
+  l1seg: 0                               # 0 = no time limit (per-segment TSP is pure TSP, no capacity)
+
+  # Iteration control
+  max_iterations: 100                    # Maximum iterations per L2SEG sweep
+  max_stall_iterations: 20               # Stop if no improvement for N iterations
+  log_interval: 1                        # Log every iteration
+
+# Gurobi Solver Settings
+gurobi:
+  env_log_file: null                     # null=no log file, or path like "log/gurobi.log"
+  threads: 0                             # 0=auto-detect, >0=fixed thread count
+  mip_focus: 0                           # 0=balanced, 1=feasible, 2=optimal, 3=best_bound
+  seed: -1                               # -1=random, >=0=fixed seed for reproducibility
+
+# Database Configuration
+database:
+  path: "dat/gsp_data.db"                # Path to SQLite database
+  auto_create_schema: true               # Auto-create tables if not exist
+
+# Output and Logging
+output:
+  verbose: true                          # Verbose stdout logging
+  json_format: true                      # Output results as JSON
+
