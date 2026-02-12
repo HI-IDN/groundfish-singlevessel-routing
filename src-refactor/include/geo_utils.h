@@ -1,6 +1,7 @@
 #ifndef GSP_GEO_UTILS_H
 #define GSP_GEO_UTILS_H
 
+#include <math.h>
 #include "constants.h"
 
 /**
@@ -85,8 +86,80 @@ static inline double degmin_to_rad_lon(int degmin_int) {
     return deg_to_rad(degmin_to_deg_lon(degmin_int));
 }
 
+/**
+ * Mercator projection for Iceland (~65°N, ~18°W)
+ *
+ * Projects lat/lon coordinates to 2D Mercator coordinates for accurate
+ * geometric operations at high latitudes. Critical for Iceland where
+ * longitude lines converge significantly.
+ *
+ * @param x Output array for projected x coordinates
+ * @param y Output array for projected y coordinates
+ * @param Lat Input latitude array (decimal degrees)
+ * @param Lon Input longitude array (decimal degrees, negative for west)
+ * @param length Number of points to project
+ * @param MINLAT Map minimum latitude
+ * @param MAXLAT Map maximum latitude
+ */
+static inline void mercator_project(double *x, double *y, const double *Lat, const double *Lon,
+                                     int length, double MINLAT, double MAXLAT) {
+    double lat65, x65, M, M65, Diff, lat, scale, lon;
+
+    /* Reference point at 65°N, 18°W (Iceland's approximate center) */
+    lat65 = 65.0 * PI / 180.0;
+    x65 = (111415.13*cos(lat65) - 94.55*cos(3*lat65) + 0.12*cos(5*lat65)) / 60.0;
+    M65 = 7915.704456*log10(tan(PI/4 + lat65/2))
+          - sin(lat65)*(23.110771 + 0.052051*sin(lat65)*sin(lat65));
+
+    /* Automatic scaling based on map bounds */
+    lat = MAXLAT * PI / 180.0;
+    M = 7915.704456*log10(tan(PI/4 + lat/2))
+        - sin(lat)*(23.110771 + 0.052051*sin(lat)*sin(lat));
+    Diff = M - M65;
+
+    lat = MINLAT * PI / 180.0;
+    M = 7915.704456*log10(tan(PI/4 + lat/2))
+        - sin(lat)*(23.110771 + 0.052051*sin(lat)*sin(lat));
+    Diff = Diff + M65 - M;
+
+    scale = 1000000.0 / (Diff * x65);
+    x65 = scale * x65;
+
+    /* Project each point */
+    for (int i = 0; i < length; i++) {
+        lon = Lon[i];
+        lat = Lat[i] * PI / 180.0;
+        M = 7915.704456*log10(tan(PI/4 + lat/2))
+            - sin(lat)*(23.110771 + 0.052051*sin(lat)*sin(lat));
+        Diff = M65 - M;
+        y[i] = (int)(Diff * x65);
+        x[i] = (int)((lon + 18.0) * x65 * 60.0);  /* Offset by 18° for Iceland */
+    }
+}
+
+/**
+ * Segment intersection test in projected coordinates
+ *
+ * Tests if two line segments intersect using cross products.
+ * Works in Mercator-projected coordinate space.
+ *
+ * @param s0x X coordinates of first segment [start, end]
+ * @param s0y Y coordinates of first segment [start, end]
+ * @param s1x X coordinates of second segment [start, end]
+ * @param s1y Y coordinates of second segment [start, end]
+ * @return 1 if segments intersect, 0 otherwise
+ */
+static inline int segments_intersect_mercator(double s0x[2], double s0y[2],
+                                              double s1x[2], double s1y[2]) {
+    double dx0 = s0x[1] - s0x[0];
+    double dx1 = s1x[1] - s1x[0];
+    double dy0 = s0y[1] - s0y[0];
+    double dy1 = s1y[1] - s1y[0];
+    double p0 = dy1 * (s1x[1] - s0x[0]) - dx1 * (s1y[1] - s0y[0]);
+    double p1 = dy1 * (s1x[1] - s0x[1]) - dx1 * (s1y[1] - s0y[1]);
+    double p2 = dy0 * (s0x[1] - s1x[0]) - dx0 * (s0y[1] - s1y[0]);
+    double p3 = dy0 * (s0x[1] - s1x[1]) - dx0 * (s0y[1] - s1y[1]);
+    return ((p0 * p1 <= 0) && (p2 * p3 <= 0));
+}
 
 #endif /* GSP_GEO_UTILS_H */
-
-
-

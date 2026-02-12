@@ -197,55 +197,36 @@ static double arc_distance(double lat1, double lon1, double lat2, double lon2) {
     return 6371.0 * c;  /* Earth radius in km */
 }
 
-/* Line segment intersection helper */
-static int ccw(double ax, double ay, double bx, double by, double cx, double cy) {
-    return (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
-}
-
-static int segments_intersect(double x1, double y1, double x2, double y2,
-                              double x3, double y3, double x4, double y4) {
-    /* Check if line segment (x1,y1)-(x2,y2) intersects with (x3,y3)-(x4,y4) */
-    return (ccw(x1,y1,x3,y3,x4,y4) != ccw(x2,y2,x3,y3,x4,y4)) &&
-           (ccw(x1,y1,x2,y2,x3,y3) != ccw(x1,y1,x2,y2,x4,y4));
-}
-
-/* Check if line segment crosses land
+/* Check if line segment crosses land using Mercator projection
  *
- * Quick filter: if both endpoints are outside the Iceland bbox, treat as safe.
- * If either endpoint is inside, confirm by polygon edge intersection.
+ * Uses Mercator projection for accurate geometry at high latitudes (~65°N).
+ * Critical for Iceland where longitude lines converge significantly.
  *
- * Returns: 1 if crosses land (infeasible), 0 if safe.
+ * Returns: 1 if crosses land (infeasible), 0 if doesn't cross (feasible)
  */
 static int crosses_land(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg,
                         const double *LatDeg, const double *LonDeg, int n) {
-
     if (!LatDeg || !LonDeg || n < 3) return 0;
 
-    double min_lat = MAP[iMAP].MINLAT;
-    double max_lat = MAP[iMAP].MAXLAT;
-    double min_lon = MAP[iMAP].MINLON;
-    double max_lon = MAP[iMAP].MAXLON;
+    /* Project route segment to Mercator coordinates */
+    double lat_arr[2] = {lat1_deg, lat2_deg};
+    double lon_arr[2] = {lon1_deg, lon2_deg};
+    double s0x[2], s0y[2];
+    mercator_project(s0x, s0y, lat_arr, lon_arr, 2, MAP[iMAP].MINLAT, MAP[iMAP].MAXLAT);
 
-    int p1_inside_bbox = (lat1_deg >= min_lat && lat1_deg <= max_lat &&
-                          lon1_deg >= min_lon && lon1_deg <= max_lon);
-    int p2_inside_bbox = (lat2_deg >= min_lat && lat2_deg <= max_lat &&
-                          lon2_deg >= min_lon && lon2_deg <= max_lon);
+    /* Check intersection with each coastline segment */
+    for (int i = 0; i < n - 1; i++) {
+        double lat_coast[2] = {LatDeg[i], LatDeg[i+1]};
+        double lon_coast[2] = {LonDeg[i], LonDeg[i+1]};
+        double s1x[2], s1y[2];
+        mercator_project(s1x, s1y, lat_coast, lon_coast, 2, MAP[iMAP].MINLAT, MAP[iMAP].MAXLAT);
 
-    /* If both endpoints are outside, skip polygon check. */
-    if (!p1_inside_bbox && !p2_inside_bbox) {
-        return 0;
-    }
-
-    /* Either endpoint inside => confirm with polygon edge intersection. */
-    for (int i = 0; i < n; i++) {
-        int j = (i + 1) % n;
-        if (segments_intersect(lat1_deg, lon1_deg, lat2_deg, lon2_deg,
-                               LatDeg[i], LonDeg[i], LatDeg[j], LonDeg[j])) {
-            return 1;
+        if (segments_intersect_mercator(s0x, s0y, s1x, s1y)) {
+            return 1;  /* Crosses land */
         }
     }
 
-    return 0;
+    return 0;  /* Doesn't cross land */
 }
 
 /* Dijkstra's algorithm */
