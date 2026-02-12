@@ -3,6 +3,9 @@ project(GSP_Common C)
 
 set(CMAKE_C_STANDARD 11)
 
+# Disable automatic dependency tracking to avoid Windows path issues
+set(CMAKE_DEPENDS_USE_COMPILER FALSE)
+
 # Compiler flags
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
 

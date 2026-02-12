@@ -9,6 +9,9 @@ endif()
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Disable automatic dependency tracking to avoid Windows path issues
+set(CMAKE_DEPENDS_USE_COMPILER FALSE)
+
 # Build type
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
