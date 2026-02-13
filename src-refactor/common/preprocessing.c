@@ -81,12 +81,12 @@ static void parse_station_comment(const char *raw_comment, int *depth_thrown, in
  */
 static int compute_and_store_distances(sqlite3 *db) {
     printf("\n=== Computing Distance Matrix ===\n");
-    printf("  Computing distances for all non-waypoint locations\n");
-    printf("  Using Dijkstra routing with coastline from database\n");
+    printf("  Computing distances with Dijkstra waypoint routing\n");
+    printf("  Loading ALL locations (including waypoints for routing)\n");
 
-    /* Query all non-waypoint locations */
+    /* Query ALL locations (including waypoints for Dijkstra routing) */
     const char *query_sql =
-        "SELECT id, lat, lon, type FROM locations WHERE type != ? ORDER BY id;";
+        "SELECT id, lat, lon, type FROM locations ORDER BY id;";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db, query_sql, -1, &stmt, NULL);
@@ -95,23 +95,28 @@ static int compute_and_store_distances(sqlite3 *db) {
         return rc;
     }
 
-    sqlite3_bind_int(stmt, 1, NODE_TYPE_WAYPOINT);
+    /* No binding needed - query has no parameters */
 
     /* Count locations */
     int n = 0;
+    int n_waypoints = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int type = sqlite3_column_int(stmt, 3);
+        if (type == NODE_TYPE_WAYPOINT) n_waypoints++;
         n++;
     }
     sqlite3_reset(stmt);
 
     if (n == 0) {
-        fprintf(stderr, "  ✗ No non-waypoint locations found\n");
+        fprintf(stderr, "  ✗ No locations found\n");
         sqlite3_finalize(stmt);
         return SQLITE_ERROR;
     }
 
-    printf("  ✓ Found %d non-waypoint locations\n", n);
-    printf("  → Will compute %d distance pairs (%d×%d matrix)\n", n*n, n, n);
+    printf("  ✓ Found %d total locations (%d waypoints, %d for routing)\n",
+           n, n_waypoints, n - n_waypoints);
+    int upper_triangle = n * (n - 1) / 2;
+    printf("  → Will compute %d upper-triangle pairs (%d×%d matrix, diagonal=0)\n", upper_triangle, n, n);
     printf("  → Allocating memory...\n");
 
     /* Allocate arrays */
@@ -124,7 +129,6 @@ static int compute_and_store_distances(sqlite3 *db) {
 
     /* Fill arrays */
     int i = 0;
-    sqlite3_bind_int(stmt, 1, NODE_TYPE_WAYPOINT);
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         loc_ids[i] = sqlite3_column_int(stmt, 0);
         double lat_deg = sqlite3_column_double(stmt, 1);  /* Database stores decimal degrees as REAL */
@@ -193,8 +197,21 @@ static int compute_and_store_distances(sqlite3 *db) {
     sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
 
     int stored = 0;
+    int skipped = 0;
     for (i = 0; i < n; i++) {
+        /* Skip if source is a waypoint */
+        if (types[i] == NODE_TYPE_WAYPOINT) {
+            skipped += n;
+            continue;
+        }
+
         for (int j = 0; j < n; j++) {
+            /* Skip if destination is a waypoint */
+            if (types[j] == NODE_TYPE_WAYPOINT) {
+                skipped++;
+                continue;
+            }
+
             double dist = (i == j) ? 0.0 : D[i * n + j];
 
             sqlite3_bind_int(insert_stmt, 1, loc_ids[i]);
@@ -221,7 +238,7 @@ static int compute_and_store_distances(sqlite3 *db) {
     sqlite3_finalize(insert_stmt);
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
 
-    printf("  ✓ Stored %d distance pairs\n", stored);
+    printf("  ✓ Stored %d distance pairs (skipped %d waypoint pairs)\n", stored, skipped);
 
     /* Cleanup */
     free(D);
@@ -296,7 +313,8 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         "  easting INT,"
         "  northing INT,"
         "  lat REAL,"
-        "  lon REAL"
+        "  lon REAL,"
+        "  UNIQUE(easting, northing)"
         ");"
 
         /* Boats table */

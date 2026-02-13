@@ -137,8 +137,8 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
     }
 
     /* Allocate distance and feasibility matrices */
-    /* distance_link uses M = 2*SelectedSize internally, so we need M*M allocation */
-    int M = 2 * n_locs;
+    /* Simple n×n matrix - each location is a single point (not start/end pair) */
+    int M = n_locs;
     size_t matrix_size = (size_t)M * (size_t)M;
 
     double *D = (double*)xcalloc(matrix_size, sizeof(double));
@@ -351,7 +351,7 @@ static int min_distance(double *dist, int *sptSet, int n) {
 }
 
 /* Dijkstra shortest path distance - works with 1D array representation */
-static double dijkstra_dist_(double *graph, int M, int src, int dest) {
+static double dijkstra_distance(double *graph, int M, int src, int dest) {
     double *dist, INFTY = DIJKSTRA_INFINITY;
     int *sptSet, i, count, u, v;
 
@@ -383,7 +383,7 @@ static double dijkstra_dist_(double *graph, int M, int src, int dest) {
 /* Create feasibility matrix - check for land crossings */
 static int create_feasibility_matrix(PARAMS params) {
     int i, j, k;
-    int m = params.SelectedSize, M = 2*params.SelectedSize;
+    int m = params.SelectedSize, M = params.SelectedSize;  /* M = m now (not 2*m) */
     double x1, y1, x2, y2;
     int *F = params.FsbleLink;
     int n = MAP[iMAP].N[0];
@@ -393,22 +393,18 @@ static int create_feasibility_matrix(PARAMS params) {
     printf("  → Checking land crossings for %d locations...\n", m);
     fflush(stdout);
 
-    /* Set diagonal to 1 (feasible) - COLUMN-MAJOR: F[i + M*i] */
+    /* Set diagonal to 1 (feasible) - COLUMN-MAJOR indexing */
     for (i = 0; i < M; i++) {
         F[i + M*i] = 1;
     }
 
-    /* Precompute degree coordinates for each location start/end */
-    double *lat_s = (double*)xmalloc((size_t)m * sizeof(double));
-    double *lon_s = (double*)xmalloc((size_t)m * sizeof(double));
-    double *lat_e = (double*)xmalloc((size_t)m * sizeof(double));
-    double *lon_e = (double*)xmalloc((size_t)m * sizeof(double));
+    /* Precompute degree coordinates for each location */
+    double *lat = (double*)xmalloc((size_t)m * sizeof(double));
+    double *lon = (double*)xmalloc((size_t)m * sizeof(double));
 
     for (i = 0; i < m; i++) {
-        lat_s[i] = rad_to_deg(params.LatLonRad[0][i]);
-        lon_s[i] = rad_to_deg(params.LatLonRad[1][i]);
-        lat_e[i] = rad_to_deg(params.LatLonRad[2][i]);
-        lon_e[i] = rad_to_deg(params.LatLonRad[3][i]);
+        lat[i] = rad_to_deg(params.LatLonRad[0][i]);
+        lon[i] = rad_to_deg(params.LatLonRad[1][i]);
     }
 
     int pairs_checked = 0;
@@ -417,57 +413,37 @@ static int create_feasibility_matrix(PARAMS params) {
     printf("  → Starting land-crossing checks (this may take several minutes)...\n");
     fflush(stdout);
 
+    int total_pairs = m * (m - 1) / 2;
+
     /* Upper-triangle only: j starts at i+1 to avoid duplicate work.
      * We set both (i,j) and (j,i) for symmetry on each update. */
     for (i = 0; i < m; i++) {
-        /* Progress reporting every 50 locations */
-        if (i > 0 && i % 50 == 0) {
-            printf("    Progress: %d/%d locations (%.1f%% - %d crossings found)\n",
-                   i, m, (100.0 * i) / m, land_crossings);
-            fflush(stdout);
-        }
-
         for (j = i + 1; j < m; j++) {
-            /* Pair 1: start-start */
-            x1 = lat_s[i]; y1 = lon_s[i];
-            x2 = lat_s[j]; y2 = lon_s[j];
+            /* Single pair: location i to location j */
+            x1 = lat[i]; y1 = lon[i];
+            x2 = lat[j]; y2 = lon[j];
             k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             if (k) land_crossings++;
-            F[(2*i)+M*(2*j)] = !k; F[(2*j)+M*(2*i)] = !k;
-
-            /* Pair 2: start-end */
-            x1 = lat_s[i]; y1 = lon_s[i];
-            x2 = lat_e[j]; y2 = lon_e[j];
-            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            if (k) land_crossings++;
-            F[(2*i)+M*(2*j+1)] = !k; F[(2*j+1)+M*(2*i)] = !k;
-
-            /* Pair 3: end-start */
-            x1 = lat_e[i]; y1 = lon_e[i];
-            x2 = lat_s[j]; y2 = lon_s[j];
-            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            if (k) land_crossings++;
-            F[(2*i+1)+M*(2*j)] = !k; F[(2*j)+M*(2*i+1)] = !k;
-
-            /* Pair 4: end-end */
-            x1 = lat_e[i]; y1 = lon_e[i];
-            x2 = lat_e[j]; y2 = lon_e[j];
-            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            if (k) land_crossings++;
-            F[(2*i+1)+M*(2*j+1)] = !k; F[(2*j+1)+M*(2*i+1)] = !k;
+            F[i + M*j] = !k;  /* COLUMN-MAJOR */
+            F[j + M*i] = !k;  /* Symmetric */
 
             pairs_checked++;
+
+            /* Pair-based progress every 50k checks */
+            if (pairs_checked % 50000 == 0 || pairs_checked == total_pairs) {
+                double pct = (100.0 * pairs_checked) / total_pairs;
+                printf("    Progress: %d/%d pairs (%.1f%%) - %d crossings found\n",
+                       pairs_checked, total_pairs, pct, land_crossings);
+                fflush(stdout);
+            }
         }
     }
 
-    free(lat_s);
-    free(lon_s);
-    free(lat_e);
-    free(lon_e);
+    free(lat);
+    free(lon);
 
-    int total_routes = pairs_checked * 4;
     printf("  ✓ Land-crossing check: %d crossings detected (%.1f%% of %d route pairs)\n",
-           land_crossings, (100.0 * land_crossings) / total_routes, total_routes);
+           land_crossings, (100.0 * land_crossings) / pairs_checked, pairs_checked);
     fflush(stdout);
 
     return 0;
@@ -475,139 +451,109 @@ static int create_feasibility_matrix(PARAMS params) {
 
 /* Create distance matrix */
 static void create_distance_matrix(PARAMS params) {
-    int i, j;
-    int m = params.SelectedSize, M = 2*params.SelectedSize;
-    double x1, y1, x2, y2, d;
-    int *F = params.FsbleLink;
-    double* D = params.DistMtrx;
-    double* G = params.Graph;
+    int i;
+    int waypoint_count = 0;
 
     printf("  → Computing haversine distances...\n");
 
-    /* Set diagonal to 0 - COLUMN-MAJOR: D[i + M*i] */
-    for (i = 0; i < M; i++)
-        D[i+M*i] = 0.0;
+    /* Set diagonal to 0 - COLUMN-MAJOR indexing */
+    for (i = 0; i < params.SelectedSize; i++)
+        params.DistMtrx[i + params.SelectedSize*i] = 0.0;
 
     int dijkstra_routes = 0;
     int infeasible_links = 0;
 
-    /* Calculate distances between all location pairs (fast) */
-    for (i = 0; i < m; i++) {
-        for (j = i + 1; j < m; j++) {
-            x1 = params.LatLonRad[0][i];
-            y1 = params.LatLonRad[1][i];
-            x2 = params.LatLonRad[0][j];
-            y2 = params.LatLonRad[1][j];
-            d = arc_distance(x1, y1, x2, y2);
-            if (F[(2*i)+(2*j)*M] == 0) {
-                d += INFEASIBLE_LINK_PENALTY;
-                infeasible_links++;
-            }
-            D[(2*i)+(2*j)*M] = d;
-            D[(2*j)+(2*i)*M] = d;
+    /* Calculate distances between all location pairs (upper triangle only) */
+    for (i = 0; i < params.SelectedSize; i++) {
+        for (int j = i + 1; j < params.SelectedSize; j++) {
+            /* Each location has one position (lat, lon) */
+            double x1 = params.LatLonRad[0][i];
+            double y1 = params.LatLonRad[1][i];
+            double x2 = params.LatLonRad[0][j];
+            double y2 = params.LatLonRad[1][j];
+            double d = arc_distance(x1, y1, x2, y2);
 
-            x1 = params.LatLonRad[0][i];
-            y1 = params.LatLonRad[1][i];
-            x2 = params.LatLonRad[2][j];
-            y2 = params.LatLonRad[3][j];
-            d = arc_distance(x1, y1, x2, y2);
-            if (F[(2*i)+(2*j+1)*M] == 0) {
+            if (params.FsbleLink[i + params.SelectedSize*j] == 0) {  /* Crosses land - COLUMN-MAJOR */
                 d += INFEASIBLE_LINK_PENALTY;
                 infeasible_links++;
             }
-            D[(2*i)+(2*j+1)*M] = d;
-            D[(2*j+1)+(2*i)*M] = d;
 
-            x1 = params.LatLonRad[2][i];
-            y1 = params.LatLonRad[3][i];
-            x2 = params.LatLonRad[0][j];
-            y2 = params.LatLonRad[1][j];
-            d = arc_distance(x1, y1, x2, y2);
-            if (F[(2*i+1)+(2*j)*M] == 0) {
-                d += INFEASIBLE_LINK_PENALTY;
-                infeasible_links++;
-            }
-            D[(2*i+1)+(2*j)*M] = d;
-            D[(2*j)+(2*i+1)*M] = d;
-
-            x1 = params.LatLonRad[2][i];
-            y1 = params.LatLonRad[3][i];
-            x2 = params.LatLonRad[2][j];
-            y2 = params.LatLonRad[3][j];
-            d = arc_distance(x1, y1, x2, y2);
-            if (F[(2*i+1)+(2*j+1)*M] == 0) {
-                d += INFEASIBLE_LINK_PENALTY;
-                infeasible_links++;
-            }
-            D[(2*i+1)+(2*j+1)*M] = d;
-            D[(2*j+1)+(2*i+1)*M] = d;
+            params.DistMtrx[i + params.SelectedSize*j] = d;        /* COLUMN-MAJOR */
+            params.DistMtrx[j + params.SelectedSize*i] = d;        /* Symmetric matrix */
         }
     }
 
-    printf("  → Infeasible links flagged: %d (%.1f%% of total)\n",
-           infeasible_links, (100.0 * infeasible_links) / (m * (m-1) * 4));
+    printf("  → Infeasible links flagged for Dijkstra: %d (%.1f%% of checked pairs)\n",
+           infeasible_links, (100.0 * infeasible_links) / (params.SelectedSize * (params.SelectedSize-1) / 2.0));
     fflush(stdout);
 
-    /* NOTE: Dijkstra waypoint routing is currently disabled because waypoints
-     * are not included in the graph. Infeasible links use penalized direct distances.
-     * TODO: Implement proper waypoint routing by including waypoints in the graph. */
-
-    printf("  ⚠ Waypoint routing disabled - using penalized direct distances for infeasible links\n");
-    printf("  ✓ Distance computation complete\n");
-    fflush(stdout);
-    return;
-
-    /* DISABLED: Dijkstra routing code below */
-    #if 0
     if (infeasible_links == 0) {
         printf("  ✓ No infeasible links; skipping Dijkstra.\n");
         fflush(stdout);
         return;
     }
 
-    memcpy(G, D, M*M*sizeof(double));
+    /* Build Dijkstra graph from feasible (non-land-crossing) haversine edges only */
+    for (i = 0; i < params.SelectedSize; i++) {
+        for (int j = i + 1; j < params.SelectedSize; j++) {
+            if (params.FsbleLink[i + params.SelectedSize*j] != 0) {
+                params.Graph[i + params.SelectedSize*j] = params.DistMtrx[i + params.SelectedSize*j];
+                params.Graph[j + params.SelectedSize*i] = params.DistMtrx[j + params.SelectedSize*i];
+            }
+        }
+    }
+
+    /* Count waypoints available in this distance matrix */
+    for (i = 0; i < params.Size; i++) {
+        if (params.Type[i] == NODE_TYPE_WAYPOINT) {
+            waypoint_count++;
+        }
+    }
 
     printf("  → Computing Dijkstra waypoint routes (this may take a while)...\n");
     fflush(stdout);
 
     /* Apply Dijkstra routing for infeasible links (slow - needs progress) */
-    for (i = 0; i < m; i++) {
-        /* Progress logging every 100 locations for slow Dijkstra phase */
-        if (i > 0 && i % 100 == 0) {
-            printf("    Dijkstra: %d/%d locations (%.1f%%) - %d waypoint routes computed\n",
-                   i, m, (100.0 * i) / m, dijkstra_routes);
+    int dijkstra_pairs_checked = 0;
+    int dijkstra_failed = 0;
+
+    for (i = 0; i < params.SelectedSize; i++) {
+        /* Progress bar every 50 locations */
+        if (i > 0 && i % 50 == 0) {
+            int percent = (100 * dijkstra_pairs_checked) / infeasible_links;
+            if (percent > 100) percent = 100;
+            printf("    [");
+            for (int p = 0; p < 50; p++) {
+                if (p < percent / 2) printf("=");
+                else printf(" ");
+            }
+            printf("] %d%% (%d/%d pairs, %d routes via Dijkstra)\n",
+                   percent, dijkstra_pairs_checked, infeasible_links, dijkstra_routes);
+            fflush(stdout);
         }
 
-        for (j = i + 1; j < m; j++) {
-            if (F[(2*i)+(2*j)*M] == 0) {
-                d = dijkstra_dist_(G, M, 2*i, 2*j);
-                D[(2*i)+(2*j)*M] = d;
-                D[(2*j)+(2*i)*M] = d;
+        for (int j = i + 1; j < params.SelectedSize; j++) {
+            if (params.FsbleLink[i + params.SelectedSize*j] == 0) {  /* Crosses land - COLUMN-MAJOR */
+                double d = dijkstra_distance(params.Graph, params.SelectedSize, i, j);
+                if (d >= DIJKSTRA_INFINITY / 2.0) {
+                    /* No waypoint route found: mark infeasible */
+                    d = INFEASIBLE_LINK_PENALTY;
+                    dijkstra_failed++;
+                }
+                params.DistMtrx[i + params.SelectedSize*j] = d;      /* COLUMN-MAJOR */
+                params.DistMtrx[j + params.SelectedSize*i] = d;
                 dijkstra_routes++;
-            }
-            if (F[(2*i)+(2*j+1)*M] == 0) {
-                d = dijkstra_dist_(G, M, 2*i, 2*j+1);
-                D[(2*i)+(2*j+1)*M] = d;
-                D[(2*j+1)+(2*i)*M] = d;
-                dijkstra_routes++;
-            }
-            if (F[(2*i+1)+(2*j)*M] == 0) {
-                d = dijkstra_dist_(G, M, 2*i+1, 2*j);
-                D[(2*i+1)+(2*j)*M] = d;
-                D[(2*j)+(2*i+1)*M] = d;
-                dijkstra_routes++;
-            }
-            if (F[(2*i+1)+(2*j+1)*M] == 0) {
-                d = dijkstra_dist_(G, M, 2*i+1, 2*j+1);
-                D[(2*i+1)+(2*j+1)*M] = d;
-                D[(2*j+1)+(2*i+1)*M] = d;
-                dijkstra_routes++;
+                dijkstra_pairs_checked++;
             }
         }
     }
 
     printf("  ✓ Distance matrix complete: %d waypoint routes via Dijkstra\n", dijkstra_routes);
-    #endif  /* End of disabled Dijkstra code */
+    printf("  → Dijkstra routed %d infeasible pairs through %d waypoint nodes\n",
+           dijkstra_pairs_checked, waypoint_count);
+    if (dijkstra_failed > 0) {
+        printf("  ⚠ Dijkstra failed to route %d pairs; marked as INFEASIBLE\n", dijkstra_failed);
+    }
 }
 
 /* Main distance_link function */
@@ -615,7 +561,7 @@ int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
                         double *LatLon[4], double *StartEnd,
                         int Size, int SelectedSize) {
     int i;
-    int M = 2 * SelectedSize;  /* Full matrix dimension */
+    int M = SelectedSize;  /* Matrix dimension = number of locations */
 
     /* Validate inputs */
     if (!DistrMtrx || !FsbleMtrx || !Type || !LatLon || !StartEnd) {
