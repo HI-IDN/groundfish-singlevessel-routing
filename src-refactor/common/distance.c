@@ -460,8 +460,9 @@ static void create_distance_matrix(PARAMS params) {
     for (i = 0; i < params.SelectedSize; i++)
         params.DistMtrx[i + params.SelectedSize*i] = 0.0;
 
-    int dijkstra_routes = 0;
     int infeasible_links = 0;
+    int feasible_links = 0;
+    int total_pairs = params.SelectedSize * (params.SelectedSize - 1) / 2;
 
     /* Calculate distances between all location pairs (upper triangle only) */
     for (i = 0; i < params.SelectedSize; i++) {
@@ -476,12 +477,17 @@ static void create_distance_matrix(PARAMS params) {
             if (params.FsbleLink[i + params.SelectedSize*j] == 0) {  /* Crosses land - COLUMN-MAJOR */
                 d += INFEASIBLE_LINK_PENALTY;
                 infeasible_links++;
+            } else {
+                feasible_links++;
             }
 
             params.DistMtrx[i + params.SelectedSize*j] = d;        /* COLUMN-MAJOR */
             params.DistMtrx[j + params.SelectedSize*i] = d;        /* Symmetric matrix */
         }
     }
+
+    printf("  → Haversine computed for %d feasible pairs (of %d total pairs)\n",
+           feasible_links, total_pairs);
 
     printf("  → Infeasible links flagged for Dijkstra: %d (%.1f%% of checked pairs)\n",
            infeasible_links, (100.0 * infeasible_links) / (params.SelectedSize * (params.SelectedSize-1) / 2.0));
@@ -515,7 +521,9 @@ static void create_distance_matrix(PARAMS params) {
 
     /* Apply Dijkstra routing for infeasible links (slow - needs progress) */
     int dijkstra_pairs_checked = 0;
+    int dijkstra_routes = 0;
     int dijkstra_failed = 0;
+    int dijkstra_success = 0;
 
     for (i = 0; i < params.SelectedSize; i++) {
         /* Progress bar every 50 locations */
@@ -539,11 +547,12 @@ static void create_distance_matrix(PARAMS params) {
                     /* No waypoint route found: mark infeasible */
                     d = INFEASIBLE_LINK_PENALTY;
                     dijkstra_failed++;
+                } else {
+                    dijkstra_success++;
                 }
                 params.DistMtrx[i + params.SelectedSize*j] = d;      /* COLUMN-MAJOR */
                 params.DistMtrx[j + params.SelectedSize*i] = d;
                 dijkstra_routes++;
-                dijkstra_pairs_checked++;
             }
         }
     }
@@ -551,8 +560,10 @@ static void create_distance_matrix(PARAMS params) {
     printf("  ✓ Distance matrix complete: %d waypoint routes via Dijkstra\n", dijkstra_routes);
     printf("  → Dijkstra routed %d infeasible pairs through %d waypoint nodes\n",
            dijkstra_pairs_checked, waypoint_count);
+    printf("  → Dijkstra path check: %d routable\n",
+           dijkstra_success);
     if (dijkstra_failed > 0) {
-        printf("  ⚠ Dijkstra failed to route %d pairs; marked as INFEASIBLE\n", dijkstra_failed);
+        printf("  ⚠ Dijkstra failed to route %d pairs; remain INFEASIBLE\n", dijkstra_failed);
     }
 }
 
