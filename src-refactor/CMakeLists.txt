@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.10)
 project(GSP_Solver C)
 
+# Fix Windows/MSYS2 CMake dependency tracking issue
+# The compiler_depend.ts file generation is broken on MinGW
+# Solution: Use explicit dependency files instead of scanning
+if(POLICY CMP0160)
+    cmake_policy(SET CMP0160 OLD)  # Use old depend_file generation
+endif()
+
 # Set policies
 if(POLICY CMP0177)
     cmake_policy(SET CMP0177 NEW)  # Normalize install() DESTINATION paths
@@ -9,8 +16,11 @@ endif()
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Disable automatic dependency tracking to avoid Windows path issues
+# For Windows/MSYS2: disable compiler-based dependency scanning
+# Instead use CMake's built-in dependency tracking
 set(CMAKE_DEPENDS_USE_COMPILER FALSE)
+set(CMAKE_DEPEND_USE_MODULES FALSE)
+set(CMAKE_C_DEPENDS_USE_COMPILER FALSE)
 
 # Build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -22,11 +32,13 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 # Find SQLite3 using pkg-config (avoids MSYS2 path issues)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SQLITE3 REQUIRED sqlite3)
+pkg_check_modules(GEOS REQUIRED geos)
 
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${SQLITE3_INCLUDE_DIRS}
+    ${GEOS_INCLUDE_DIRS}
 )
 
 # ============================================================
@@ -100,4 +112,3 @@ add_custom_target(run_init_opt
 install(TARGETS gsp_init
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )
-

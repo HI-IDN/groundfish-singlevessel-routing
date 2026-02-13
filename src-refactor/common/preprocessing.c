@@ -127,13 +127,11 @@ static int compute_and_store_distances(sqlite3 *db) {
     sqlite3_bind_int(stmt, 1, NODE_TYPE_WAYPOINT);
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         loc_ids[i] = sqlite3_column_int(stmt, 0);
-        int easting = sqlite3_column_int(stmt, 1);
-        int northing = sqlite3_column_int(stmt, 2);
+        double lat_deg = sqlite3_column_double(stmt, 1);  /* Database stores decimal degrees as REAL */
+        double lon_deg = sqlite3_column_double(stmt, 2);  /* Already negative for western hemisphere */
         types[i] = sqlite3_column_int(stmt, 3);
 
-        /* Convert degmin to decimal degrees, then to radians */
-        double lat_deg = degmin_to_deg(easting);
-        double lon_deg = degmin_to_deg_lon(northing);  /* Applies western hemisphere negation */
+        /* Convert decimal degrees to radians */
         double lat_rad = deg_to_rad(lat_deg);
         double lon_rad = deg_to_rad(lon_deg);
 
@@ -157,17 +155,6 @@ static int compute_and_store_distances(sqlite3 *db) {
     printf("\n=== Computing Distances with Waypoint Routing ===\n");
     printf("  This will take several minutes for %d locations...\n", n);
 
-    /* Call distance computation - MAP structure is now initialized with bounding box */
-    /*
-     * TODO: Update compute_distance_matrix() to return waypoint routing information:
-     *   - For each pair (i,j), check if direct path crosses land
-     *   - If crossing detected, run Dijkstra through waypoints
-     *   - Return: distance, crosses_land flag, and waypoint_path array
-     *
-     * For now, we compute direct haversine distances and set:
-     *   - crosses_land = 0 (assume no crossing)
-     *   - waypoint_path = NULL (no waypoints used)
-     */
     double *D = NULL;
     rc = compute_distance_matrix(n, latlon_rad, types, &D);
 

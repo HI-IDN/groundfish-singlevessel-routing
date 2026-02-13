@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <geos_c.h>
 #include "../include/distance.h"
 #include "../include/constants.h"
 #include "../include/geo_utils.h"
@@ -197,36 +198,146 @@ static double arc_distance(double lat1, double lon1, double lat2, double lon2) {
     return 6371.0 * c;  /* Earth radius in km */
 }
 
-/* Check if line segment crosses land using Mercator projection
+/* GEOS context and coastline geometry (initialized once) */
+static GEOSContextHandle_t geos_ctx = NULL;
+static GEOSGeometry *coastline_polygon = NULL;
+static GEOSGeometry *coastline_boundary = NULL;  /* Exterior ring for intersection testing */
+
+/* Forward declaration */
+static void cleanup_geos(void);
+
+/* Initialize GEOS and create coastline polygon from MAP data */
+static void init_geos_coastline() {
+    if (geos_ctx != NULL) return;  /* Already initialized */
+
+    /* Initialize GEOS */
+    geos_ctx = GEOS_init_r();
+    if (!geos_ctx) {
+        fprintf(stderr, "Error: Failed to initialize GEOS\n");
+        return;
+    }
+
+    /* Build coastline polygon from MAP data */
+    int n = MAP[iMAP].N[0];
+    double *LatDeg = MAP[iMAP].LatDeg[0];
+    double *LonDeg = MAP[iMAP].LonDeg[0];
+
+    if (n < 3 || !LatDeg || !LonDeg) {
+        fprintf(stderr, "Error: Invalid coastline data\n");
+        return;
+    }
+
+    /* Create coordinate sequence - GEOS requires closed ring (first point = last point)
+     * So we need n+1 points total
+     * Data is loaded from DB with ORDER BY id, so it's already in correct order */
+    GEOSCoordSequence *seq = GEOSCoordSeq_create_r(geos_ctx, n + 1, 2);
+    for (int i = 0; i < n; i++) {
+        GEOSCoordSeq_setX_r(geos_ctx, seq, i, LonDeg[i]);  /* X = longitude */
+        GEOSCoordSeq_setY_r(geos_ctx, seq, i, LatDeg[i]);  /* Y = latitude */
+    }
+    /* Close the ring - last point = first point */
+    GEOSCoordSeq_setX_r(geos_ctx, seq, n, LonDeg[0]);
+    GEOSCoordSeq_setY_r(geos_ctx, seq, n, LatDeg[0]);
+
+    /* Create linear ring and polygon */
+    GEOSGeometry *ring = GEOSGeom_createLinearRing_r(geos_ctx, seq);
+    if (!ring) {
+        fprintf(stderr, "Error: Failed to create GEOS linear ring\n");
+        GEOSCoordSeq_destroy_r(geos_ctx, seq);
+        return;
+    }
+
+    coastline_polygon = GEOSGeom_createPolygon_r(geos_ctx, ring, NULL, 0);
+    if (!coastline_polygon) {
+        fprintf(stderr, "Error: Failed to create GEOS polygon\n");
+        GEOSGeom_destroy_r(geos_ctx, ring);
+        return;
+    }
+
+    /* Check if polygon is valid, and if not, try to fix it with buffer(0) */
+    char is_valid = GEOSisValid_r(geos_ctx, coastline_polygon);
+    if (!is_valid) {
+        char *reason = GEOSisValidReason_r(geos_ctx, coastline_polygon);
+        fprintf(stderr, "  ⚠ Warning: Coastline polygon invalid: %s\n", reason);
+        fprintf(stderr, "  → Attempting to fix with buffer(0)...\n");
+        GEOSFree_r(geos_ctx, reason);
+
+        /* Buffer by 0 to fix invalid geometry */
+        GEOSGeometry *fixed = GEOSBuffer_r(geos_ctx, coastline_polygon, 0.0, 8);
+        if (fixed) {
+            GEOSGeom_destroy_r(geos_ctx, coastline_polygon);
+            coastline_polygon = fixed;
+            is_valid = GEOSisValid_r(geos_ctx, coastline_polygon);
+            fprintf(stderr, "  → Fixed polygon is now valid: %d\n", is_valid);
+        }
+    }
+
+    /* Extract the boundary (exterior ring) for intersection testing
+     * This matches the original algorithm which checks if routes cross coastline segments */
+    coastline_boundary = GEOSBoundary_r(geos_ctx, coastline_polygon);
+    if (!coastline_boundary) {
+        fprintf(stderr, "Error: Failed to extract polygon boundary\n");
+        GEOSGeom_destroy_r(geos_ctx, coastline_polygon);
+        return;
+    }
+
+    /* Register cleanup function to be called at program exit */
+    atexit(cleanup_geos);
+
+    printf("  ✓ GEOS initialized with %d-point coastline polygon\n", n);
+}
+
+/* Cleanup GEOS resources */
+static void cleanup_geos() {
+    if (coastline_boundary) {
+        GEOSGeom_destroy_r(geos_ctx, coastline_boundary);
+        coastline_boundary = NULL;
+    }
+    if (coastline_polygon) {
+        GEOSGeom_destroy_r(geos_ctx, coastline_polygon);
+        coastline_polygon = NULL;
+    }
+    if (geos_ctx) {
+        GEOS_finish_r(geos_ctx);
+        geos_ctx = NULL;
+    }
+}
+
+/* Check if line segment crosses land using GEOS
  *
- * Uses Mercator projection for accurate geometry at high latitudes (~65°N).
- * Critical for Iceland where longitude lines converge significantly.
+ * Uses industry-standard GEOS library for robust geometric operations.
+ * Checks if route intersects the coastline boundary (matching original algorithm).
  *
  * Returns: 1 if crosses land (infeasible), 0 if doesn't cross (feasible)
  */
 static int crosses_land(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg,
                         const double *LatDeg, const double *LonDeg, int n) {
-    if (!LatDeg || !LonDeg || n < 3) return 0;
+    (void)LatDeg;  /* Unused - we use the GEOS boundary instead */
+    (void)LonDeg;
+    (void)n;
 
-    /* Project route segment to Mercator coordinates */
-    double lat_arr[2] = {lat1_deg, lat2_deg};
-    double lon_arr[2] = {lon1_deg, lon2_deg};
-    double s0x[2], s0y[2];
-    mercator_project(s0x, s0y, lat_arr, lon_arr, 2, MAP[iMAP].MINLAT, MAP[iMAP].MAXLAT);
-
-    /* Check intersection with each coastline segment */
-    for (int i = 0; i < n - 1; i++) {
-        double lat_coast[2] = {LatDeg[i], LatDeg[i+1]};
-        double lon_coast[2] = {LonDeg[i], LonDeg[i+1]};
-        double s1x[2], s1y[2];
-        mercator_project(s1x, s1y, lat_coast, lon_coast, 2, MAP[iMAP].MINLAT, MAP[iMAP].MAXLAT);
-
-        if (segments_intersect_mercator(s0x, s0y, s1x, s1y)) {
-            return 1;  /* Crosses land */
-        }
+    if (!geos_ctx || !coastline_boundary) {
+        /* GEOS not initialized - shouldn't happen but handle gracefully */
+        return 0;
     }
 
-    return 0;  /* Doesn't cross land */
+    /* Create line segment geometry */
+    GEOSCoordSequence *line_seq = GEOSCoordSeq_create_r(geos_ctx, 2, 2);
+    GEOSCoordSeq_setX_r(geos_ctx, line_seq, 0, lon1_deg);
+    GEOSCoordSeq_setY_r(geos_ctx, line_seq, 0, lat1_deg);
+    GEOSCoordSeq_setX_r(geos_ctx, line_seq, 1, lon2_deg);
+    GEOSCoordSeq_setY_r(geos_ctx, line_seq, 1, lat2_deg);
+
+    GEOSGeometry *line = GEOSGeom_createLineString_r(geos_ctx, line_seq);
+
+    /* Check if line intersects coastline boundary */
+    char intersects = GEOSIntersects_r(geos_ctx, line, coastline_boundary);
+
+    /* Cleanup */
+    GEOSGeom_destroy_r(geos_ctx, line);
+
+
+    return (intersects == 1) ? 1 : 0;
 }
 
 /* Dijkstra's algorithm */
@@ -280,85 +391,68 @@ static int create_feasibility_matrix(PARAMS params) {
     double *LonDeg = MAP[iMAP].LonDeg[0];
 
     printf("  → Checking land crossings for %d locations...\n", m);
+    fflush(stdout);
 
     /* Set diagonal to 1 (feasible) - COLUMN-MAJOR: F[i + M*i] */
     for (i = 0; i < M; i++) {
         F[i + M*i] = 1;
     }
 
-    /* Precompute deg coords and bbox-inside flags for each location start/end */
-    double min_lat = MAP[iMAP].MINLAT;
-    double max_lat = MAP[iMAP].MAXLAT;
-    double min_lon = MAP[iMAP].MINLON;
-    double max_lon = MAP[iMAP].MAXLON;
-
+    /* Precompute degree coordinates for each location start/end */
     double *lat_s = (double*)xmalloc((size_t)m * sizeof(double));
     double *lon_s = (double*)xmalloc((size_t)m * sizeof(double));
     double *lat_e = (double*)xmalloc((size_t)m * sizeof(double));
     double *lon_e = (double*)xmalloc((size_t)m * sizeof(double));
-    unsigned char *bbox_s = (unsigned char*)xcalloc((size_t)m, sizeof(unsigned char));
-    unsigned char *bbox_e = (unsigned char*)xcalloc((size_t)m, sizeof(unsigned char));
 
     for (i = 0; i < m; i++) {
         lat_s[i] = rad_to_deg(params.LatLonRad[0][i]);
         lon_s[i] = rad_to_deg(params.LatLonRad[1][i]);
         lat_e[i] = rad_to_deg(params.LatLonRad[2][i]);
         lon_e[i] = rad_to_deg(params.LatLonRad[3][i]);
-
-        bbox_s[i] = (lat_s[i] >= min_lat && lat_s[i] <= max_lat &&
-                     lon_s[i] >= min_lon && lon_s[i] <= max_lon) ? 1 : 0;
-        bbox_e[i] = (lat_e[i] >= min_lat && lat_e[i] <= max_lat &&
-                     lon_e[i] >= min_lon && lon_e[i] <= max_lon) ? 1 : 0;
     }
 
     int pairs_checked = 0;
     int land_crossings = 0;
 
+    printf("  → Starting land-crossing checks (this may take several minutes)...\n");
+    fflush(stdout);
+
     /* Upper-triangle only: j starts at i+1 to avoid duplicate work.
      * We set both (i,j) and (j,i) for symmetry on each update. */
     for (i = 0; i < m; i++) {
+        /* Progress reporting every 50 locations */
+        if (i > 0 && i % 50 == 0) {
+            printf("    Progress: %d/%d locations (%.1f%% - %d crossings found)\n",
+                   i, m, (100.0 * i) / m, land_crossings);
+            fflush(stdout);
+        }
+
         for (j = i + 1; j < m; j++) {
             /* Pair 1: start-start */
-            if (!bbox_s[i] && !bbox_s[j]) {
-                k = 0;
-            } else {
-                x1 = lat_s[i]; y1 = lon_s[i];
-                x2 = lat_s[j]; y2 = lon_s[j];
-                k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            }
+            x1 = lat_s[i]; y1 = lon_s[i];
+            x2 = lat_s[j]; y2 = lon_s[j];
+            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             if (k) land_crossings++;
             F[(2*i)+M*(2*j)] = !k; F[(2*j)+M*(2*i)] = !k;
 
             /* Pair 2: start-end */
-            if (!bbox_s[i] && !bbox_e[j]) {
-                k = 0;
-            } else {
-                x1 = lat_s[i]; y1 = lon_s[i];
-                x2 = lat_e[j]; y2 = lon_e[j];
-                k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            }
+            x1 = lat_s[i]; y1 = lon_s[i];
+            x2 = lat_e[j]; y2 = lon_e[j];
+            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             if (k) land_crossings++;
             F[(2*i)+M*(2*j+1)] = !k; F[(2*j+1)+M*(2*i)] = !k;
 
             /* Pair 3: end-start */
-            if (!bbox_e[i] && !bbox_s[j]) {
-                k = 0;
-            } else {
-                x1 = lat_e[i]; y1 = lon_e[i];
-                x2 = lat_s[j]; y2 = lon_s[j];
-                k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            }
+            x1 = lat_e[i]; y1 = lon_e[i];
+            x2 = lat_s[j]; y2 = lon_s[j];
+            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             if (k) land_crossings++;
             F[(2*i+1)+M*(2*j)] = !k; F[(2*j)+M*(2*i+1)] = !k;
 
             /* Pair 4: end-end */
-            if (!bbox_e[i] && !bbox_e[j]) {
-                k = 0;
-            } else {
-                x1 = lat_e[i]; y1 = lon_e[i];
-                x2 = lat_e[j]; y2 = lon_e[j];
-                k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
-            }
+            x1 = lat_e[i]; y1 = lon_e[i];
+            x2 = lat_e[j]; y2 = lon_e[j];
+            k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             if (k) land_crossings++;
             F[(2*i+1)+M*(2*j+1)] = !k; F[(2*j+1)+M*(2*i+1)] = !k;
 
@@ -370,8 +464,6 @@ static int create_feasibility_matrix(PARAMS params) {
     free(lon_s);
     free(lat_e);
     free(lon_e);
-    free(bbox_s);
-    free(bbox_e);
 
     int total_routes = pairs_checked * 4;
     printf("  ✓ Land-crossing check: %d crossings detected (%.1f%% of %d route pairs)\n",
@@ -452,9 +544,21 @@ static void create_distance_matrix(PARAMS params) {
         }
     }
 
-    printf("  → Infeasible links flagged for Dijkstra: %d\n", infeasible_links);
+    printf("  → Infeasible links flagged: %d (%.1f%% of total)\n",
+           infeasible_links, (100.0 * infeasible_links) / (m * (m-1) * 4));
     fflush(stdout);
 
+    /* NOTE: Dijkstra waypoint routing is currently disabled because waypoints
+     * are not included in the graph. Infeasible links use penalized direct distances.
+     * TODO: Implement proper waypoint routing by including waypoints in the graph. */
+
+    printf("  ⚠ Waypoint routing disabled - using penalized direct distances for infeasible links\n");
+    printf("  ✓ Distance computation complete\n");
+    fflush(stdout);
+    return;
+
+    /* DISABLED: Dijkstra routing code below */
+    #if 0
     if (infeasible_links == 0) {
         printf("  ✓ No infeasible links; skipping Dijkstra.\n");
         fflush(stdout);
@@ -503,6 +607,7 @@ static void create_distance_matrix(PARAMS params) {
     }
 
     printf("  ✓ Distance matrix complete: %d waypoint routes via Dijkstra\n", dijkstra_routes);
+    #endif  /* End of disabled Dijkstra code */
 }
 
 /* Main distance_link function */
@@ -544,6 +649,9 @@ int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
         return -1;
     }
 
+    /* Initialize GEOS and coastline polygon (once) */
+    init_geos_coastline();
+
     for (i=0; i<4; i++)
         params.LatLonRad[i] = LatLon[i];
 
@@ -551,6 +659,8 @@ int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
     create_distance_matrix(params);
 
     free(params.Graph);
+
+    /* Note: cleanup_geos() should be called at program exit, not here */
     return 0;
 }
 

@@ -12,11 +12,13 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
 # Find SQLite3 using pkg-config (avoids MSYS2 path issues)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SQLITE3 REQUIRED sqlite3)
+pkg_check_modules(GEOS REQUIRED geos)
 
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${SQLITE3_INCLUDE_DIRS}
+    ${GEOS_INCLUDE_DIRS}
 )
 
 # Source files for preprocessing utility
@@ -36,6 +38,7 @@ add_executable(gsp_preprocess
 
 target_link_libraries(gsp_preprocess
     ${SQLITE3_LIBRARIES}
+    ${GEOS_LIBRARIES}
     m
 )
 
@@ -56,4 +59,3 @@ add_custom_target(run_preprocessing
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Parsing .dat file and building SQLite database"
 )
-
