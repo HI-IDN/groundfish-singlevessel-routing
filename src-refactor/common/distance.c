@@ -429,8 +429,8 @@ static int create_feasibility_matrix(PARAMS params) {
 
             pairs_checked++;
 
-            /* Pair-based progress every 50k checks */
-            if (pairs_checked % 50000 == 0 || pairs_checked == total_pairs) {
+            /* Pair-based progress every 100k checks */
+            if (pairs_checked % 100000 == 0 || pairs_checked == total_pairs) {
                 double pct = (100.0 * pairs_checked) / total_pairs;
                 printf("    Progress: %d/%d pairs (%.1f%%) - %d crossings found\n",
                        pairs_checked, total_pairs, pct, land_crossings);
