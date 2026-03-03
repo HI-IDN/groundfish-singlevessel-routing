@@ -122,8 +122,8 @@ static int compute_and_store_distances(sqlite3 *db) {
     /* Allocate arrays */
     int *loc_ids = (int*)calloc(n, sizeof(int));
     int *types = (int*)calloc(n, sizeof(int));
-    double *latlon_rad[4];
-    for (int k = 0; k < 4; k++) {
+    double *latlon_rad[2];
+    for (int k = 0; k < 2; k++) {
         latlon_rad[k] = (double*)malloc(n * sizeof(double));
     }
 
@@ -140,10 +140,8 @@ static int compute_and_store_distances(sqlite3 *db) {
         double lon_rad = deg_to_rad(lon_deg);
 
         /* Column-major format for DistanceLink */
-        latlon_rad[0][i] = lat_rad;  /* lat_start */
-        latlon_rad[1][i] = lon_rad;  /* lon_start */
-        latlon_rad[2][i] = lat_rad;  /* lat_end */
-        latlon_rad[3][i] = lon_rad;  /* lon_end */
+        latlon_rad[0][i] = lat_rad;  /* lat */
+        latlon_rad[1][i] = lon_rad;  /* lon */
         i++;
     }
     sqlite3_finalize(stmt);
@@ -159,8 +157,9 @@ static int compute_and_store_distances(sqlite3 *db) {
     printf("\n=== Computing Distances with Waypoint Routing ===\n");
     printf("  This will take several minutes for %d locations...\n", n);
 
-    double *D = NULL;
-    rc = compute_distance_matrix(n, latlon_rad, types, &D);
+    double *D = NULL; // distance matrix (in nautical miles)
+    int *F = NULL; // feasibility matrix (0 = crosses land, 1 = direct route)
+    rc = compute_distance_matrix(n, latlon_rad, types, &D, &F);
 
     /* Cleanup coastline data */
     if (coastline_data) free(coastline_data);
@@ -169,7 +168,7 @@ static int compute_and_store_distances(sqlite3 *db) {
         fprintf(stderr, "  ✗ Distance computation failed\n");
         free(loc_ids);
         free(types);
-        for (int k = 0; k < 4; k++) free(latlon_rad[k]);
+        for (int k = 0; k < 2; k++) free(latlon_rad[k]);
         return SQLITE_ERROR;
     }
 
@@ -189,7 +188,7 @@ static int compute_and_store_distances(sqlite3 *db) {
         free(D);
         free(loc_ids);
         free(types);
-        for (int k = 0; k < 4; k++) free(latlon_rad[k]);
+        for (int k = 0; k < 2; k++) free(latlon_rad[k]);
         return rc;
     }
 
@@ -227,7 +226,7 @@ static int compute_and_store_distances(sqlite3 *db) {
                 free(D);
                 free(loc_ids);
                 free(types);
-                for (int k = 0; k < 4; k++) free(latlon_rad[k]);
+                for (int k = 0; k < 2; k++) free(latlon_rad[k]);
                 return SQLITE_ERROR;
             }
             sqlite3_reset(insert_stmt);
@@ -244,7 +243,7 @@ static int compute_and_store_distances(sqlite3 *db) {
     free(D);
     free(loc_ids);
     free(types);
-    for (int k = 0; k < 4; k++) free(latlon_rad[k]);
+    for (int k = 0; k < 2; k++) free(latlon_rad[k]);
 
     return SQLITE_OK;
 }

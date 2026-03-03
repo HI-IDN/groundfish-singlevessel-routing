@@ -8,7 +8,6 @@ typedef struct {
     double *Amount;
     double *LatLonRad;
     double *LatLonDegMin;
-    int SelectedSize;
     int Size;
 } location_data;
 
@@ -17,8 +16,8 @@ typedef struct {
  * Accounts for land obstacles from island.bin
  */
 int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
-                 double *LatLon[4], double *StartEnd,
-                 int Size, int SelectedSize);
+                 double *LatLon[2], double *StartEnd,
+                 int Size);
 
 /**
  * Build distance and feasibility matrices using waypoint routing.
@@ -26,31 +25,41 @@ int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
  * @param ex             Location data structure
  * @param land           Land polygon data (optional, can be NULL)
  * @param n_land         Number of land points
- * @param out_dist       Output distance matrix [2*Size][2*Size]
- * @param out_fsb        Output feasibility matrix [2*Size][2*Size]
- * @param out_full_dist  Output full distance matrix [2*SelectedSize][2*SelectedSize] (optional)
- * @param out_full_fsb   Output full feasibility matrix [2*SelectedSize][2*SelectedSize] (optional)
- * @param out_full_m     Output full matrix dimension (optional)
+ * @param out_dist       Output distance matrix [Size][Size]
+ * @param out_fsb        Output feasibility matrix [Size][Size]
  */
 void build_waypoint_dist(const location_data *ex,
                         const double *land, int n_land,
-                        double **out_dist, int **out_fsb,
-                        double **out_full_dist, int **out_full_fsb,
-                        int *out_full_m);
+                        double **out_dist, int **out_fsb);
 
 /**
  * Compute distance matrix for locations using waypoint-aware Dijkstra routing
  * Note: MAP structure must be initialized first (via load_coastline_from_db or load_island_bin)
- *       which sets the bounding box using SQL MIN/MAX or data scan
  *
- * @param n_locs          Number of locations (excluding waypoints)
- * @param latlon_rad      Array of lat/lon in radians [4][n_locs]
+ * @param n_locs          Number of locations (including waypoints)
+ * @param latlon_rad      Array of lat/lon in radians [2][n_locs] (lat, lon)
  * @param types           Array of location types
  * @param out_dist        Output distance matrix [n_locs * n_locs] (caller must free)
- * @return 0 on success, -1 on error
+ * @param out_fsb         Output feasibility matrix [n_locs * n_locs] (caller must free)
  */
-int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
-                            double **out_dist);
+int compute_distance_matrix(int n_locs, double *latlon_rad[2], int *types,
+                            double **out_dist, int **out_fsb);
+
+/**
+ * Get Dijkstra waypoint path for a specific location pair
+ *
+ * @param i              Source location index
+ * @param j              Destination location index
+ * @param out_length     Output: number of nodes in the path (including src and dest)
+ * @return               Pointer to path array (array of node indices), or NULL if no Dijkstra path exists
+ *                       The returned pointer is owned by the distance module - do not free it
+ */
+int* get_dijkstra_path(int i, int j, int* out_length);
+
+/**
+ * Free global distance matrices and cleanup
+ * Should be called when distance computation is complete
+ */
+void cleanup_distance_matrices(void);
 
 #endif
-

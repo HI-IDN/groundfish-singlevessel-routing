@@ -11,60 +11,66 @@
 #include "../include/distance.h"
 #include "../include/constants.h"
 #include "../include/geo_utils.h"
+#include <stdbool.h>
+
+/* Smoke test: cap Dijkstra to first N infeasible pairs */
+static const int DIJKSTRA_SMOKE_LIMIT = 1000;
 
 /* Forward declaration - implementation in coastline_db.c */
-extern double *load_island_bin(const char *fname, int *out_n);
+extern double* load_island_bin(const char* fname, int* out_n);
 
-static void die(const char *msg) {
+static void die(const char* msg)
+{
     fprintf(stderr, "%s\n", msg);
     exit(1);
 }
 
-static void *xmalloc(size_t n) {
-    void *p = malloc(n);
+static void* xmalloc(size_t n)
+{
+    void* p = malloc(n);
     if (!p) die("OOM");
     return p;
 }
 
-static void *xcalloc(size_t n, size_t s) {
-    void *p = calloc(n, s);
+static void* xcalloc(size_t n, size_t s)
+{
+    void* p = calloc(n, s);
     if (!p) die("OOM");
     return p;
 }
 
 
 /* Build waypoint-aware distance and feasibility matrices */
-void build_waypoint_dist(const location_data *ex,
-                        const double *land, int n_land,
-                        double **out_dist, int **out_fsb,
-                        double **out_full_dist, int **out_full_fsb,
-                        int *out_full_m) {
+void build_waypoint_dist(const location_data* ex,
+                         const double* land, int n_land,
+                         double** out_dist, int** out_fsb)
+{
     (void)land;
     (void)n_land;
 
-    int m = ex->SelectedSize;
-    int M = 2 * ex->SelectedSize;
-    int n = 2 * ex->Size;
+    int m = ex->Size;
+    int M = 2 * ex->Size;
 
     /* Allocate full matrices M x M */
-    int *F = (int*)xcalloc((size_t)M * (size_t)M, sizeof(int));
-    double *D = (double*)xcalloc((size_t)M * (size_t)M, sizeof(double));
+    int* F = (int*)xcalloc((size_t)M * (size_t)M, sizeof(int));
+    double* D = (double*)xcalloc((size_t)M * (size_t)M, sizeof(double));
 
     /* Prepare column-major LatLon arrays for distance_link */
-    double *latlon_cols[4];
-    for (int k = 0; k < 4; k++) {
+    double* latlon_cols[2];
+    for (int k = 0; k < 2; k++)
+    {
         latlon_cols[k] = (double*)xmalloc((size_t)m * sizeof(double));
     }
-    for (int i = 0; i < m; i++) {
-        latlon_cols[0][i] = ex->LatLonRad[i*4 + 0];
-        latlon_cols[1][i] = ex->LatLonRad[i*4 + 1];
-        latlon_cols[2][i] = ex->LatLonRad[i*4 + 2];
-        latlon_cols[3][i] = ex->LatLonRad[i*4 + 3];
+    for (int i = 0; i < m; i++)
+    {
+        latlon_cols[0][i] = ex->LatLonRad[i * 4 + 0];
+        latlon_cols[1][i] = ex->LatLonRad[i * 4 + 1];
     }
 
     /* Type array for main route (excludes waypoints) */
-    int *type_main = (int*)xmalloc((size_t)ex->Size * sizeof(int));
-    for (int i = 0; i < ex->Size; i++) {
+    int* type_main = (int*)xmalloc((size_t)ex->Size * sizeof(int));
+    for (int i = 0; i < ex->Size; i++)
+    {
         type_main[i] = ex->Type[i];
     }
 
@@ -75,43 +81,28 @@ void build_waypoint_dist(const location_data *ex,
     };
 
     /* Call internal distance_link function (Dijkstra routing with land obstacles) */
-    if (distance_link(D, F, type_main, latlon_cols, start_end, ex->Size, ex->SelectedSize) != 0) {
+    if (distance_link(D, F, type_main, latlon_cols, start_end, ex->Size) != 0)
+    {
         die("distance_link link failed");
     }
 
-    for (int k = 0; k < 4; k++) free(latlon_cols[k]);
+    for (int k = 0; k < 2; k++) free(latlon_cols[k]);
     free(type_main);
 
-    /* Extract n x n submatrix for main route */
-    double *dist = (double*)xmalloc((size_t)n * (size_t)n * sizeof(double));
-    int *fsb = (int*)xmalloc((size_t)n * (size_t)n * sizeof(int));
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < n; j++) {
-            dist[i*n + j] = D[i*M + j];
-            fsb[i*n + j] = F[i*M + j];
-        }
-    }
-
-    /* Output full matrices if requested */
-    if (out_full_dist) *out_full_dist = D;
-    else free(D);
-    if (out_full_fsb) *out_full_fsb = F;
-    else free(F);
-    if (out_full_m) *out_full_m = M;
-
-    *out_dist = dist;
-    *out_fsb = fsb;
+    *out_dist = D;
+    *out_fsb = F;
 }
 
 /* ===== MAP Structure for Island Data ===== */
 
 /* MAP structure for land polygon data */
 /* External MAP structure (defined and initialized in coastline_db.c) */
-extern struct {
+extern struct
+{
     int n;
     int N[10];
-    double *LatDeg[10];
-    double *LonDeg[10];
+    double* LatDeg[10];
+    double* LonDeg[10];
     double MINLAT, MAXLAT, MINLON, MAXLON;
 } MAP[1];
 
@@ -120,11 +111,12 @@ static int iMAP = 0;
 
 /*
  * Compute distance matrix for locations using waypoint-aware Dijkstra routing
- * ...existing code...
  */
-int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
-                            double **out_dist) {
-    if (n_locs <= 0 || !latlon_rad || !types || !out_dist) {
+int compute_distance_matrix(int n_locs, double* latlon_rad[2], int* types,
+                            double** out_dist, int** out_fsb)
+{
+    if (n_locs <= 0 || !latlon_rad || !types || !out_dist || !out_fsb)
+    {
         fprintf(stderr, "Error: Invalid parameters to compute_distance_matrix\n");
         return -1;
     }
@@ -132,7 +124,8 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
     printf("  → Computing %d×%d distance matrix\n", n_locs, n_locs);
 
     /* MAP structure should already be initialized by caller (via load_coastline_from_db or load_island_bin) */
-    if (MAP[0].N[0] <= 0 || !MAP[0].LatDeg[0] || !MAP[0].LonDeg[0]) {
+    if (MAP[0].N[0] <= 0 || !MAP[0].LatDeg[0] || !MAP[0].LonDeg[0])
+    {
         fprintf(stderr, "  ⚠ Warning: MAP not initialized - land-crossing detection disabled\n");
     }
 
@@ -141,21 +134,22 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
     int M = n_locs;
     size_t matrix_size = (size_t)M * (size_t)M;
 
-    double *D = (double*)xcalloc(matrix_size, sizeof(double));
-    int *F = (int*)xcalloc(matrix_size, sizeof(int));
+    double* D = (double*)xcalloc(matrix_size, sizeof(double));
+    int* F = (int*)xcalloc(matrix_size, sizeof(int));
 
 
     /* Start/end points: first and last locations */
     double start_end[4] = {
         latlon_rad[0][0], latlon_rad[1][0],
-        latlon_rad[0][n_locs-1], latlon_rad[1][n_locs-1]
+        latlon_rad[0][n_locs - 1], latlon_rad[1][n_locs - 1]
     };
 
     /* Call distance_link */
     printf("  → Calling distance_link (Dijkstra routing)...\n");
-    int rc = distance_link(D, F, types, latlon_rad, start_end, n_locs, n_locs);
+    int rc = distance_link(D, F, types, latlon_rad, start_end, n_locs);
 
-    if (rc != 0) {
+    if (rc != 0)
+    {
         fprintf(stderr, "  ✗ distance_link failed (error %d)\n", rc);
         free(D);
         free(F);
@@ -164,11 +158,9 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
 
     printf("  ✓ Distance matrix computed successfully\n");
 
-    /* Cleanup and return */
-    free(F);
-    /* Note: MAP structure is global and managed by caller, don't free here */
-
-    *out_dist = D;  /* Caller must free */
+    /* Caller owns outputs */
+    *out_dist = D;
+    *out_fsb = F;
     return 0;
 }
 
@@ -178,51 +170,56 @@ int compute_distance_matrix(int n_locs, double *latlon_rad[4], int *types,
 #define GRAPH_2D(graph, M, u, v) ((graph)[(u) + (M)*(v)])
 
 /* PARAMS structure for distance computation */
-typedef struct {
-    int SelectedSize;
-    int *Type;
-    double *StartEnd;
+typedef struct
+{
+    int* Type;
+    double* StartEnd;
     int Size;
-    double *DistMtrx;
-    int *FsbleLink;
-    double *Graph;
-    double *LatLonRad[4];
+    double* DistMtrx;
+    int* FsbleLink;
+    double* Graph;
+    double* LatLonRad[42];
 } PARAMS;
 
 /* Calculate great-circle distance */
-static double arc_distance(double lat1, double lon1, double lat2, double lon2) {
+static double arc_distance(double lat1, double lon1, double lat2, double lon2)
+{
     double dLat = lat2 - lat1;
     double dLon = lon2 - lon1;
-    double a = sin(dLat/2)*sin(dLat/2) + cos(lat1)*cos(lat2)*sin(dLon/2)*sin(dLon/2);
-    double c = 2*atan2(sqrt(a), sqrt(1-a));
-    return 6371.0 * c;  /* Earth radius in km */
+    double a = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLon / 2) *
+        sin(dLon / 2);
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    return 6371.0 * c; /* Earth radius in km */
 }
 
 /* GEOS context and coastline geometry (initialized once) */
 static GEOSContextHandle_t geos_ctx = NULL;
-static GEOSGeometry *coastline_polygon = NULL;
-static GEOSGeometry *coastline_boundary = NULL;  /* Exterior ring for intersection testing */
+static GEOSGeometry* coastline_polygon = NULL;
+static GEOSGeometry* coastline_boundary = NULL; /* Exterior ring for intersection testing */
 
 /* Forward declaration */
 static void cleanup_geos(void);
 
 /* Initialize GEOS and create coastline polygon from MAP data */
-static void init_geos_coastline() {
-    if (geos_ctx != NULL) return;  /* Already initialized */
+static void init_geos_coastline()
+{
+    if (geos_ctx != NULL) return; /* Already initialized */
 
     /* Initialize GEOS */
     geos_ctx = GEOS_init_r();
-    if (!geos_ctx) {
+    if (!geos_ctx)
+    {
         fprintf(stderr, "Error: Failed to initialize GEOS\n");
         return;
     }
 
     /* Build coastline polygon from MAP data */
     int n = MAP[iMAP].N[0];
-    double *LatDeg = MAP[iMAP].LatDeg[0];
-    double *LonDeg = MAP[iMAP].LonDeg[0];
+    double* LatDeg = MAP[iMAP].LatDeg[0];
+    double* LonDeg = MAP[iMAP].LonDeg[0];
 
-    if (n < 3 || !LatDeg || !LonDeg) {
+    if (n < 3 || !LatDeg || !LonDeg)
+    {
         fprintf(stderr, "Error: Invalid coastline data\n");
         return;
     }
@@ -230,25 +227,28 @@ static void init_geos_coastline() {
     /* Create coordinate sequence - GEOS requires closed ring (first point = last point)
      * So we need n+1 points total
      * Data is loaded from DB with ORDER BY id, so it's already in correct order */
-    GEOSCoordSequence *seq = GEOSCoordSeq_create_r(geos_ctx, n + 1, 2);
-    for (int i = 0; i < n; i++) {
-        GEOSCoordSeq_setX_r(geos_ctx, seq, i, LonDeg[i]);  /* X = longitude */
-        GEOSCoordSeq_setY_r(geos_ctx, seq, i, LatDeg[i]);  /* Y = latitude */
+    GEOSCoordSequence* seq = GEOSCoordSeq_create_r(geos_ctx, n + 1, 2);
+    for (int i = 0; i < n; i++)
+    {
+        GEOSCoordSeq_setX_r(geos_ctx, seq, i, LonDeg[i]); /* X = longitude */
+        GEOSCoordSeq_setY_r(geos_ctx, seq, i, LatDeg[i]); /* Y = latitude */
     }
     /* Close the ring - last point = first point */
     GEOSCoordSeq_setX_r(geos_ctx, seq, n, LonDeg[0]);
     GEOSCoordSeq_setY_r(geos_ctx, seq, n, LatDeg[0]);
 
     /* Create linear ring and polygon */
-    GEOSGeometry *ring = GEOSGeom_createLinearRing_r(geos_ctx, seq);
-    if (!ring) {
+    GEOSGeometry* ring = GEOSGeom_createLinearRing_r(geos_ctx, seq);
+    if (!ring)
+    {
         fprintf(stderr, "Error: Failed to create GEOS linear ring\n");
         GEOSCoordSeq_destroy_r(geos_ctx, seq);
         return;
     }
 
     coastline_polygon = GEOSGeom_createPolygon_r(geos_ctx, ring, NULL, 0);
-    if (!coastline_polygon) {
+    if (!coastline_polygon)
+    {
         fprintf(stderr, "Error: Failed to create GEOS polygon\n");
         GEOSGeom_destroy_r(geos_ctx, ring);
         return;
@@ -256,15 +256,17 @@ static void init_geos_coastline() {
 
     /* Check if polygon is valid, and if not, try to fix it with buffer(0) */
     char is_valid = GEOSisValid_r(geos_ctx, coastline_polygon);
-    if (!is_valid) {
-        char *reason = GEOSisValidReason_r(geos_ctx, coastline_polygon);
+    if (!is_valid)
+    {
+        char* reason = GEOSisValidReason_r(geos_ctx, coastline_polygon);
         fprintf(stderr, "  ⚠ Warning: Coastline polygon invalid: %s\n", reason);
         fprintf(stderr, "  → Attempting to fix with buffer(0)...\n");
         GEOSFree_r(geos_ctx, reason);
 
         /* Buffer by 0 to fix invalid geometry */
-        GEOSGeometry *fixed = GEOSBuffer_r(geos_ctx, coastline_polygon, 0.0, 8);
-        if (fixed) {
+        GEOSGeometry* fixed = GEOSBuffer_r(geos_ctx, coastline_polygon, 0.0, 8);
+        if (fixed)
+        {
             GEOSGeom_destroy_r(geos_ctx, coastline_polygon);
             coastline_polygon = fixed;
             is_valid = GEOSisValid_r(geos_ctx, coastline_polygon);
@@ -275,7 +277,8 @@ static void init_geos_coastline() {
     /* Extract the boundary (exterior ring) for intersection testing
      * This matches the original algorithm which checks if routes cross coastline segments */
     coastline_boundary = GEOSBoundary_r(geos_ctx, coastline_polygon);
-    if (!coastline_boundary) {
+    if (!coastline_boundary)
+    {
         fprintf(stderr, "Error: Failed to extract polygon boundary\n");
         GEOSGeom_destroy_r(geos_ctx, coastline_polygon);
         return;
@@ -288,16 +291,20 @@ static void init_geos_coastline() {
 }
 
 /* Cleanup GEOS resources */
-static void cleanup_geos() {
-    if (coastline_boundary) {
+static void cleanup_geos()
+{
+    if (coastline_boundary)
+    {
         GEOSGeom_destroy_r(geos_ctx, coastline_boundary);
         coastline_boundary = NULL;
     }
-    if (coastline_polygon) {
+    if (coastline_polygon)
+    {
         GEOSGeom_destroy_r(geos_ctx, coastline_polygon);
         coastline_polygon = NULL;
     }
-    if (geos_ctx) {
+    if (geos_ctx)
+    {
         GEOS_finish_r(geos_ctx);
         geos_ctx = NULL;
     }
@@ -311,24 +318,26 @@ static void cleanup_geos() {
  * Returns: 1 if crosses land (infeasible), 0 if doesn't cross (feasible)
  */
 static int crosses_land(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg,
-                        const double *LatDeg, const double *LonDeg, int n) {
-    (void)LatDeg;  /* Unused - we use the GEOS boundary instead */
+                        const double* LatDeg, const double* LonDeg, int n)
+{
+    (void)LatDeg; /* Unused - we use the GEOS boundary instead */
     (void)LonDeg;
     (void)n;
 
-    if (!geos_ctx || !coastline_boundary) {
+    if (!geos_ctx || !coastline_boundary)
+    {
         /* GEOS not initialized - shouldn't happen but handle gracefully */
         return 0;
     }
 
     /* Create line segment geometry */
-    GEOSCoordSequence *line_seq = GEOSCoordSeq_create_r(geos_ctx, 2, 2);
+    GEOSCoordSequence* line_seq = GEOSCoordSeq_create_r(geos_ctx, 2, 2);
     GEOSCoordSeq_setX_r(geos_ctx, line_seq, 0, lon1_deg);
     GEOSCoordSeq_setY_r(geos_ctx, line_seq, 0, lat1_deg);
     GEOSCoordSeq_setX_r(geos_ctx, line_seq, 1, lon2_deg);
     GEOSCoordSeq_setY_r(geos_ctx, line_seq, 1, lat2_deg);
 
-    GEOSGeometry *line = GEOSGeom_createLineString_r(geos_ctx, line_seq);
+    GEOSGeometry* line = GEOSGeom_createLineString_r(geos_ctx, line_seq);
 
     /* Check if line intersects coastline boundary */
     char intersects = GEOSIntersects_r(geos_ctx, line, coastline_boundary);
@@ -341,68 +350,136 @@ static int crosses_land(double lat1_deg, double lon1_deg, double lat2_deg, doubl
 }
 
 /* Dijkstra's algorithm */
-static int min_distance(double *dist, int *sptSet, int n) {
+static int min_distance(double* dist, int* sptSet, int n)
+{
     double min = DIJKSTRA_INFINITY;
     int min_index = 0, v;
     for (v = 0; v < n; v++)
-        if (sptSet[v]==0 && dist[v] <= min)
+        if (sptSet[v] == 0 && dist[v] <= min)
             min = dist[v], min_index = v;
     return min_index;
 }
 
-/* Dijkstra shortest path distance - works with 1D array representation */
-static double dijkstra_distance(double *graph, int M, int src, int dest) {
+/* Dijkstra shortest path distance - works with 1D array representation
+ * Also tracks the path taken through waypoints
+ *
+ * Parameters:
+ *   graph: 1D array (M*M) representing graph adjacency matrix (COLUMN-MAJOR)
+ *   M: number of nodes in graph
+ *   src: source node index
+ *   dest: destination node index
+ *   out_path: (output) pointer to receive allocated path array (caller must free)
+ *   out_path_len: (output) receives length of path (number of nodes)
+ *
+ * Returns: shortest distance from src to dest, or DIJKSTRA_INFINITY if unreachable
+ */
+static double dijkstra_distance_with_path(double* graph, int M, int src, int dest,
+                                          int** out_path, int* out_path_len)
+{
     double *dist, INFTY = DIJKSTRA_INFINITY;
-    int *sptSet, i, count, u, v;
+    int *sptSet, *parent, i, count, u, v;
 
-    dist = (double *) malloc(M*sizeof(double));
-    sptSet = (int *) calloc(M, sizeof(int));
+    dist = (double*)malloc(M * sizeof(double));
+    sptSet = (int*)calloc(M, sizeof(int));
+    parent = (int*)malloc(M * sizeof(int));
 
-    for (i = 0; i < M; i++)
+    for (i = 0; i < M; i++) {
         dist[i] = INFTY;
+        parent[i] = -1;  /* -1 indicates no parent */
+    }
     dist[src] = 0.0;
 
-    for (count = 0; count < M - 1; count++) {
+    for (count = 0; count < M - 1; count++)
+    {
         u = min_distance(dist, sptSet, M);
         sptSet[u] = 1;
-        for (v = 0; v < M; v++) {
+
+        /* Early exit if we've reached destination */
+        if (u == dest) break;
+
+        for (v = 0; v < M; v++)
+        {
             /* Use macro for readable 2D-style indexing: graph[u][v] */
-            if ((sptSet[v]==0) && (GRAPH_2D(graph, M, u, v) > 0) && (dist[u] < INFTY) &&
-                (dist[u] + GRAPH_2D(graph, M, u, v) < dist[v])) {
+            if ((sptSet[v] == 0) && (GRAPH_2D(graph, M, u, v) > 0) && (dist[u] < INFTY) &&
+                (dist[u] + GRAPH_2D(graph, M, u, v) < dist[v]))
+            {
                 dist[v] = dist[u] + GRAPH_2D(graph, M, u, v);
+                parent[v] = u;  /* Track parent for path reconstruction */
             }
         }
     }
 
     double result = dist[dest];
+
+    /* Reconstruct path if destination was reached */
+    if (result < INFTY / 2.0 && out_path && out_path_len) {
+        /* Count path length by traversing backwards */
+        int path_len = 0;
+        int node = dest;
+        while (node != -1) {
+            path_len++;
+            node = parent[node];
+        }
+
+        /* Allocate and fill path array (forward order: src -> dest) */
+        *out_path = (int*)malloc(path_len * sizeof(int));
+        *out_path_len = path_len;
+        node = dest;
+        for (i = path_len - 1; i >= 0; i--) {
+            (*out_path)[i] = node;
+            node = parent[node];
+        }
+    } else if (out_path && out_path_len) {
+        /* No path found */
+        *out_path = NULL;
+        *out_path_len = 0;
+    }
+
     free(dist);
     free(sptSet);
+    free(parent);
     return result;
 }
 
+/* ===== GLOBAL MATRICES - Single 1D representation (N*N) ===== */
+/* These matrices provide a unified global view of distances and routing */
+static double *global_distance_matrix = NULL;    // size N*N - stores final distances
+static bool *global_feasible_matrix = NULL;      // size N*N - True if direct route feasible
+static int **global_dijkstra_paths = NULL;       // size N*N - sparse array of waypoint paths
+static int *global_dijkstra_path_lengths = NULL; // size N*N - length of each path (0 if none)
+static int global_matrix_size = 0;               // Current N for allocated matrices
+
+/* Forward declarations for global matrix management */
+static void allocate_global_matrices(int N);
+static void free_global_matrices(void);
+
 /* Create feasibility matrix - check for land crossings */
-static int create_feasibility_matrix(PARAMS params) {
+static int create_feasibility_matrix(PARAMS params)
+{
     int i, j, k;
-    int m = params.SelectedSize, M = params.SelectedSize;  /* M = m now (not 2*m) */
+    int m = params.Size;
     double x1, y1, x2, y2;
-    int *F = params.FsbleLink;
+    int* F = params.FsbleLink;
     int n = MAP[iMAP].N[0];
-    double *LatDeg = MAP[iMAP].LatDeg[0];
-    double *LonDeg = MAP[iMAP].LonDeg[0];
+    double* LatDeg = MAP[iMAP].LatDeg[0];
+    double* LonDeg = MAP[iMAP].LonDeg[0];
 
     printf("  → Checking land crossings for %d locations...\n", m);
     fflush(stdout);
 
     /* Set diagonal to 1 (feasible) - COLUMN-MAJOR indexing */
-    for (i = 0; i < M; i++) {
-        F[i + M*i] = 1;
+    for (i = 0; i < m; i++)
+    {
+        F[i + m * i] = 1;
     }
 
     /* Precompute degree coordinates for each location */
-    double *lat = (double*)xmalloc((size_t)m * sizeof(double));
-    double *lon = (double*)xmalloc((size_t)m * sizeof(double));
+    double* lat = (double*)xmalloc((size_t)m * sizeof(double));
+    double* lon = (double*)xmalloc((size_t)m * sizeof(double));
 
-    for (i = 0; i < m; i++) {
+    // print m and size of params.LatLonRad[0][i]
+    for (i = 0; i < m; i++)
+    {
         lat[i] = rad_to_deg(params.LatLonRad[0][i]);
         lon[i] = rad_to_deg(params.LatLonRad[1][i]);
     }
@@ -417,22 +494,27 @@ static int create_feasibility_matrix(PARAMS params) {
 
     /* Upper-triangle only: j starts at i+1 to avoid duplicate work.
      * We set both (i,j) and (j,i) for symmetry on each update. */
-    for (i = 0; i < m; i++) {
-        for (j = i + 1; j < m; j++) {
+    for (i = 0; i < m; i++)
+    {
+        for (j = i + 1; j < m; j++)
+        {
             /* Single pair: location i to location j */
-            x1 = lat[i]; y1 = lon[i];
-            x2 = lat[j]; y2 = lon[j];
+            x1 = lat[i];
+            y1 = lon[i];
+            x2 = lat[j];
+            y2 = lon[j];
             k = crosses_land(x1, y1, x2, y2, LatDeg, LonDeg, n);
             if (k) land_crossings++;
-            F[i + M*j] = !k;  /* COLUMN-MAJOR */
-            F[j + M*i] = !k;  /* Symmetric */
+            F[i + m * j] = !k; /* COLUMN-MAJOR */
+            F[j + m * i] = !k; /* Symmetric */
 
             pairs_checked++;
 
             /* Pair-based progress every 100k checks */
-            if (pairs_checked % 100000 == 0 || pairs_checked == total_pairs) {
+            if (pairs_checked % 100000 == 0 || pairs_checked == total_pairs)
+            {
                 double pct = (100.0 * pairs_checked) / total_pairs;
-                printf("    Progress: %d/%d pairs (%.1f%%) - %d crossings found\n",
+                printf("    Land-crossing progress: %d/%d (%.1f%%) - %d crossings found\n",
                        pairs_checked, total_pairs, pct, land_crossings);
                 fflush(stdout);
             }
@@ -450,23 +532,38 @@ static int create_feasibility_matrix(PARAMS params) {
 }
 
 /* Create distance matrix */
-static void create_distance_matrix(PARAMS params) {
+static void create_distance_matrix(PARAMS params)
+{
     int i;
     int waypoint_count = 0;
 
     printf("  → Computing haversine distances...\n");
 
+    /* Allocate global matrices if not already done */
+    if (global_matrix_size != params.Size) {
+        allocate_global_matrices(params.Size);
+    }
+
     /* Set diagonal to 0 - COLUMN-MAJOR indexing */
-    for (i = 0; i < params.SelectedSize; i++)
-        params.DistMtrx[i + params.SelectedSize*i] = 0.0;
+    for (i = 0; i < params.Size; i++) {
+        params.DistMtrx[i + params.Size * i] = 0.0;
+        if (global_distance_matrix) {
+            global_distance_matrix[i + params.Size * i] = 0.0;
+        }
+        if (global_feasible_matrix) {
+            global_feasible_matrix[i + params.Size * i] = true; /* diagonal always feasible */
+        }
+    }
 
     int infeasible_links = 0;
     int feasible_links = 0;
-    int total_pairs = params.SelectedSize * (params.SelectedSize - 1) / 2;
+    int total_pairs = params.Size * (params.Size - 1) / 2;
 
     /* Calculate distances between all location pairs (upper triangle only) */
-    for (i = 0; i < params.SelectedSize; i++) {
-        for (int j = i + 1; j < params.SelectedSize; j++) {
+    for (i = 0; i < params.Size; i++)
+    {
+        for (int j = i + 1; j < params.Size; j++)
+        {
             /* Each location has one position (lat, lon) */
             double x1 = params.LatLonRad[0][i];
             double y1 = params.LatLonRad[1][i];
@@ -474,15 +571,40 @@ static void create_distance_matrix(PARAMS params) {
             double y2 = params.LatLonRad[1][j];
             double d = arc_distance(x1, y1, x2, y2);
 
-            if (params.FsbleLink[i + params.SelectedSize*j] == 0) {  /* Crosses land - COLUMN-MAJOR */
+            int idx_ij = i + params.Size * j; /* COLUMN-MAJOR */
+            int idx_ji = j + params.Size * i;
+
+            if (params.FsbleLink[idx_ij] == 0)
+            {
+                /* Crosses land */
                 d += INFEASIBLE_LINK_PENALTY;
                 infeasible_links++;
-            } else {
+
+                /* Mark as infeasible in global matrix */
+                if (global_feasible_matrix) {
+                    global_feasible_matrix[idx_ij] = false;
+                    global_feasible_matrix[idx_ji] = false;
+                }
+            }
+            else
+            {
                 feasible_links++;
+
+                /* Mark as feasible in global matrix */
+                if (global_feasible_matrix) {
+                    global_feasible_matrix[idx_ij] = true;
+                    global_feasible_matrix[idx_ji] = true;
+                }
             }
 
-            params.DistMtrx[i + params.SelectedSize*j] = d;        /* COLUMN-MAJOR */
-            params.DistMtrx[j + params.SelectedSize*i] = d;        /* Symmetric matrix */
+            params.DistMtrx[idx_ij] = d; /* COLUMN-MAJOR */
+            params.DistMtrx[idx_ji] = d; /* Symmetric matrix */
+
+            /* Store haversine distance in global matrix */
+            if (global_distance_matrix) {
+                global_distance_matrix[idx_ij] = d;
+                global_distance_matrix[idx_ji] = d;
+            }
         }
     }
 
@@ -490,28 +612,37 @@ static void create_distance_matrix(PARAMS params) {
            feasible_links, total_pairs);
 
     printf("  → Infeasible links flagged for Dijkstra: %d (%.1f%% of checked pairs)\n",
-           infeasible_links, (100.0 * infeasible_links) / (params.SelectedSize * (params.SelectedSize-1) / 2.0));
+           infeasible_links,
+           (100.0 * infeasible_links) / (params.Size * (params.Size - 1) / 2.0));
     fflush(stdout);
 
-    if (infeasible_links == 0) {
+    if (infeasible_links == 0)
+    {
         printf("  ✓ No infeasible links; skipping Dijkstra.\n");
         fflush(stdout);
         return;
     }
 
     /* Build Dijkstra graph from feasible (non-land-crossing) haversine edges only */
-    for (i = 0; i < params.SelectedSize; i++) {
-        for (int j = i + 1; j < params.SelectedSize; j++) {
-            if (params.FsbleLink[i + params.SelectedSize*j] != 0) {
-                params.Graph[i + params.SelectedSize*j] = params.DistMtrx[i + params.SelectedSize*j];
-                params.Graph[j + params.SelectedSize*i] = params.DistMtrx[j + params.SelectedSize*i];
+    for (i = 0; i < params.Size; i++)
+    {
+        for (int j = i + 1; j < params.Size; j++)
+        {
+            if (params.FsbleLink[i + params.Size * j] != 0)
+            {
+                params.Graph[i + params.Size * j] = params.DistMtrx[i + params.Size
+                    * j];
+                params.Graph[j + params.Size * i] = params.DistMtrx[j + params.Size
+                    * i];
             }
         }
     }
 
     /* Count waypoints available in this distance matrix */
-    for (i = 0; i < params.Size; i++) {
-        if (params.Type[i] == NODE_TYPE_WAYPOINT) {
+    for (i = 0; i < params.Size; i++)
+    {
+        if (params.Type[i] == NODE_TYPE_WAYPOINT)
+        {
             waypoint_count++;
         }
     }
@@ -524,37 +655,97 @@ static void create_distance_matrix(PARAMS params) {
     int dijkstra_routes = 0;
     int dijkstra_failed = 0;
     int dijkstra_success = 0;
+    int smoke_limit_hit = 0;
 
-    for (i = 0; i < params.SelectedSize; i++) {
-        /* Progress bar every 50 locations */
-        if (i > 0 && i % 50 == 0) {
-            int percent = (100 * dijkstra_pairs_checked) / infeasible_links;
-            if (percent > 100) percent = 100;
-            printf("    [");
-            for (int p = 0; p < 50; p++) {
-                if (p < percent / 2) printf("=");
-                else printf(" ");
-            }
-            printf("] %d%% (%d/%d pairs, %d routes via Dijkstra)\n",
-                   percent, dijkstra_pairs_checked, infeasible_links, dijkstra_routes);
-            fflush(stdout);
-        }
+    /* Allocate global matrices if needed */
+    if (global_matrix_size != params.Size) {
+        allocate_global_matrices(params.Size);
+    }
 
-        for (int j = i + 1; j < params.SelectedSize; j++) {
-            if (params.FsbleLink[i + params.SelectedSize*j] == 0) {  /* Crosses land - COLUMN-MAJOR */
-                double d = dijkstra_distance(params.Graph, params.SelectedSize, i, j);
-                if (d >= DIJKSTRA_INFINITY / 2.0) {
+    for (i = 0; i < params.Size; i++)
+    {
+        for (int j = i + 1; j < params.Size; j++)
+        {
+            if (params.FsbleLink[i + params.Size * j] == 0)
+            {
+                /* Crosses land - COLUMN-MAJOR */
+                if (dijkstra_pairs_checked >= DIJKSTRA_SMOKE_LIMIT)
+                {
+                    smoke_limit_hit = 1;
+                    break;
+                }
+
+                /* Compute Dijkstra path and distance */
+                int* path = NULL;
+                int path_len = 0;
+                double d = dijkstra_distance_with_path(params.Graph, params.Size, i, j,
+                                                      &path, &path_len);
+
+                if (d >= DIJKSTRA_INFINITY / 2.0)
+                {
                     /* No waypoint route found: mark infeasible */
                     d = INFEASIBLE_LINK_PENALTY;
                     dijkstra_failed++;
-                } else {
-                    dijkstra_success++;
                 }
-                params.DistMtrx[i + params.SelectedSize*j] = d;      /* COLUMN-MAJOR */
-                params.DistMtrx[j + params.SelectedSize*i] = d;
+                else
+                {
+                    dijkstra_success++;
+
+                    /* Store path in global matrix (both directions) */
+                    int idx_ij = i + params.Size * j; /* COLUMN-MAJOR */
+                    int idx_ji = j + params.Size * i;
+
+                    if (path && path_len > 0) {
+                        /* Forward direction (i->j) */
+                        global_dijkstra_paths[idx_ij] = path;
+                        global_dijkstra_path_lengths[idx_ij] = path_len;
+
+                        /* Reverse direction (j->i) - allocate and reverse the path */
+                        global_dijkstra_paths[idx_ji] = (int*)malloc(path_len * sizeof(int));
+                        global_dijkstra_path_lengths[idx_ji] = path_len;
+                        for (int k = 0; k < path_len; k++) {
+                            global_dijkstra_paths[idx_ji][k] = path[path_len - 1 - k];
+                        }
+                    }
+                }
+
+                /* Update distance matrix */
+                params.DistMtrx[i + params.Size * j] = d;
+                params.DistMtrx[j + params.Size * i] = d;
+
+                /* Store in global matrices */
+                if (global_distance_matrix) {
+                    global_distance_matrix[i + params.Size * j] = d;
+                    global_distance_matrix[j + params.Size * i] = d;
+                }
+                if (global_feasible_matrix) {
+                    global_feasible_matrix[i + params.Size * j] = false;
+                    global_feasible_matrix[j + params.Size * i] = false;
+                }
+
                 dijkstra_routes++;
+                dijkstra_pairs_checked++;
+
+                if ((dijkstra_pairs_checked % 1000) == 0)
+                {
+                    int percent = (100 * dijkstra_pairs_checked) / infeasible_links;
+                    if (percent > 100) percent = 100;
+                    printf("    Dijkstra progress: %d/%d (%.1f%%)\n",
+                           dijkstra_pairs_checked, infeasible_links, (double)percent);
+                    fflush(stdout);
+                }
             }
         }
+        if (smoke_limit_hit)
+        {
+            break;
+        }
+    }
+
+    if (smoke_limit_hit)
+    {
+        printf("  ⚠ Smoke test: stopped Dijkstra after %d pairs (limit=%d)\n",
+               dijkstra_pairs_checked, DIJKSTRA_SMOKE_LIMIT);
     }
 
     printf("  ✓ Distance matrix complete: %d waypoint routes via Dijkstra\n", dijkstra_routes);
@@ -562,31 +753,104 @@ static void create_distance_matrix(PARAMS params) {
            dijkstra_pairs_checked, waypoint_count);
     printf("  → Dijkstra path check: %d routable\n",
            dijkstra_success);
-    if (dijkstra_failed > 0) {
+    if (dijkstra_failed > 0)
+    {
         printf("  ⚠ Dijkstra failed to route %d pairs; remain INFEASIBLE\n", dijkstra_failed);
     }
 }
 
+/* ===== Global Matrix Management Functions ===== */
+
+/* Allocate global matrices for N locations */
+static void allocate_global_matrices(int N) {
+    /* Free existing matrices if any */
+    if (global_distance_matrix) free(global_distance_matrix);
+    if (global_feasible_matrix) free(global_feasible_matrix);
+    if (global_dijkstra_path_lengths) free(global_dijkstra_path_lengths);
+    if (global_dijkstra_paths) {
+        for (int i = 0; i < global_matrix_size * global_matrix_size; ++i) {
+            if (global_dijkstra_paths[i]) free(global_dijkstra_paths[i]);
+        }
+        free(global_dijkstra_paths);
+    }
+
+    /* Allocate new matrices */
+    size_t matrix_size = (size_t)N * (size_t)N;
+    global_distance_matrix = (double*)calloc(matrix_size, sizeof(double));
+    global_feasible_matrix = (bool*)calloc(matrix_size, sizeof(bool));
+    global_dijkstra_paths = (int**)calloc(matrix_size, sizeof(int*));
+    global_dijkstra_path_lengths = (int*)calloc(matrix_size, sizeof(int));
+    global_matrix_size = N;
+
+    if (!global_distance_matrix || !global_feasible_matrix ||
+        !global_dijkstra_paths || !global_dijkstra_path_lengths) {
+        fprintf(stderr, "Error: Failed to allocate global matrices for N=%d\n", N);
+        exit(1);
+    }
+}
+
+/* Free global matrices */
+static void free_global_matrices(void) {
+    if (global_distance_matrix) {
+        free(global_distance_matrix);
+        global_distance_matrix = NULL;
+    }
+    if (global_feasible_matrix) {
+        free(global_feasible_matrix);
+        global_feasible_matrix = NULL;
+    }
+    if (global_dijkstra_path_lengths) {
+        free(global_dijkstra_path_lengths);
+        global_dijkstra_path_lengths = NULL;
+    }
+    if (global_dijkstra_paths) {
+        for (int i = 0; i < global_matrix_size * global_matrix_size; ++i) {
+            if (global_dijkstra_paths[i]) free(global_dijkstra_paths[i]);
+        }
+        free(global_dijkstra_paths);
+        global_dijkstra_paths = NULL;
+    }
+    global_matrix_size = 0;
+}
+
+/* Get Dijkstra path for a given pair (i, j)
+ * Returns: pointer to path array, or NULL if no Dijkstra path exists
+ * out_length: receives the path length (number of nodes in path)
+ */
+int* get_dijkstra_path(int i, int j, int* out_length) {
+    if (!global_dijkstra_paths || i < 0 || j < 0 ||
+        i >= global_matrix_size || j >= global_matrix_size) {
+        if (out_length) *out_length = 0;
+        return NULL;
+    }
+
+    int idx = i + global_matrix_size * j; /* COLUMN-MAJOR indexing */
+    if (out_length) *out_length = global_dijkstra_path_lengths[idx];
+    return global_dijkstra_paths[idx];
+}
+
 /* Main distance_link function */
-int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
-                        double *LatLon[4], double *StartEnd,
-                        int Size, int SelectedSize) {
+int distance_link(double* DistrMtrx, int* FsbleMtrx, int* Type,
+                  double* LatLon[2], double* StartEnd,
+                  int Size)
+{
     int i;
-    int M = SelectedSize;  /* Matrix dimension = number of locations */
+    int M = Size; /* Matrix dimension = number of locations */
 
     /* Validate inputs */
-    if (!DistrMtrx || !FsbleMtrx || !Type || !LatLon || !StartEnd) {
+    if (!DistrMtrx || !FsbleMtrx || !Type || !LatLon || !StartEnd)
+    {
         fprintf(stderr, "Error: NULL pointer passed to distance_link\n");
         return -1;
     }
 
-    if (Size <= 0 || SelectedSize <= 0) {
-        fprintf(stderr, "Error: Invalid Size=%d or SelectedSize=%d\n", Size, SelectedSize);
+    if (Size <= 0)
+    {
+        fprintf(stderr, "Error: Invalid Size=%d\n", Size);
         return -1;
     }
 
     PARAMS params;
-    params.SelectedSize = SelectedSize;
     params.Type = Type;
     params.StartEnd = StartEnd;
     params.Size = Size;
@@ -594,13 +858,15 @@ int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
     params.FsbleLink = FsbleMtrx;
     params.Graph = (double*)calloc((size_t)M * (size_t)M, sizeof(double));
 
-    if (!params.Graph) {
-        fprintf(stderr, "Error: Memory allocation failed for Graph (size=%zu)\n", (size_t)M*M);
+    if (!params.Graph)
+    {
+        fprintf(stderr, "Error: Memory allocation failed for Graph (size=%zu)\n", (size_t)M * M);
         return -1;
     }
 
     /* Note: MAP structure must be initialized by load_island_bin() before calling distance_link */
-    if (MAP[0].n == 0 || MAP[0].LatDeg[0] == NULL) {
+    if (MAP[0].n == 0 || MAP[0].LatDeg[0] == NULL)
+    {
         fprintf(stderr, "Error: MAP not initialized - call load_island_bin() first\n");
         free(params.Graph);
         return -1;
@@ -609,7 +875,7 @@ int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
     /* Initialize GEOS and coastline polygon (once) */
     init_geos_coastline();
 
-    for (i=0; i<4; i++)
+    for (i = 0; i < 2; i++)
         params.LatLonRad[i] = LatLon[i];
 
     create_feasibility_matrix(params);
@@ -619,5 +885,10 @@ int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
 
     /* Note: cleanup_geos() should be called at program exit, not here */
     return 0;
+}
+
+/* Public function to cleanup global matrices */
+void cleanup_distance_matrices(void) {
+    free_global_matrices();
 }
 
