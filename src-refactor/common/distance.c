@@ -13,8 +13,6 @@
 #include "../include/geo_utils.h"
 #include <stdbool.h>
 
-/* Smoke test: cap Dijkstra to first N infeasible pairs */
-static const int DIJKSTRA_SMOKE_LIMIT = 1000;
 
 /* Forward declaration - implementation in coastline_db.c */
 extern double* load_island_bin(const char* fname, int* out_n);
@@ -363,17 +361,24 @@ static int min_distance(double* dist, int* sptSet, int n)
 /* Dijkstra shortest path distance - works with 1D array representation
  * Also tracks the path taken through waypoints
  *
+ * IMPORTANT: Uses an initialization trick to enforce waypoint routing:
+ * - Waypoints are initialized to 2*INFTY to prevent them from being visited
+ * - Stations are initialized to INFTY (can be updated/visited)
+ * - This forces the algorithm to route through waypoints, not through stations
+ *
  * Parameters:
  *   graph: 1D array (M*M) representing graph adjacency matrix (COLUMN-MAJOR)
  *   M: number of nodes in graph
- *   src: source node index
- *   dest: destination node index
+ *   n_wayp: number of waypoints (waypoints are indices 0..n_wayp-1, stations are n_wayp..M-1)
+ *   src: source node index (must be a station: src >= n_wayp)
+ *   dest: destination node index (must be a station: dest >= n_wayp)
  *   out_path: (output) pointer to receive allocated path array (caller must free)
  *   out_path_len: (output) receives length of path (number of nodes)
  *
  * Returns: shortest distance from src to dest, or DIJKSTRA_INFINITY if unreachable
  */
-static double dijkstra_distance_with_path(double* graph, int M, int src, int dest,
+static double dijkstra_distance_with_path(double* graph, int M, int n_wayp,
+                                          int src, int dest,
                                           int** out_path, int* out_path_len)
 {
     double *dist, INFTY = DIJKSTRA_INFINITY;
@@ -383,13 +388,22 @@ static double dijkstra_distance_with_path(double* graph, int M, int src, int des
     sptSet = (int*)calloc(M, sizeof(int));
     parent = (int*)malloc(M * sizeof(int));
 
-    for (i = 0; i < M; i++) {
-        dist[i] = INFTY;
-        parent[i] = -1;  /* -1 indicates no parent */
+    /* Initialize distances using the old algorithm's clever trick:
+     * Waypoints (0..n_wayp-1) get 2*INFTY: prevents them from being visited
+     * Stations (n_wayp..M-1) get INFTY: can be visited/relaxed
+     * This forces routing: src_station -> waypoint(s) -> dest_station */
+    for (i = 0; i < n_wayp; i++) {
+        dist[i] = 2 * INFTY;  /* Waypoints: blocked from relaxation */
+        parent[i] = -1;
+    }
+    for (i = n_wayp; i < M; i++) {
+        dist[i] = INFTY;      /* Stations: can be visited */
+        parent[i] = -1;
     }
     dist[src] = 0.0;
 
-    for (count = 0; count < M - 1; count++)
+    /* Loop only over stations (n_wayp to M-1) - skips waypoint relaxation */
+    for (count = n_wayp; count < M - 1; count++)
     {
         u = min_distance(dist, sptSet, M);
         sptSet[u] = 1;
@@ -397,14 +411,24 @@ static double dijkstra_distance_with_path(double* graph, int M, int src, int des
         /* Early exit if we've reached destination */
         if (u == dest) break;
 
-        for (v = 0; v < M; v++)
+        /* Check direct edge to destination (line 269-273 in old code) */
+        v = dest;
+        if ((sptSet[v] == 0) && (GRAPH_2D(graph, M, u, v) > 0) && (dist[u] < INFTY) &&
+            (dist[u] + GRAPH_2D(graph, M, u, v) < dist[v]))
         {
-            /* Use macro for readable 2D-style indexing: graph[u][v] */
+            dist[v] = dist[u] + GRAPH_2D(graph, M, u, v);
+            parent[v] = u;
+        }
+
+        /* Only relax edges to other stations (not waypoints) */
+        /* This mirrors line 275 in old code: for (v = n_wayp; v < n; v++) */
+        for (v = n_wayp; v < M; v++)
+        {
             if ((sptSet[v] == 0) && (GRAPH_2D(graph, M, u, v) > 0) && (dist[u] < INFTY) &&
                 (dist[u] + GRAPH_2D(graph, M, u, v) < dist[v]))
             {
                 dist[v] = dist[u] + GRAPH_2D(graph, M, u, v);
-                parent[v] = u;  /* Track parent for path reconstruction */
+                parent[v] = u;
             }
         }
     }
@@ -655,7 +679,6 @@ static void create_distance_matrix(PARAMS params)
     int dijkstra_routes = 0;
     int dijkstra_failed = 0;
     int dijkstra_success = 0;
-    int smoke_limit_hit = 0;
 
     /* Allocate global matrices if needed */
     if (global_matrix_size != params.Size) {
@@ -669,17 +692,12 @@ static void create_distance_matrix(PARAMS params)
             if (params.FsbleLink[i + params.Size * j] == 0)
             {
                 /* Crosses land - COLUMN-MAJOR */
-                if (dijkstra_pairs_checked >= DIJKSTRA_SMOKE_LIMIT)
-                {
-                    smoke_limit_hit = 1;
-                    break;
-                }
 
                 /* Compute Dijkstra path and distance */
                 int* path = NULL;
                 int path_len = 0;
-                double d = dijkstra_distance_with_path(params.Graph, params.Size, i, j,
-                                                      &path, &path_len);
+                double d = dijkstra_distance_with_path(params.Graph, params.Size, waypoint_count,
+                                                      i, j, &path, &path_len);
 
                 if (d >= DIJKSTRA_INFINITY / 2.0)
                 {
@@ -726,7 +744,7 @@ static void create_distance_matrix(PARAMS params)
                 dijkstra_routes++;
                 dijkstra_pairs_checked++;
 
-                if ((dijkstra_pairs_checked % 1000) == 0)
+                if ((dijkstra_pairs_checked % 10000) == 0)
                 {
                     int percent = (100 * dijkstra_pairs_checked) / infeasible_links;
                     if (percent > 100) percent = 100;
@@ -736,16 +754,6 @@ static void create_distance_matrix(PARAMS params)
                 }
             }
         }
-        if (smoke_limit_hit)
-        {
-            break;
-        }
-    }
-
-    if (smoke_limit_hit)
-    {
-        printf("  ⚠ Smoke test: stopped Dijkstra after %d pairs (limit=%d)\n",
-               dijkstra_pairs_checked, DIJKSTRA_SMOKE_LIMIT);
     }
 
     printf("  ✓ Distance matrix complete: %d waypoint routes via Dijkstra\n", dijkstra_routes);

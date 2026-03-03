@@ -75,6 +75,20 @@ static void parse_station_comment(const char *raw_comment, int *depth_thrown, in
     free(comment_copy);
 }
 
+/* Verify that waypoints are loaded last (runtime validation) */
+static int verify_waypoints_last(const int* types, int n)
+{
+    int seen_waypoint = 0;
+    for (int i = 0; i < n; i++) {
+        if (types[i] == NODE_TYPE_WAYPOINT) {
+            seen_waypoint = 1;
+        } else if (seen_waypoint) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /*
  * Compute and store distance matrix in database
  * Queries locations from database, calls distance computation, stores results
@@ -84,9 +98,10 @@ static int compute_and_store_distances(sqlite3 *db) {
     printf("  Computing distances with Dijkstra waypoint routing\n");
     printf("  Loading ALL locations (including waypoints for routing)\n");
 
-    /* Query ALL locations (including waypoints for Dijkstra routing) */
+    /* Query ALL locations (including waypoints for Dijkstra routing), with waypoints forced last. */
     const char *query_sql =
-        "SELECT id, lat, lon, type FROM locations ORDER BY id;";
+        "SELECT id, lat, lon, type FROM locations "
+        "ORDER BY CASE WHEN type = 3 THEN 1 ELSE 0 END, id;";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db, query_sql, -1, &stmt, NULL);
@@ -145,6 +160,18 @@ static int compute_and_store_distances(sqlite3 *db) {
         i++;
     }
     sqlite3_finalize(stmt);
+
+    if (!verify_waypoints_last(types, n)) {
+        fprintf(stderr, "  ✗ Location ordering error: waypoints are not at the bottom\n");
+        free(loc_ids);
+        free(types);
+        for (int k = 0; k < 2; k++) free(latlon_rad[k]);
+        return SQLITE_ERROR;
+    }
+
+    if (n_waypoints > 0) {
+        printf("  ✓ Verified ordering: non-waypoints first, waypoints last\n");
+    }
 
     /* Initialize MAP structure with coastline data from database (sets bounding box via SQL MIN/MAX) */
     printf("\n=== Loading Coastline for Distance Computation ===\n");
