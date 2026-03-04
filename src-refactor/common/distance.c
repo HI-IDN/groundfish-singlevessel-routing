@@ -744,7 +744,7 @@ static void create_distance_matrix(PARAMS params)
                 dijkstra_routes++;
                 dijkstra_pairs_checked++;
 
-                if ((dijkstra_pairs_checked % 10000) == 0)
+                if ((dijkstra_pairs_checked % 50000) == 0)
                 {
                     int percent = (100 * dijkstra_pairs_checked) / infeasible_links;
                     if (percent > 100) percent = 100;

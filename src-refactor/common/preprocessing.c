@@ -224,6 +224,7 @@ static int compute_and_store_distances(sqlite3 *db) {
 
     int stored = 0;
     int skipped = 0;
+    int paths_stored = 0;
     for (i = 0; i < n; i++) {
         /* Skip if source is a waypoint */
         if (types[i] == NODE_TYPE_WAYPOINT) {
@@ -244,7 +245,33 @@ static int compute_and_store_distances(sqlite3 *db) {
             sqlite3_bind_int(insert_stmt, 2, loc_ids[j]);
             sqlite3_bind_double(insert_stmt, 3, dist);
             sqlite3_bind_int(insert_stmt, 4, 0);        /* crosses_land = 0 (direct route for now) */
-            sqlite3_bind_null(insert_stmt, 5);          /* waypoint_path = NULL (no waypoints for now) */
+
+            /* Retrieve Dijkstra waypoint path if available */
+            int path_len = 0;
+            int* path = get_dijkstra_path(i, j, &path_len);
+
+            if (path && path_len > 0) {
+                /* Build JSON array: [id1, id2, id3, ...] */
+                /* Allocate buffer for JSON - conservative estimate: 20 chars per ID + brackets/commas */
+                int json_buffer_size = path_len * 20 + 10;
+                char *json_path = (char*)malloc(json_buffer_size);
+                int json_pos = 0;
+
+                json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, "[");
+                for (int k = 0; k < path_len; k++) {
+                    if (k > 0) {
+                        json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, ",");
+                    }
+                    json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, "%d", loc_ids[path[k]]);
+                }
+                json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, "]");
+
+                sqlite3_bind_text(insert_stmt, 5, json_path, -1, SQLITE_TRANSIENT);
+                paths_stored++;
+                free(json_path);
+            } else {
+                sqlite3_bind_null(insert_stmt, 5);  /* No path found */
+            }
 
             if (sqlite3_step(insert_stmt) != SQLITE_DONE) {
                 fprintf(stderr, "  ✗ Insert error: %s\n", sqlite3_errmsg(db));
@@ -265,6 +292,7 @@ static int compute_and_store_distances(sqlite3 *db) {
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
 
     printf("  ✓ Stored %d distance pairs (skipped %d waypoint pairs)\n", stored, skipped);
+    printf("  ✓ Stored waypoint paths for %d distance pairs\n", paths_stored);
 
     /* Cleanup */
     free(D);
