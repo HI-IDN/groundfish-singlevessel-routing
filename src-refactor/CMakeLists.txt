@@ -55,14 +55,16 @@ add_custom_target(preprocess
 )
 
 # ============================================================
-# 2. Phase 0: Initialization (init/)
+# 2. Unified GSP Solver (both init and sweep modes)
 # ============================================================
 
-add_executable(gsp_init
-    init/gsp_init.c
+add_executable(gsp
+    gsp.c
+    init/gsp_init_mode.c
+    sweep/gsp_sweep_mode.c
 )
 
-target_link_libraries(gsp_init
+target_link_libraries(gsp
     ${SQLITE3_LIBRARIES}
     m
 )
@@ -78,29 +80,29 @@ set(SOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../sol)
 file(MAKE_DIRECTORY ${SOL_DIR})
 
 add_custom_target(run_init_nn
-    COMMAND gsp_init nn ${DATABASE} ${SOL_DIR}/init_nn.json ${CONFIG_YAML}
-    DEPENDS gsp_init
+    COMMAND gsp --mode init --strategy nn --database ${DATABASE} --output ${SOL_DIR}/init_nn.json --config ${CONFIG_YAML}
+    DEPENDS gsp
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Phase 0: NN (Nearest Neighbor)"
 )
 
 add_custom_target(run_init_ge
-    COMMAND gsp_init ge ${DATABASE} ${SOL_DIR}/init_ge.json ${CONFIG_YAML}
-    DEPENDS gsp_init
+    COMMAND gsp --mode init --strategy ge --database ${DATABASE} --output ${SOL_DIR}/init_ge.json --config ${CONFIG_YAML}
+    DEPENDS gsp
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Phase 0: GE (Greedy Edge) - NOT YET IMPLEMENTED"
 )
 
 add_custom_target(run_init_ci
-    COMMAND gsp_init ci ${DATABASE} ${SOL_DIR}/init_ci.json ${CONFIG_YAML}
-    DEPENDS gsp_init
+    COMMAND gsp --mode init --strategy ci --database ${DATABASE} --output ${SOL_DIR}/init_ci.json --config ${CONFIG_YAML}
+    DEPENDS gsp
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Phase 0: CI (Cheapest Insertion) - NOT YET IMPLEMENTED"
 )
 
 add_custom_target(run_init_opt
-    COMMAND gsp_init opt ${DATABASE} ${SOL_DIR}/init_opt.json ${CONFIG_YAML}
-    DEPENDS gsp_init
+    COMMAND gsp --mode init --strategy opt --database ${DATABASE} --output ${SOL_DIR}/init_opt.json --config ${CONFIG_YAML} --time-limit 600
+    DEPENDS gsp
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Phase 0: OPT (Optimal NP-MIP) - NOT YET IMPLEMENTED"
 )
@@ -109,6 +111,6 @@ add_custom_target(run_init_opt
 # Install
 # ============================================================
 
-install(TARGETS gsp_init
+install(TARGETS gsp
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )
