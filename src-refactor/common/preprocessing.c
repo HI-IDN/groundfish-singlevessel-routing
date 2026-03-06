@@ -374,10 +374,16 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         /* Boats table */
         "CREATE TABLE boats ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  name TEXT NOT NULL,"
-        "  capacity INT NOT NULL,"
-        "  location_id INTEGER,"
-        "  FOREIGN KEY (location_id) REFERENCES locations(id)"
+        "  start_location_id INTEGER REFERENCES locations(id),"
+        "  end_location_id INTEGER REFERENCES locations(id),"
+        "  capacity INTEGER,"
+        "  c1 INTEGER,"
+        "  c2 INTEGER,"
+        "  c3 INTEGER,"
+        "  c4 INTEGER,"
+        "  c5 INTEGER,"
+        "  c6 INTEGER,"
+        "  name TEXT"
         ");"
 
         /* Stations table - NO boat_id, NO reitur/tog, pure station data */
@@ -411,11 +417,11 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
         /* Survey assignment table - maps boats to stations/ports with order */
         "CREATE TABLE survey_2023 ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT," /* Order in the survey route */
         "  boat_id INTEGER NOT NULL,"
         "  location_type INTEGER,"  /* NODE_TYPE_STATION or NODE_TYPE_PORT */
         "  location_id INTEGER NOT NULL,"  /* FK to stations.id or ports.id */
-        "  order_num INTEGER,"  /* Order in the survey route */
+        "  segment INTEGER,"  /* Each segment is a trip at sea */
         "  FOREIGN KEY (boat_id) REFERENCES boats(id)"
         ");"
 
@@ -456,7 +462,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     /* Prepare statements */
     sqlite3_stmt *loc_stmt, *boat_stmt, *stat_stmt, *port_stmt, *wayp_stmt, *survey_stmt;
     sqlite3_prepare_v2(db, "INSERT INTO locations (type, easting, northing, lat, lon) VALUES (?, ?, ?, ?, ?);", -1, &loc_stmt, NULL);
-    sqlite3_prepare_v2(db, "INSERT INTO boats (name, capacity, location_id) VALUES (?, ?, ?);", -1, &boat_stmt, NULL);
+    sqlite3_prepare_v2(db, "INSERT INTO boats (start_location_id, end_location_id, capacity, c1, c2, c3, c4, c5, c6, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &boat_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO stations (amount, start_location_id, end_location_id, depth_thrown, depth_haul, comment) VALUES (?, ?, ?, ?, ?, ?);", -1, &stat_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO ports (name, selected, location_id) VALUES (?, ?, ?);", -1, &port_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO waypoints (location_id) VALUES (?);", -1, &wayp_stmt, NULL);
@@ -469,16 +475,28 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
     for (int i = 0; i < items->n; i++) {
         if (items->a[i].Type == tSHIP) {
-            /* Insert boat location */
-            int loc_id = insert_location(loc_stmt, NODE_TYPE_BOAT,
+            /* Insert boat location for start */
+            int start_loc_id = insert_location(loc_stmt, NODE_TYPE_BOAT,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
             loc_count++;
 
-            /* Insert boat (strip quotes from name) */
+            /* Insert boat location for end */
+            int end_loc_id = insert_location(loc_stmt, NODE_TYPE_BOAT,
+                items->a[i].LatLonDegMin[2], items->a[i].LatLonDegMin[3]);
+            loc_count++;
+
+            /* Insert boat with all columns */
             char *clean_name = strip_quotes(items->a[i].Name);
-            sqlite3_bind_text(boat_stmt, 1, clean_name, -1, SQLITE_TRANSIENT);
-            sqlite3_bind_double(boat_stmt, 2, items->a[i].BoatData[4]);
-            sqlite3_bind_int(boat_stmt, 3, loc_id);
+            sqlite3_bind_int(boat_stmt, 1, start_loc_id);
+            sqlite3_bind_int(boat_stmt, 2, end_loc_id);
+            sqlite3_bind_int(boat_stmt, 3, (int)items->a[i].BoatData[4]);  /* capacity */
+            sqlite3_bind_int(boat_stmt, 4, (int)items->a[i].BoatData[5]);  /* c1 */
+            sqlite3_bind_int(boat_stmt, 5, (int)items->a[i].BoatData[6]);  /* c2 */
+            sqlite3_bind_int(boat_stmt, 6, (int)items->a[i].BoatData[7]);  /* c3 */
+            sqlite3_bind_int(boat_stmt, 7, (int)items->a[i].BoatData[8]);  /* c4 */
+            sqlite3_bind_int(boat_stmt, 8, (int)items->a[i].BoatData[9]);  /* c5 */
+            sqlite3_bind_int(boat_stmt, 9, (int)items->a[i].BoatData[10]);  /* c6 */
+            sqlite3_bind_text(boat_stmt, 10, clean_name, -1, SQLITE_TRANSIENT);
             sqlite3_step(boat_stmt);
             current_boat_id = (int)sqlite3_last_insert_rowid(db);
             sqlite3_reset(boat_stmt);
