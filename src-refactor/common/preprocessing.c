@@ -407,9 +407,13 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         /* Stations table - NO boat_id, NO reitur/tog, pure station data */
         "CREATE TABLE stations ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  amount REAL,"
+        "  ext_id INTEGER,"
         "  start_location_id INTEGER,"
         "  end_location_id INTEGER,"
+        "  c1 INTEGER,"
+        "  c2 INTEGER,"
+        "  c3 INTEGER,"
+        "  amount INTEGER,"
         "  depth_thrown INTEGER,"     /* botndypi_kastad (depth when thrown/cast) */
         "  depth_haul INTEGER,"       /* botndypi_hift (depth when hauled) */
         "  comment TEXT,"             /* Cleaned comment (without depth info) */
@@ -482,10 +486,10 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     sqlite3_prepare_v2(db, "INSERT INTO locations (easting, northing, lat, lon) VALUES (?, ?, ?, ?);", -1, &loc_insert_stmt, NULL);
     sqlite3_prepare_v2(db, "SELECT id FROM locations WHERE easting = ? AND northing = ?;", -1, &loc_select_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO boats (start_location_id, end_location_id, capacity, c1, c2, c3, c4, c5, c6, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &boat_stmt, NULL);
-    sqlite3_prepare_v2(db, "INSERT INTO stations (amount, start_location_id, end_location_id, depth_thrown, depth_haul, comment) VALUES (?, ?, ?, ?, ?, ?);", -1, &stat_stmt, NULL);
+    sqlite3_prepare_v2(db, "INSERT INTO stations (ext_id, start_location_id, end_location_id, c1, c2, c3, amount, depth_thrown, depth_haul, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &stat_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO ports (name, selected, location_id) VALUES (?, ?, ?);", -1, &port_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO waypoints (location_id) VALUES (?);", -1, &wayp_stmt, NULL);
-    sqlite3_prepare_v2(db, "INSERT INTO survey_2023 (boat_id, location_type, location_id, order_num) VALUES (?, ?, ?, ?);", -1, &survey_stmt, NULL);
+    sqlite3_prepare_v2(db, "INSERT INTO survey_2023 (boat_id, location_type, location_id, segment) VALUES (?, ?, ?, ?);", -1, &survey_stmt, NULL);
 
     int boat_count = 0, stat_count = 0, port_count = 0, wayp_count = 0, survey_count = 0;
     int current_boat_id = 0;
@@ -537,13 +541,17 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
             char *clean_comment = NULL;
             parse_station_comment(items->a[i].Comment, &depth_thrown, &depth_haul, &clean_comment);
 
-            /* Insert station (NO boat_id, NO reitur/tog) */
-            sqlite3_bind_double(stat_stmt, 1, items->a[i].Amount);
+            /* Insert station */
+            sqlite3_bind_int(stat_stmt, 1, (int)items->a[i].StationData[0]);   /* ext_id (column 2) */
             sqlite3_bind_int(stat_stmt, 2, start_loc_id);
             sqlite3_bind_int(stat_stmt, 3, end_loc_id);
-            sqlite3_bind_int(stat_stmt, 4, depth_thrown);
-            sqlite3_bind_int(stat_stmt, 5, depth_haul);
-            sqlite3_bind_text(stat_stmt, 6, clean_comment ? clean_comment : "", -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stat_stmt, 4, (int)items->a[i].StationData[1]);   /* c1 (column 3) */
+            sqlite3_bind_int(stat_stmt, 5, (int)items->a[i].StationData[2]);   /* c2 (column 4) */
+            sqlite3_bind_int(stat_stmt, 6, (int)items->a[i].StationData[8]);   /* c3 (column 10) */
+            sqlite3_bind_int(stat_stmt, 7, (int)items->a[i].StationData[7]);   /* amount (column 9) */
+            sqlite3_bind_int(stat_stmt, 8, depth_thrown);
+            sqlite3_bind_int(stat_stmt, 9, depth_haul);
+            sqlite3_bind_text(stat_stmt, 10, clean_comment ? clean_comment : "", -1, SQLITE_TRANSIENT);
             sqlite3_step(stat_stmt);
             int station_id = (int)sqlite3_last_insert_rowid(db);
             sqlite3_reset(stat_stmt);

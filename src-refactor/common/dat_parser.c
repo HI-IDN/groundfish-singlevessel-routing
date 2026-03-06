@@ -146,8 +146,6 @@ void read_dat_file(const char *fname, const char *ship_name_plain,
                 memset(&it, 0, sizeof(it));
                 it.Type = tSHIP;
                 it.Name = xstrdup(ship_token);
-                it.Amount = 0;
-                it.ExtraTime = 0;
                 it.RawLine = xstrdup(line);
 
                 char *hash = strchr(line, '#');
@@ -180,13 +178,10 @@ void read_dat_file(const char *fname, const char *ship_name_plain,
                     Item it;
                     memset(&it, 0, sizeof(it));
                     it.Type = tSTAT;
-                    it.Fixed = (datai[2] == 2);
-                    it.Rotated = (datai[2] == 1);
-                    it.Amount = (double)datai[7];
-                    it.ExtraTime = (double)datai[8];
-                    it.Reitur = abs(datai[0]);
-                    it.Tog = abs(datai[1]);
                     it.RawLine = xstrdup(line);
+
+                    it.StationDataLen = 9;
+                    for (int s = 0; s < 9; s++) it.StationData[s] = (double)datai[s];
 
                     char *hash = strchr(line, '#');
                     if (hash) {
@@ -219,8 +214,6 @@ void read_dat_file(const char *fname, const char *ship_name_plain,
                 memset(&it, 0, sizeof(it));
                 it.Type = tPORT;
                 it.Name = xstrdup(tok[3]);
-                it.Amount = 0;
-                it.ExtraTime = 0;
                 it.PortSelected = atoi(tok[4]);
                 if (skip_ports) it.PortSelected = 0;
                 it.RawLine = xstrdup(line);
@@ -251,8 +244,6 @@ void read_dat_file(const char *fname, const char *ship_name_plain,
                 memset(&it, 0, sizeof(it));
                 it.Type = tWAYP;
                 it.Name = xstrdup("Wayp");
-                it.Amount = 0;
-                it.ExtraTime = 0;
                 it.RawLine = xstrdup(line);
 
                 char *hash = strchr(line, '#');
@@ -318,8 +309,6 @@ void read_dat_file_all_boats(const char *fname, ItemVec *out_items, int skip_por
                 memset(&it, 0, sizeof(it));
                 it.Type = tSHIP;
                 it.Name = xstrdup(tok[12]);
-                it.Amount = 0;
-                it.ExtraTime = 0;
                 it.RawLine = xstrdup(line);
 
                 char *hash = strchr(line, '#');
@@ -344,7 +333,7 @@ void read_dat_file_all_boats(const char *fname, ItemVec *out_items, int skip_por
                 item_vec_push(out_items, it);
                 boat_count++;
             }
-        } else if (strcmp(se, "STAT") == 0 && boat_count > 0) {
+        } else if (strcmp(se, "STAT") == 0) {
             if (nt >= 10) {
                 int datai[9];
                 for (int i = 0; i < 9; i++) datai[i] = atoi(tok[1 + i]);
@@ -353,13 +342,10 @@ void read_dat_file_all_boats(const char *fname, ItemVec *out_items, int skip_por
                     Item it;
                     memset(&it, 0, sizeof(it));
                     it.Type = tSTAT;
-                    it.Fixed = (datai[2] == 2);
-                    it.Rotated = (datai[2] == 1);
-                    it.Amount = (double)datai[7];
-                    it.ExtraTime = (double)datai[8];
-                    it.Reitur = abs(datai[0]);
-                    it.Tog = abs(datai[1]);
                     it.RawLine = xstrdup(line);
+
+                    it.StationDataLen = 9;
+                    for (int s = 0; s < 9; s++) it.StationData[s] = (double)datai[s];
 
                     char *hash = strchr(line, '#');
                     if (hash) {
@@ -386,14 +372,12 @@ void read_dat_file_all_boats(const char *fname, ItemVec *out_items, int skip_por
                     item_vec_push(out_items, it);
                 }
             }
-        } else if (strcmp(se, "PORT") == 0 && boat_count > 0) {
+        } else if (strcmp(se, "PORT") == 0) {
             if (nt >= 5) {
                 Item it;
                 memset(&it, 0, sizeof(it));
                 it.Type = tPORT;
                 it.Name = xstrdup(tok[3]);
-                it.Amount = 0;
-                it.ExtraTime = 0;
                 it.PortSelected = atoi(tok[4]);
                 if (skip_ports) it.PortSelected = 0;
                 it.RawLine = xstrdup(line);
@@ -424,8 +408,6 @@ void read_dat_file_all_boats(const char *fname, ItemVec *out_items, int skip_por
                 memset(&it, 0, sizeof(it));
                 it.Type = tWAYP;
                 it.Name = xstrdup("Wayp");
-                it.Amount = 0;
-                it.ExtraTime = 0;
                 it.RawLine = xstrdup(line);
 
                 char *hash = strchr(line, '#');

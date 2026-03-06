@@ -12,8 +12,7 @@ INNER JOIN locations l ON w.location_id = l.id
 ORDER BY l.id;
 " > waypoints.new
 # manual comparison matches exactly
-diff waypoints.old waypoints.new
-#rm waypoints.old waypoints.new
+rm waypoints.old waypoints.new
 
 grep "^PORT" dat/data2023spring.dat > ports.old
 sqlite3 -separator " " dat/gsp_data.db "
@@ -28,8 +27,7 @@ INNER JOIN locations l ON p.location_id = l.id
 ORDER BY p.id;
 " > ports.new
 # manual comparison matches exactly
-diff ports.old ports.new
-# rm ports.new ports.old
+rm ports.new ports.old
 
 grep "^BOAT" dat/data2023spring.dat > boats.old
 sqlite3 -separator " " dat/gsp_data.db "
@@ -51,24 +49,24 @@ INNER JOIN locations l2 ON b.end_location_id = l2.id
 ORDER BY b.id;
 " > boats.new
 # manual comparison matches exactly
-diff boats.old boats.new
-# rm boats.new boats.old
+rm boats.new boats.old
 
 grep "^STAT" dat/data2023spring.dat > stations.old
-sqlite3 -header -separator " " dat/gsp_data.db "
+sqlite3 -separator " " dat/gsp_data.db "
 SELECT
   'STAT' as type,
-  s.id,
-  '?',
-  '?',
+  s.ext_id,
+  s.c1,
+  s.c2,
   l1.easting, l1.northing,
   l2.easting, l2.northing,
-  '?',
-  '?',
-  ' #   '|| s.comment ||'\\\ botndypi_kastad= '||s.depth_thrown||' botndypi_hift= '||s.depth_haul||' \\\' as comment
+  s.amount,
+  s.c3,
+  ' #  '|| s.comment ||'\\\ botndypi_kastad= '||s.depth_thrown||' botndypi_hift= '||s.depth_haul||' \\\' as comment
 FROM stations s
 INNER JOIN locations l1 ON s.start_location_id = l1.id
 INNER JOIN locations l2 ON s.end_location_id = l2.id
 ORDER BY s.id;
 " > stations.new
-head stations.old stations.new
+# manual comparison matches exactly
+rm stations.old stations.new

@@ -15,20 +15,16 @@ enum {
 /* ---------- Item structure (single record from .dat) ---------- */
 typedef struct {
     int Type;
-    int Fixed;
-    int Rotated;
     double LatLonRad[4];      /* radians */
     double LatLonDegMin[4];   /* original degmin numbers (needed for crossesland) */
     char *Name;
     char *RawLine;
     char *Comment;
-    int Reitur;
-    int Tog;
     int PortSelected;
     double BoatData[11];
     int BoatDataLen;
-    double Amount;
-    double ExtraTime;
+    double StationData[9];
+    int StationDataLen;
 } Item;
 
 /* ---------- ItemVec (dynamic array of Items) ---------- */
