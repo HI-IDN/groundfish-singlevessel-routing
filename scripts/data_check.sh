@@ -12,7 +12,8 @@ INNER JOIN locations l ON w.location_id = l.id
 ORDER BY l.id;
 " > waypoints.new
 # manual comparison matches exactly
-rm waypoints.old waypoints.new
+diff waypoints.old waypoints.new
+#rm waypoints.old waypoints.new
 
 grep "^PORT" dat/data2023spring.dat > ports.old
 sqlite3 -separator " " dat/gsp_data.db "
@@ -26,7 +27,9 @@ FROM ports p
 INNER JOIN locations l ON p.location_id = l.id
 ORDER BY p.id;
 " > ports.new
-# manual comparison does NOT match
+# manual comparison matches exactly
+diff ports.old ports.new
+# rm ports.new ports.old
 
 grep "^BOAT" dat/data2023spring.dat > boats.old
 sqlite3 -separator " " dat/gsp_data.db "
@@ -47,9 +50,9 @@ INNER JOIN locations l1 ON b.start_location_id = l1.id
 INNER JOIN locations l2 ON b.end_location_id = l2.id
 ORDER BY b.id;
 " > boats.new
-head boats.old boats.new
-# Missing 6 boats columns, and 2 locations columns are OFF
-
+# manual comparison matches exactly
+diff boats.old boats.new
+# rm boats.new boats.old
 
 grep "^STAT" dat/data2023spring.dat > stations.old
 sqlite3 -header -separator " " dat/gsp_data.db "

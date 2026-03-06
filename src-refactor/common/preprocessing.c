@@ -98,10 +98,14 @@ static int compute_and_store_distances(sqlite3 *db) {
     printf("  Computing distances with Dijkstra waypoint routing\n");
     printf("  Loading ALL locations (including waypoints for routing)\n");
 
-    /* Query ALL locations (including waypoints for Dijkstra routing), with waypoints forced last. */
+    /* Query ALL locations, joining with waypoints table to identify waypoint locations.
+     * Waypoints must be ordered last for Dijkstra routing. */
     const char *query_sql =
-        "SELECT id, lat, lon, type FROM locations "
-        "ORDER BY CASE WHEN type = 3 THEN 1 ELSE 0 END, id;";
+        "SELECT l.id, l.lat, l.lon, "
+        "  CASE WHEN w.id IS NOT NULL THEN 1 ELSE 0 END as is_waypoint "
+        "FROM locations l "
+        "LEFT JOIN waypoints w ON l.id = w.location_id "
+        "ORDER BY is_waypoint, l.id;";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db, query_sql, -1, &stmt, NULL);
@@ -116,8 +120,8 @@ static int compute_and_store_distances(sqlite3 *db) {
     int n = 0;
     int n_waypoints = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        int type = sqlite3_column_int(stmt, 3);
-        if (type == NODE_TYPE_WAYPOINT) n_waypoints++;
+        int is_waypoint = sqlite3_column_int(stmt, 3);
+        if (is_waypoint) n_waypoints++;
         n++;
     }
     sqlite3_reset(stmt);
@@ -148,7 +152,10 @@ static int compute_and_store_distances(sqlite3 *db) {
         loc_ids[i] = sqlite3_column_int(stmt, 0);
         double lat_deg = sqlite3_column_double(stmt, 1);  /* Database stores decimal degrees as REAL */
         double lon_deg = sqlite3_column_double(stmt, 2);  /* Already negative for western hemisphere */
-        types[i] = sqlite3_column_int(stmt, 3);
+        int is_waypoint = sqlite3_column_int(stmt, 3);
+
+        /* Set type for distance computation (NODE_TYPE_WAYPOINT = 3 for waypoints) */
+        types[i] = is_waypoint ? NODE_TYPE_WAYPOINT : 0;  /* Non-waypoints can be any non-3 value */
 
         /* Convert decimal degrees to radians */
         double lat_rad = deg_to_rad(lat_deg);
@@ -317,20 +324,32 @@ static char* strip_quotes(const char *name) {
     return result;
 }
 
-/* Helper to insert location and return its ID */
-static int insert_location(sqlite3_stmt *stmt, int type, int lat_degmin, int lon_degmin) {
+/* Helper to insert location and return its ID (reuses existing location if coordinates match) */
+static int insert_location(sqlite3_stmt *insert_stmt, sqlite3_stmt *select_stmt, int lat_degmin, int lon_degmin) {
     /* Convert degmin integers to decimal degrees using helper function */
     double lat_deg = degmin_to_deg(lat_degmin);
     double lon_deg = degmin_to_deg_lon(lon_degmin);  /* Applies western hemisphere negation */
 
-    sqlite3_bind_int(stmt, 1, type);
-    sqlite3_bind_int(stmt, 2, lat_degmin);
-    sqlite3_bind_int(stmt, 3, lon_degmin);
-    sqlite3_bind_double(stmt, 4, lat_deg);
-    sqlite3_bind_double(stmt, 5, lon_deg);
-    sqlite3_step(stmt);
-    int loc_id = (int)sqlite3_last_insert_rowid(sqlite3_db_handle(stmt));
-    sqlite3_reset(stmt);
+    /* First check if this location already exists */
+    sqlite3_bind_int(select_stmt, 1, lat_degmin);
+    sqlite3_bind_int(select_stmt, 2, lon_degmin);
+
+    if (sqlite3_step(select_stmt) == SQLITE_ROW) {
+        /* Location exists, return its ID */
+        int loc_id = sqlite3_column_int(select_stmt, 0);
+        sqlite3_reset(select_stmt);
+        return loc_id;
+    }
+    sqlite3_reset(select_stmt);
+
+    /* Location doesn't exist, insert it */
+    sqlite3_bind_int(insert_stmt, 1, lat_degmin);
+    sqlite3_bind_int(insert_stmt, 2, lon_degmin);
+    sqlite3_bind_double(insert_stmt, 3, lat_deg);
+    sqlite3_bind_double(insert_stmt, 4, lon_deg);
+    sqlite3_step(insert_stmt);
+    int loc_id = (int)sqlite3_last_insert_rowid(sqlite3_db_handle(insert_stmt));
+    sqlite3_reset(insert_stmt);
     return loc_id;
 }
 
@@ -363,7 +382,6 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         /* Locations table - stores raw degmin format only */
         "CREATE TABLE locations ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  type INT,"
         "  easting INT,"
         "  northing INT,"
         "  lat REAL,"
@@ -460,15 +478,16 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
 
     /* Prepare statements */
-    sqlite3_stmt *loc_stmt, *boat_stmt, *stat_stmt, *port_stmt, *wayp_stmt, *survey_stmt;
-    sqlite3_prepare_v2(db, "INSERT INTO locations (type, easting, northing, lat, lon) VALUES (?, ?, ?, ?, ?);", -1, &loc_stmt, NULL);
+    sqlite3_stmt *loc_insert_stmt, *loc_select_stmt, *boat_stmt, *stat_stmt, *port_stmt, *wayp_stmt, *survey_stmt;
+    sqlite3_prepare_v2(db, "INSERT INTO locations (easting, northing, lat, lon) VALUES (?, ?, ?, ?);", -1, &loc_insert_stmt, NULL);
+    sqlite3_prepare_v2(db, "SELECT id FROM locations WHERE easting = ? AND northing = ?;", -1, &loc_select_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO boats (start_location_id, end_location_id, capacity, c1, c2, c3, c4, c5, c6, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &boat_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO stations (amount, start_location_id, end_location_id, depth_thrown, depth_haul, comment) VALUES (?, ?, ?, ?, ?, ?);", -1, &stat_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO ports (name, selected, location_id) VALUES (?, ?, ?);", -1, &port_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO waypoints (location_id) VALUES (?);", -1, &wayp_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO survey_2023 (boat_id, location_type, location_id, order_num) VALUES (?, ?, ?, ?);", -1, &survey_stmt, NULL);
 
-    int boat_count = 0, stat_count = 0, port_count = 0, wayp_count = 0, loc_count = 0, survey_count = 0;
+    int boat_count = 0, stat_count = 0, port_count = 0, wayp_count = 0, survey_count = 0;
     int current_boat_id = 0;
     int order_num = 0;
 
@@ -476,14 +495,12 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     for (int i = 0; i < items->n; i++) {
         if (items->a[i].Type == tSHIP) {
             /* Insert boat location for start */
-            int start_loc_id = insert_location(loc_stmt, NODE_TYPE_BOAT,
+            int start_loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
-            loc_count++;
 
             /* Insert boat location for end */
-            int end_loc_id = insert_location(loc_stmt, NODE_TYPE_BOAT,
+            int end_loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[2], items->a[i].LatLonDegMin[3]);
-            loc_count++;
 
             /* Insert boat with all columns */
             char *clean_name = strip_quotes(items->a[i].Name);
@@ -508,14 +525,12 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
         } else if (items->a[i].Type == tSTAT && current_boat_id > 0) {
             /* Insert start location */
-            int start_loc_id = insert_location(loc_stmt, NODE_TYPE_STATION,
+            int start_loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
-            loc_count++;
 
             /* Insert end location */
-            int end_loc_id = insert_location(loc_stmt, NODE_TYPE_STATION,
+            int end_loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[2], items->a[i].LatLonDegMin[3]);
-            loc_count++;
 
             /* Parse comment to extract depth values */
             int depth_thrown = 0, depth_haul = 0;
@@ -548,9 +563,8 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
         } else if (items->a[i].Type == tPORT && current_boat_id > 0) {
             /* Insert port location */
-            int loc_id = insert_location(loc_stmt, NODE_TYPE_PORT,
+            int loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
-            loc_count++;
 
             /* Insert port (NO boat_id, strip quotes from name) */
             char *clean_name = strip_quotes(items->a[i].Name);
@@ -574,9 +588,8 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
         } else if (items->a[i].Type == tWAYP) {
             /* Insert waypoint location */
-            int loc_id = insert_location(loc_stmt, NODE_TYPE_WAYPOINT,
+            int loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
-            loc_count++;
 
             /* Insert waypoint */
             sqlite3_bind_int(wayp_stmt, 1, loc_id);
@@ -586,7 +599,8 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         }
     }
 
-    sqlite3_finalize(loc_stmt);
+    sqlite3_finalize(loc_insert_stmt);
+    sqlite3_finalize(loc_select_stmt);
     sqlite3_finalize(boat_stmt);
     sqlite3_finalize(stat_stmt);
     sqlite3_finalize(port_stmt);
@@ -647,8 +661,20 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     fflush(stdout);
     sqlite3_close(db);
 
+    /* Query actual counts from database */
+    sqlite3_open(db_path, &db);
+    sqlite3_stmt *count_stmt;
+    int actual_loc_count = 0;
+    if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM locations;", -1, &count_stmt, NULL) == SQLITE_OK) {
+        if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+            actual_loc_count = sqlite3_column_int(count_stmt, 0);
+        }
+        sqlite3_finalize(count_stmt);
+    }
+    sqlite3_close(db);
+
     printf("  ✓ Wrote %d locations, %d boats, %d stations, %d ports, %d waypoints\n",
-           loc_count, boat_count, stat_count, port_count, wayp_count);
+           actual_loc_count, boat_count, stat_count, port_count, wayp_count);
     printf("  ✓ Wrote %d survey assignments\n", survey_count);
 
     return SQLITE_OK;
