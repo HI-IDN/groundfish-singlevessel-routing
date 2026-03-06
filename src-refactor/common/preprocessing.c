@@ -425,8 +425,8 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         "CREATE TABLE ports ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  name TEXT,"
-        "  selected INTEGER,"
         "  location_id INTEGER,"
+        "  UNIQUE(location_id),"
         "  FOREIGN KEY (location_id) REFERENCES locations(id)"
         ");"
 
@@ -487,13 +487,13 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     sqlite3_prepare_v2(db, "SELECT id FROM locations WHERE easting = ? AND northing = ?;", -1, &loc_select_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO boats (start_location_id, end_location_id, capacity, c1, c2, c3, c4, c5, c6, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &boat_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO stations (ext_id, start_location_id, end_location_id, c1, c2, c3, amount, depth_thrown, depth_haul, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &stat_stmt, NULL);
-    sqlite3_prepare_v2(db, "INSERT INTO ports (name, selected, location_id) VALUES (?, ?, ?);", -1, &port_stmt, NULL);
+    sqlite3_prepare_v2(db, "INSERT INTO ports (name, location_id) VALUES (?, ?);", -1, &port_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO waypoints (location_id) VALUES (?);", -1, &wayp_stmt, NULL);
     sqlite3_prepare_v2(db, "INSERT INTO survey_2023 (boat_id, location_type, location_id, segment) VALUES (?, ?, ?, ?);", -1, &survey_stmt, NULL);
 
     int boat_count = 0, stat_count = 0, port_count = 0, wayp_count = 0, survey_count = 0;
     int current_boat_id = 0;
-    int order_num = 0;
+    int segment = 0;  /* Tracks current segment (increments at each port visit) */
 
 
     for (int i = 0; i < items->n; i++) {
@@ -524,8 +524,8 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
             boat_count++;
             free(clean_name);
 
-            /* Reset order for new boat */
-            order_num = 0;
+            /* New boat, new segment */
+            segment++;
 
         } else if (items->a[i].Type == tSTAT && current_boat_id > 0) {
             /* Insert start location */
@@ -564,7 +564,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
             sqlite3_bind_int(survey_stmt, 1, current_boat_id);
             sqlite3_bind_int(survey_stmt, 2, NODE_TYPE_STATION);
             sqlite3_bind_int(survey_stmt, 3, station_id);
-            sqlite3_bind_int(survey_stmt, 4, order_num++);
+            sqlite3_bind_int(survey_stmt, 4, segment);
             sqlite3_step(survey_stmt);
             sqlite3_reset(survey_stmt);
             survey_count++;
@@ -574,32 +574,44 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
             int loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
 
-            /* Insert port (NO boat_id, strip quotes from name) */
+            /* Insert port (or ignore if already exists due to UNIQUE constraint) */
             char *clean_name = strip_quotes(items->a[i].Name);
             sqlite3_bind_text(port_stmt, 1, clean_name, -1, SQLITE_TRANSIENT);
-            sqlite3_bind_int(port_stmt, 2, items->a[i].PortSelected);
-            sqlite3_bind_int(port_stmt, 3, loc_id);
+            sqlite3_bind_int(port_stmt, 2, loc_id);
             sqlite3_step(port_stmt);
-            int port_id = (int)sqlite3_last_insert_rowid(db);
             sqlite3_reset(port_stmt);
-            port_count++;
             free(clean_name);
 
-            /* Insert into survey_2023 table */
-            sqlite3_bind_int(survey_stmt, 1, current_boat_id);
-            sqlite3_bind_int(survey_stmt, 2, NODE_TYPE_PORT);
-            sqlite3_bind_int(survey_stmt, 3, port_id);
-            sqlite3_bind_int(survey_stmt, 4, order_num++);
-            sqlite3_step(survey_stmt);
-            sqlite3_reset(survey_stmt);
-            survey_count++;
+            /* Query port_id by location_id (may already exist due to UNIQUE constraint) */
+            sqlite3_stmt *port_select_stmt;
+            sqlite3_prepare_v2(db, "SELECT id FROM ports WHERE location_id = ?;", -1, &port_select_stmt, NULL);
+            sqlite3_bind_int(port_select_stmt, 1, loc_id);
+            sqlite3_step(port_select_stmt);
+            int port_id = sqlite3_column_int(port_select_stmt, 0);
+            sqlite3_finalize(port_select_stmt);
+            port_count++;
+
+            /* Only add selected ports to survey_2023 table */
+            if (items->a[i].PortSelected) {
+                /* Insert into survey_2023 table with current segment */
+                sqlite3_bind_int(survey_stmt, 1, current_boat_id);
+                sqlite3_bind_int(survey_stmt, 2, NODE_TYPE_PORT);
+                sqlite3_bind_int(survey_stmt, 3, port_id);
+                sqlite3_bind_int(survey_stmt, 4, segment);  /* Port marks end of current segment */
+                sqlite3_step(survey_stmt);
+                sqlite3_reset(survey_stmt);
+                survey_count++;
+
+                /* Increment segment after selected port (next segment at sea begins) */
+                segment++;
+            }
 
         } else if (items->a[i].Type == tWAYP) {
             /* Insert waypoint location */
             int loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
 
-            /* Insert waypoint */
+            /* Insert waypoint (waypoints are NOT added to survey_2023 - they are routing helpers only) */
             sqlite3_bind_int(wayp_stmt, 1, loc_id);
             sqlite3_step(wayp_stmt);
             sqlite3_reset(wayp_stmt);
