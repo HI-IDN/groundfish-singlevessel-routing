@@ -35,7 +35,7 @@ locations <- read_db_table("dat/gsp_data.db",
                            UNION ALL
                            SELECT b.name, l.lat, l.lon, 'Boat' as type
                            FROM boats b
-                           INNER JOIN locations l ON b.location_id = l.id
+                           INNER JOIN locations l ON b.start_location_id = l.id
                            UNION ALL
                            SELECT NULL, lat, lon, 'Waypoint' as type
                            FROM locations l
