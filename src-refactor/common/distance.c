@@ -693,7 +693,16 @@ static void create_distance_matrix(PARAMS params)
             {
                 /* Crosses land - COLUMN-MAJOR */
 
-                /* Compute Dijkstra path and distance */
+                /* Skip Dijkstra for waypoint pairs - only route non-waypoint to non-waypoint */
+                if (params.Type[i] == NODE_TYPE_WAYPOINT || params.Type[j] == NODE_TYPE_WAYPOINT)
+                {
+                    /* Waypoint involved: keep infeasible penalty, no Dijkstra */
+                    dijkstra_pairs_checked++;
+                    dijkstra_failed++;
+                    continue;
+                }
+
+                /* Compute Dijkstra path and distance for non-waypoint pairs only */
                 int* path = NULL;
                 int path_len = 0;
                 double d = dijkstra_distance_with_path(params.Graph, params.Size, waypoint_count,
