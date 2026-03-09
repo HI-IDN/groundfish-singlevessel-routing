@@ -3,7 +3,7 @@
 
 BUILD_DIR = ../build
 
-.PHONY: all clean config build preprocessing init init_nn init_ge init_ci init_opt help
+.PHONY: all clean config build preprocessing init init_nn init_ge init_ci init_opt export_survey help
 
 # Default target
 all: build
@@ -37,6 +37,12 @@ init_ci: build
 init_opt: build
 	@cd $(BUILD_DIR) && $(MAKE) run_init_opt
 
+# Export survey to JSON for plotting
+export_survey: build
+	@echo "[Exporting survey to JSON]"
+	@cd $(BUILD_DIR) && ./export_survey_json ../dat/gsp_data.db ../sol/survey
+	@echo "✓ Survey routes exported to sol/survey/boat*.json"
+
 # Clean build directory
 clean:
 	@echo "Cleaning build directory..."
@@ -58,12 +64,14 @@ help:
 	@echo "Quick Start:"
 	@echo "  make                    Build gsp_init solver"
 	@echo "  make preprocessing      Parse .dat and build database"
+	@echo "  make export_survey      Export survey routes to JSON"
 	@echo "  make init_nn            Run Nearest Neighbor (NN)"
 	@echo ""
 	@echo "All Targets:"
 	@echo "  make build              Build all targets"
 	@echo "  make config             Configure CMake (if needed)"
 	@echo "  make preprocessing      Step 1: Parse data"
+	@echo "  make export_survey      Export all boat routes to JSON"
 	@echo "  make init / make        Step 2: Build Phase 0 solver"
 	@echo "  make init_nn            Run NN strategy (IMPLEMENTED)"
 	@echo "  make init_ge            Run GE strategy (not yet implemented)"
@@ -78,4 +86,3 @@ help:
 	@echo "  make"
 	@echo "  make run_init_nn"
 	@echo ""
-

@@ -108,9 +108,27 @@ add_custom_target(run_init_opt
 )
 
 # ============================================================
+# Tools
+# ============================================================
+
+# Export survey_2023 to JSON for plotting
+add_executable(export_survey_json
+    tools/export_survey_json.c
+)
+
+target_link_libraries(export_survey_json
+    ${SQLITE3_LIBRARIES}
+)
+
+target_include_directories(export_survey_json PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${SQLITE3_INCLUDE_DIRS}
+)
+
+# ============================================================
 # Install
 # ============================================================
 
-install(TARGETS gsp
+install(TARGETS gsp export_survey_json
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )
