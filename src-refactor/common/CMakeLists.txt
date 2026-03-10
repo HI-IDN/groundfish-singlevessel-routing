@@ -59,3 +59,4 @@ add_custom_target(run_preprocessing
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Parsing .dat file and building SQLite database"
 )
+

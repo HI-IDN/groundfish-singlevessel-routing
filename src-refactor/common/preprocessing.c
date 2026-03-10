@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sqlite3.h>
 #include <time.h>
+#include <math.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -481,7 +482,6 @@ static int compute_and_store_distances(sqlite3 *db) {
                 return SQLITE_ERROR;
             }
             sqlite3_reset(insert_stmt);
-            stored++;
         }
     }
 
@@ -514,6 +514,8 @@ static char* strip_quotes(const char *name) {
     result[len] = '\0';
     return result;
 }
+
+/* Removed stale fast_check_feasibility_pair helper (unused, depended on undefined DistanceInputs). */
 
 /* Helper to insert location and return its ID (reuses existing location if coordinates match) */
 static int insert_location(sqlite3_stmt *insert_stmt, sqlite3_stmt *select_stmt, int lat_degmin, int lon_degmin) {
@@ -867,6 +869,263 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     return SQLITE_OK;
 }
 
+/* Fast single-pair debug: compute direct crossing + haversine and update only two rows. */
+static double haversine_km_from_deg(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg)
+{
+    double lat1 = deg_to_rad(lat1_deg);
+    double lon1 = deg_to_rad(lon1_deg);
+    double lat2 = deg_to_rad(lat2_deg);
+    double lon2 = deg_to_rad(lon2_deg);
+
+    double dlat = lat2 - lat1;
+    double dlon = lon2 - lon1;
+    double a = sin(dlat / 2.0) * sin(dlat / 2.0) +
+               cos(lat1) * cos(lat2) * sin(dlon / 2.0) * sin(dlon / 2.0);
+    double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
+    return 6371.0 * c;
+}
+
+static int debug_update_single_pair(sqlite3 *db, int from_id, int to_id)
+{
+    sqlite3_stmt *loc_stmt = NULL;
+    const char *loc_sql =
+        "SELECT id, lat, lon FROM locations WHERE id = ? OR id = ?;";
+
+    if (sqlite3_prepare_v2(db, loc_sql, -1, &loc_stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "  ✗ SQL prepare error: %s\n", sqlite3_errmsg(db));
+        return SQLITE_ERROR;
+    }
+
+    sqlite3_bind_int(loc_stmt, 1, from_id);
+    sqlite3_bind_int(loc_stmt, 2, to_id);
+
+    int got_from = 0, got_to = 0;
+    double from_lat = 0.0, from_lon = 0.0, to_lat = 0.0, to_lon = 0.0;
+    while (sqlite3_step(loc_stmt) == SQLITE_ROW) {
+        int id = sqlite3_column_int(loc_stmt, 0);
+        double lat = sqlite3_column_double(loc_stmt, 1);
+        double lon = sqlite3_column_double(loc_stmt, 2);
+        if (id == from_id) {
+            got_from = 1;
+            from_lat = lat;
+            from_lon = lon;
+        } else if (id == to_id) {
+            got_to = 1;
+            to_lat = lat;
+            to_lon = lon;
+        }
+    }
+    sqlite3_finalize(loc_stmt);
+
+    if (!got_from || !got_to) {
+        fprintf(stderr, "  ✗ Could not find both location IDs (%d, %d) in locations table\n", from_id, to_id);
+        return SQLITE_ERROR;
+    }
+
+    int n_coastline = 0;
+    double *coastline_data = load_coastline_from_db(db, &n_coastline);
+    if (!coastline_data) {
+        fprintf(stderr, "  ✗ Failed to load coastline\n");
+        return SQLITE_ERROR;
+    }
+
+    int crosses = check_land_crossing_deg(from_lat, from_lon, to_lat, to_lon);
+    free(coastline_data);
+
+    double dist_km = haversine_km_from_deg(from_lat, from_lon, to_lat, to_lon);
+    double dist_nm = dist_km / 1.852;
+    double stored_nm_ij = crosses ? DIJKSTRA_INFINITY : dist_nm;
+    double stored_nm_ji = stored_nm_ij;
+    char *path_json_ij = NULL;
+    char *path_json_ji = NULL;
+
+    if (crosses) {
+        /* Use the same core pipeline as normal mode, but on a reduced graph:
+         * [from, to, all waypoints]. */
+        sqlite3_stmt *wp_stmt = NULL;
+        const char *wp_sql =
+            "SELECT l.id, l.lat, l.lon "
+            "FROM waypoints w "
+            "JOIN locations l ON l.id = w.location_id "
+            "ORDER BY l.id;";
+
+        if (sqlite3_prepare_v2(db, wp_sql, -1, &wp_stmt, NULL) != SQLITE_OK) {
+            fprintf(stderr, "  ✗ SQL prepare error: %s\n", sqlite3_errmsg(db));
+            return SQLITE_ERROR;
+        }
+
+        int n_wp = 0;
+        while (sqlite3_step(wp_stmt) == SQLITE_ROW) n_wp++;
+        sqlite3_reset(wp_stmt);
+
+        int m = n_wp + 2;
+        int *node_ids = (int*)calloc((size_t)m, sizeof(int));
+        int *node_types = (int*)calloc((size_t)m, sizeof(int));
+        double *latlon_rad[2];
+        latlon_rad[0] = (double*)calloc((size_t)m, sizeof(double));
+        latlon_rad[1] = (double*)calloc((size_t)m, sizeof(double));
+
+        if (!node_ids || !node_types || !latlon_rad[0] || !latlon_rad[1]) {
+            sqlite3_finalize(wp_stmt);
+            free(node_ids); free(node_types); free(latlon_rad[0]); free(latlon_rad[1]);
+            return SQLITE_NOMEM;
+        }
+
+        /* Index 0/1 are non-waypoint endpoints. */
+        node_ids[0] = from_id;
+        node_ids[1] = to_id;
+        node_types[0] = 0;
+        node_types[1] = 0;
+        latlon_rad[0][0] = deg_to_rad(from_lat);
+        latlon_rad[1][0] = deg_to_rad(from_lon);
+        latlon_rad[0][1] = deg_to_rad(to_lat);
+        latlon_rad[1][1] = deg_to_rad(to_lon);
+
+        int idx = 2;
+        while (sqlite3_step(wp_stmt) == SQLITE_ROW) {
+            node_ids[idx] = sqlite3_column_int(wp_stmt, 0);
+            node_types[idx] = NODE_TYPE_WAYPOINT;
+            latlon_rad[0][idx] = deg_to_rad(sqlite3_column_double(wp_stmt, 1));
+            latlon_rad[1][idx] = deg_to_rad(sqlite3_column_double(wp_stmt, 2));
+            idx++;
+        }
+        sqlite3_finalize(wp_stmt);
+
+        double *D = NULL;
+        int *F = NULL;
+        if (compute_distance_matrix(m, latlon_rad, node_types, &D, &F) == 0 && D && F) {
+            stored_nm_ij = D[0 * m + 1];
+            stored_nm_ji = D[1 * m + 0];
+
+            int path_len_ij = 0;
+            int *path_ij = get_dijkstra_path(0, 1, &path_len_ij);
+            if (path_ij && path_len_ij > 2) {
+                int wp_count = 0;
+                for (int k = 1; k < path_len_ij - 1; k++) {
+                    if (node_types[path_ij[k]] == NODE_TYPE_WAYPOINT) wp_count++;
+                }
+                if (wp_count > 0) {
+                    int buf = wp_count * 20 + 8;
+                    path_json_ij = (char*)malloc((size_t)buf);
+                    int pos = 0, added = 0;
+                    pos += snprintf(path_json_ij + pos, (size_t)buf - (size_t)pos, "[");
+                    for (int k = 1; k < path_len_ij - 1; k++) {
+                        if (node_types[path_ij[k]] == NODE_TYPE_WAYPOINT) {
+                            if (added++ > 0) pos += snprintf(path_json_ij + pos, (size_t)buf - (size_t)pos, ",");
+                            pos += snprintf(path_json_ij + pos, (size_t)buf - (size_t)pos, "%d", node_ids[path_ij[k]]);
+                        }
+                    }
+                    snprintf(path_json_ij + pos, (size_t)buf - (size_t)pos, "]");
+                }
+            }
+
+            int path_len_ji = 0;
+            int *path_ji = get_dijkstra_path(1, 0, &path_len_ji);
+            if (path_ji && path_len_ji > 2) {
+                int wp_count = 0;
+                for (int k = 1; k < path_len_ji - 1; k++) {
+                    if (node_types[path_ji[k]] == NODE_TYPE_WAYPOINT) wp_count++;
+                }
+                if (wp_count > 0) {
+                    int buf = wp_count * 20 + 8;
+                    path_json_ji = (char*)malloc((size_t)buf);
+                    int pos = 0, added = 0;
+                    pos += snprintf(path_json_ji + pos, (size_t)buf - (size_t)pos, "[");
+                    for (int k = 1; k < path_len_ji - 1; k++) {
+                        if (node_types[path_ji[k]] == NODE_TYPE_WAYPOINT) {
+                            if (added++ > 0) pos += snprintf(path_json_ji + pos, (size_t)buf - (size_t)pos, ",");
+                            pos += snprintf(path_json_ji + pos, (size_t)buf - (size_t)pos, "%d", node_ids[path_ji[k]]);
+                        }
+                    }
+                    snprintf(path_json_ji + pos, (size_t)buf - (size_t)pos, "]");
+                }
+            }
+
+            if (!path_json_ij || !path_json_ji) {
+                stored_nm_ij = DIJKSTRA_INFINITY;
+                stored_nm_ji = DIJKSTRA_INFINITY;
+                free(path_json_ij);
+                free(path_json_ji);
+                path_json_ij = NULL;
+                path_json_ji = NULL;
+            }
+        }
+
+        free(D);
+        free(F);
+        cleanup_distance_matrices();
+        free(node_ids);
+        free(node_types);
+        free(latlon_rad[0]);
+        free(latlon_rad[1]);
+    }
+
+    printf("  Pair endpoints:\n");
+    printf("    from_id=%d lat=%.6f lon=%.6f\n", from_id, from_lat, from_lon);
+    printf("    to_id=%d   lat=%.6f lon=%.6f\n", to_id, to_lat, to_lon);
+    printf("  Direct haversine: %.3f nm (%.3f km)\n", dist_nm, dist_km);
+    printf("  Crosses land: %s\n", crosses ? "YES" : "NO");
+    if (path_json_ij) printf("  Dijkstra waypoint path %d->%d: %s\n", from_id, to_id, path_json_ij);
+    if (path_json_ji) printf("  Dijkstra waypoint path %d->%d: %s\n", to_id, from_id, path_json_ji);
+
+    sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+
+    sqlite3_stmt *del_stmt = NULL;
+    sqlite3_stmt *ins_stmt = NULL;
+    const char *del_sql = "DELETE FROM distances WHERE (from_location_id = ? AND to_location_id = ?) OR (from_location_id = ? AND to_location_id = ?);";
+    const char *ins_sql = "INSERT INTO distances (from_location_id, to_location_id, distance_nm, crosses_land, waypoint_path) VALUES (?, ?, ?, ?, ?);";
+
+    if (sqlite3_prepare_v2(db, del_sql, -1, &del_stmt, NULL) != SQLITE_OK ||
+        sqlite3_prepare_v2(db, ins_sql, -1, &ins_stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "  ✗ SQL prepare error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(del_stmt);
+        sqlite3_finalize(ins_stmt);
+        sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        return SQLITE_ERROR;
+    }
+
+    sqlite3_bind_int(del_stmt, 1, from_id);
+    sqlite3_bind_int(del_stmt, 2, to_id);
+    sqlite3_bind_int(del_stmt, 3, to_id);
+    sqlite3_bind_int(del_stmt, 4, from_id);
+    sqlite3_step(del_stmt);
+    sqlite3_finalize(del_stmt);
+
+    sqlite3_bind_int(ins_stmt, 1, from_id);
+    sqlite3_bind_int(ins_stmt, 2, to_id);
+    sqlite3_bind_double(ins_stmt, 3, stored_nm_ij);
+    sqlite3_bind_int(ins_stmt, 4, crosses);
+    if (path_json_ij) sqlite3_bind_text(ins_stmt, 5, path_json_ij, -1, SQLITE_TRANSIENT);
+    else sqlite3_bind_null(ins_stmt, 5);
+    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+        fprintf(stderr, "  ✗ Insert error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(ins_stmt);
+        sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        return SQLITE_ERROR;
+    }
+    sqlite3_reset(ins_stmt);
+    sqlite3_clear_bindings(ins_stmt);
+
+    sqlite3_bind_int(ins_stmt, 1, to_id);
+    sqlite3_bind_int(ins_stmt, 2, from_id);
+    sqlite3_bind_double(ins_stmt, 3, stored_nm_ji);
+    sqlite3_bind_int(ins_stmt, 4, crosses);
+    if (path_json_ji) sqlite3_bind_text(ins_stmt, 5, path_json_ji, -1, SQLITE_TRANSIENT);
+    else sqlite3_bind_null(ins_stmt, 5);
+    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
+        fprintf(stderr, "  ✗ Insert error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(ins_stmt);
+        sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        return SQLITE_ERROR;
+    }
+    sqlite3_finalize(ins_stmt);
+
+    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+    free(path_json_ij);
+    free(path_json_ji);
+    return SQLITE_OK;
+}
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
     /* Set console to UTF-8 mode on Windows */
@@ -876,25 +1135,106 @@ int main(int argc, char **argv) {
 
     const char *dat_file = NULL;
     const char *db_path = NULL;
+    int debug_distance_mode = 0;
+    int from_location_id = -1;
+    int to_location_id = -1;
 
-    /* Parse arguments */
+    /* Parse arguments (positional + flags). */
     for (int i = 1; i < argc; i++) {
-        if (dat_file == NULL) {
+        if (strcmp(argv[i], "--debug-distance") == 0) {
+            debug_distance_mode = 1;
+        } else if (strcmp(argv[i], "--db") == 0 && (i + 1) < argc) {
+            db_path = argv[++i];
+        } else if ((strcmp(argv[i], "--fromid") == 0 || strcmp(argv[i], "--from-id") == 0) && (i + 1) < argc) {
+            from_location_id = atoi(argv[++i]);
+        } else if ((strcmp(argv[i], "--toid") == 0 || strcmp(argv[i], "--to-id") == 0) && (i + 1) < argc) {
+            to_location_id = atoi(argv[++i]);
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            return 1;
+        } else if (dat_file == NULL) {
             dat_file = argv[i];
         } else if (db_path == NULL) {
             db_path = argv[i];
         }
     }
 
+    if (debug_distance_mode) {
+        if (db_path == NULL) db_path = "dat/gsp_data.db";
+
+        if ((from_location_id > 0 && to_location_id <= 0) ||
+            (to_location_id > 0 && from_location_id <= 0)) {
+            fprintf(stderr, "  ✗ Provide both --fromid and --toid together\n");
+            return 1;
+        }
+
+        sqlite3 *db = NULL;
+        if (sqlite3_open(db_path, &db) != SQLITE_OK) {
+            fprintf(stderr, "  ✗ Cannot open database: %s\n", sqlite3_errmsg(db));
+            sqlite3_close(db);
+            return 1;
+        }
+
+        printf("=== GSP Distance Debug ===\n");
+        printf("Database: %s\n", db_path);
+
+        int rc;
+        if (from_location_id > 0 && to_location_id > 0) {
+            printf("Mode: single-pair debug update (%d <-> %d)\n", from_location_id, to_location_id);
+            rc = debug_update_single_pair(db, from_location_id, to_location_id);
+        } else {
+            printf("Mode: recompute distances table from existing DB\n");
+            rc = compute_and_store_distances(db);
+        }
+
+        if (rc == SQLITE_OK && from_location_id > 0 && to_location_id > 0) {
+            sqlite3_stmt *pair_stmt = NULL;
+            const char *pair_sql =
+                "SELECT from_location_id, to_location_id, distance_nm, crosses_land, "
+                "COALESCE(waypoint_path, 'null') "
+                "FROM distances "
+                "WHERE (from_location_id = ? AND to_location_id = ?) "
+                "   OR (from_location_id = ? AND to_location_id = ?);";
+
+            if (sqlite3_prepare_v2(db, pair_sql, -1, &pair_stmt, NULL) == SQLITE_OK) {
+                sqlite3_bind_int(pair_stmt, 1, from_location_id);
+                sqlite3_bind_int(pair_stmt, 2, to_location_id);
+                sqlite3_bind_int(pair_stmt, 3, to_location_id);
+                sqlite3_bind_int(pair_stmt, 4, from_location_id);
+
+                printf("\nPair check (%d <-> %d):\n", from_location_id, to_location_id);
+                while (sqlite3_step(pair_stmt) == SQLITE_ROW) {
+                    int f = sqlite3_column_int(pair_stmt, 0);
+                    int t = sqlite3_column_int(pair_stmt, 1);
+                    double d = sqlite3_column_double(pair_stmt, 2);
+                    int c = sqlite3_column_int(pair_stmt, 3);
+                    const unsigned char *p = sqlite3_column_text(pair_stmt, 4);
+                    printf("  %d -> %d | dist_nm=%.6f | crosses_land=%d | waypoint_path=%s\n",
+                           f, t, d, c, p ? (const char*)p : "null");
+                }
+            }
+            sqlite3_finalize(pair_stmt);
+        }
+
+        sqlite3_close(db);
+
+        if (rc != SQLITE_OK) {
+            printf("  ✗ Distance debug failed (error code: %d)\n", rc);
+            return 1;
+        }
+
+        printf("  ✓ Distance debug complete\n");
+        return 0;
+    }
+
     if (dat_file == NULL) {
         fprintf(stderr, "Usage: %s <datafile.dat> [database.db]\n", argv[0]);
         fprintf(stderr, "  Parses .dat file and prepares data for optimization\n");
+        fprintf(stderr, "\nDebug mode:\n");
+        fprintf(stderr, "  %s --debug-distance [--db path/to/gsp_data.db] [--fromid N --toid M]\n", argv[0]);
         fprintf(stderr, "\nArguments:\n");
         fprintf(stderr, "  datafile.dat    Input .dat file to parse\n");
         fprintf(stderr, "  database.db     Output SQLite database (default: ../../../dat/gsp_data.db)\n");
-        fprintf(stderr, "\nExample:\n");
-        fprintf(stderr, "  %s ../../dat/data2023spring.dat\n", argv[0]);
-        fprintf(stderr, "  %s ../../dat/data2023spring.dat ../../dat/custom.db\n", argv[0]);
         return 1;
     }
 

@@ -90,19 +90,10 @@ void build_waypoint_dist(const location_data* ex,
     *out_dist = D;
     *out_fsb = F;
 }
-
 /* ===== MAP Structure for Island Data ===== */
 
-/* MAP structure for land polygon data */
-/* External MAP structure (defined and initialized in coastline_db.c) */
-extern struct
-{
-    int n;
-    int N[10];
-    double* LatDeg[10];
-    double* LonDeg[10];
-    double MINLAT, MAXLAT, MINLON, MAXLON;
-} MAP[1];
+/* MAP structure for land polygon data is declared in distance.h
+ * External MAP structure (defined and initialized in coastline_db.c) */
 
 static int iMAP = 0;
 
@@ -315,7 +306,7 @@ static void cleanup_geos()
  *
  * Returns: 1 if crosses land (infeasible), 0 if doesn't cross (feasible)
  */
-static int crosses_land(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg,
+int crosses_land(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg,
                         const double* LatDeg, const double* LonDeg, int n)
 {
     (void)LatDeg; /* Unused - we use the GEOS boundary instead */
@@ -345,6 +336,22 @@ static int crosses_land(double lat1_deg, double lon1_deg, double lat2_deg, doubl
 
 
     return (intersects == 1) ? 1 : 0;
+}
+
+/* Public helper for one-off feasibility checks from preprocessing/debug paths. */
+int check_land_crossing_deg(double lat1_deg, double lon1_deg,
+                            double lat2_deg, double lon2_deg)
+{
+    if (MAP[iMAP].N[0] <= 0 || !MAP[iMAP].LatDeg[0] || !MAP[iMAP].LonDeg[0])
+    {
+        return 0;
+    }
+
+    /* Ensure GEOS boundary geometry exists before crossing test. */
+    init_geos_coastline();
+
+    return crosses_land(lat1_deg, lon1_deg, lat2_deg, lon2_deg,
+                        MAP[iMAP].LatDeg[0], MAP[iMAP].LonDeg[0], MAP[iMAP].N[0]);
 }
 
 /* Dijkstra's algorithm */
