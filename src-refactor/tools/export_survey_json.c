@@ -405,20 +405,41 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     /* Check feasibility: each station visited exactly once and capacity constraints satisfied */
     int is_feasible = 1;
 
-    /* Check 1: Each station ID appears exactly once */
-    int *station_visit_count = (int*)calloc(10000, sizeof(int));  /* Assume max station_id < 10000 */
+    /* Check 1: Each station ID appears exactly once - use dynamic sizing */
+    int max_station_id = 0;
     for (int i = 0; i < num_nodes; i++) {
         if (types[i] == NODE_TYPE_STATION) {
             int station_id = table_ids[i];
-            if (station_id > 0 && station_id < 10000) {
-                station_visit_count[station_id]++;
-                if (station_visit_count[station_id] > 1) {
-                    is_feasible = 0;
-                }
+            if (station_id > max_station_id) {
+                max_station_id = station_id;
             }
         }
     }
-    free(station_visit_count);
+
+    int *station_visit_count = NULL;
+    if (max_station_id > 0) {
+        station_visit_count = (int*)calloc((size_t)(max_station_id + 1), sizeof(int));
+        if (!station_visit_count) {
+            fprintf(stderr, "Memory allocation failed for station_visit_count\n");
+            free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids);
+            free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch);
+            free(force_append_boat_end_station);
+            return 1;
+        }
+
+        for (int i = 0; i < num_nodes; i++) {
+            if (types[i] == NODE_TYPE_STATION) {
+                int station_id = table_ids[i];
+                if (station_id > 0 && station_id <= max_station_id) {
+                    station_visit_count[station_id]++;
+                    if (station_visit_count[station_id] > 1) {
+                        is_feasible = 0;
+                    }
+                }
+            }
+        }
+        free(station_visit_count);
+    }
 
     /* Check 2: Each segment's catch amount <= capacity */
     for (int s = 0; s < segment_count; s++) {
@@ -600,9 +621,11 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     fprintf(out, "],\n");
 
     fprintf(out, "    \"unique_waypoint_location_ids\": [");
-    for (int i = 0; i < uniq_wp_n; i++) {
-        if (i) fprintf(out, ", ");
-        fprintf(out, "%d", unique_waypoint_location_ids[i]);
+    if (unique_waypoint_location_ids != NULL) {
+        for (int i = 0; i < uniq_wp_n; i++) {
+            if (i) fprintf(out, ", ");
+            fprintf(out, "%d", unique_waypoint_location_ids[i]);
+        }
     }
     fprintf(out, "],\n");
 
@@ -667,7 +690,7 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     printf("  Boat: %s (capacity: %d)\n", boat_name, capacity);
     printf("  Total distance: %.2f nm\n", total_distance);
     printf("  Nodes: %d, Segments: %d\n", num_nodes, segment_count);
-    printf("  Feasible: %s\n", is_feasible);
+    printf("  Feasible: %s\n", is_feasible ? "true" : "false");
 
     /* Show capacity violations if any */
     if (!is_feasible) {
