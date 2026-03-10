@@ -27,6 +27,27 @@ static void die(const char *msg) {
     exit(1);
 }
 
+static int append_int(int **arr, int *n, int *cap, int v) {
+    if (!arr || !n || !cap) return 0;
+    if (*n >= *cap) {
+        int new_cap = (*cap == 0) ? 16 : (*cap * 2);
+        int *tmp = (int*)realloc(*arr, (size_t)new_cap * sizeof(int));
+        if (!tmp) return 0;
+        *arr = tmp;
+        *cap = new_cap;
+    }
+    (*arr)[(*n)++] = v;
+    return 1;
+}
+
+static int append_unique_int(int **arr, int *n, int *cap, int v) {
+    if (!arr || !n || !cap) return 0;
+    for (int i = 0; i < *n; i++) {
+        if ((*arr)[i] == v) return 1;
+    }
+    return append_int(arr, n, cap, v);
+}
+
 /* Resolve segment start/end boundary location using nearest BOAT/PORT around the segment. */
 static int resolve_segment_boundary_loc(
     int is_start,
@@ -123,6 +144,118 @@ static double lookup_distance_nm(sqlite3 *db, int from_loc_id, int to_loc_id) {
     }
 
     return d;
+}
+
+/* Parse JSON waypoint_path like [1200,1199] into int array. */
+static int parse_waypoint_path_json(const char *json_text, int **out_ids) {
+    int *ids = NULL;
+    int count = 0;
+    const char *p;
+
+    if (out_ids) *out_ids = NULL;
+    if (!json_text || !out_ids) return 0;
+
+    p = json_text;
+    while (*p) {
+        char *endptr;
+        long val;
+
+        while (*p && !((*p >= '0' && *p <= '9') || *p == '-')) p++;
+        if (!*p) break;
+
+        val = strtol(p, &endptr, 10);
+        if (endptr == p) break;
+
+        {
+            int *tmp = (int*)realloc(ids, (size_t)(count + 1) * sizeof(int));
+            if (!tmp) {
+                free(ids);
+                *out_ids = NULL;
+                return 0;
+            }
+            ids = tmp;
+            ids[count++] = (int)val;
+        }
+        p = endptr;
+    }
+
+    *out_ids = ids;
+    return count;
+}
+
+/* Lookup waypoint_path for from->to; fallback to reverse row if needed. */
+static int lookup_waypoint_path(sqlite3 *db, int from_loc_id, int to_loc_id, int **out_ids) {
+    static const char *sql =
+        "SELECT waypoint_path FROM distances WHERE from_location_id = ? AND to_location_id = ?;";
+    sqlite3_stmt *stmt = NULL;
+    int count = 0;
+
+    if (out_ids) *out_ids = NULL;
+    if (!db || !out_ids || from_loc_id <= 0 || to_loc_id <= 0) return 0;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, from_loc_id);
+        sqlite3_bind_int(stmt, 2, to_loc_id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *txt = sqlite3_column_text(stmt, 0);
+            if (txt) count = parse_waypoint_path_json((const char*)txt, out_ids);
+            sqlite3_finalize(stmt);
+            return count;
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    /* Fallback: reverse direction (reverse parsed waypoint order). */
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, to_loc_id);
+        sqlite3_bind_int(stmt, 2, from_loc_id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *txt = sqlite3_column_text(stmt, 0);
+            if (txt) {
+                count = parse_waypoint_path_json((const char*)txt, out_ids);
+                for (int i = 0; i < count / 2; i++) {
+                    int tmp = (*out_ids)[i];
+                    (*out_ids)[i] = (*out_ids)[count - 1 - i];
+                    (*out_ids)[count - 1 - i] = tmp;
+                }
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    return count;
+}
+
+/* Validate that chain distance through waypoints matches direct from->to distance. */
+static void validate_waypoint_chain_distance(sqlite3 *db, int from_loc_id, int to_loc_id,
+                                             const int *waypoints, int n_waypoints) {
+    double direct;
+    double chain = 0.0;
+    int prev = from_loc_id;
+
+    if (!db || !waypoints || n_waypoints <= 0) return;
+
+    direct = lookup_distance_nm(db, from_loc_id, to_loc_id);
+    if (direct < 0.0) return;
+
+    for (int i = 0; i < n_waypoints; i++) {
+        double d = lookup_distance_nm(db, prev, waypoints[i]);
+        if (d < 0.0) return;
+        chain += d;
+        prev = waypoints[i];
+    }
+
+    {
+        double d = lookup_distance_nm(db, prev, to_loc_id);
+        if (d < 0.0) return;
+        chain += d;
+    }
+
+    if (fabs(chain - direct) > 1e-4) {
+        fprintf(stderr,
+                "[WARN] Waypoint-chain mismatch %d->%d: direct=%.8f chain=%.8f\n",
+                from_loc_id, to_loc_id, direct, chain);
+    }
 }
 
 /* Export a single boat's route to JSON */
@@ -299,12 +432,48 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     double *segment_distance_nm = (double*)calloc((size_t)segment_count, sizeof(double));
     double total_distance = 0.0;
 
+    /* Dock annotations: boat start, visited port boundaries, boat end. */
+    int *dock_location_ids = NULL;
+    int dock_n = 0, dock_cap = 0;
+    if (!append_int(&dock_location_ids, &dock_n, &dock_cap, boat_start_loc_id)) {
+        free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids);
+        free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch);
+        free(force_append_boat_end_station); free(segment_distance_nm);
+        return 1;
+    }
+
     for (int s = 0; s < segment_count; s++) {
         int a = seg_start[s], b = seg_end[s];
         int start_loc = resolve_segment_boundary_loc(
             1, a, num_nodes, types, resolved_loc_ids, boat_start_loc_id, boat_end_loc_id);
         int end_loc = resolve_segment_boundary_loc(
             0, b, num_nodes, types, resolved_loc_ids, boat_start_loc_id, boat_end_loc_id);
+
+        int start_type = resolve_segment_boundary_type(1, a, num_nodes, types, resolved_loc_ids);
+        if (start_type == NODE_TYPE_PORT) {
+            if (dock_n == 0 || dock_location_ids[dock_n - 1] != start_loc) {
+                if (!append_int(&dock_location_ids, &dock_n, &dock_cap, start_loc)) {
+                    free(dock_location_ids);
+                    free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids);
+                    free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch);
+                    free(force_append_boat_end_station); free(segment_distance_nm);
+                    return 1;
+                }
+            }
+        }
+
+        int end_type = resolve_segment_boundary_type(0, b, num_nodes, types, resolved_loc_ids);
+        if (end_type == NODE_TYPE_PORT) {
+            if (dock_n == 0 || dock_location_ids[dock_n - 1] != end_loc) {
+                if (!append_int(&dock_location_ids, &dock_n, &dock_cap, end_loc)) {
+                    free(dock_location_ids);
+                    free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids);
+                    free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch);
+                    free(force_append_boat_end_station); free(segment_distance_nm);
+                    return 1;
+                }
+            }
+        }
 
         int prev = start_loc;
         for (int i = a; i <= b; i++) {
@@ -326,9 +495,24 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
         total_distance += segment_distance_nm[s];
     }
 
+    if (dock_n == 0 || dock_location_ids[dock_n - 1] != boat_end_loc_id) {
+        if (!append_int(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id)) {
+            free(dock_location_ids);
+            free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
+            free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station); free(segment_distance_nm);
+            return 1;
+        }
+    }
+
+    /* Unique waypoint IDs present in expanded tour chains. */
+    int *unique_waypoint_location_ids = NULL;
+    int uniq_wp_n = 0, uniq_wp_cap = 0;
+
     FILE *out = fopen(output_path, "w");
     if (!out) {
         perror("fopen");
+        free(dock_location_ids);
+        free(unique_waypoint_location_ids);
         free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station); free(segment_distance_nm);
         return 1;
     }
@@ -341,7 +525,8 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     fprintf(out, "    \"strategy\": \"baseline\",\n");
     fprintf(out, "    \"boat_id\": %d,\n", boat_id);
     fprintf(out, "    \"boat_name\": \"%s\",\n", boat_name);
-    fprintf(out, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f}\n", home_lat, home_lon);
+    fprintf(out, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", home_lat, home_lon);
+    fprintf(out, "    \"boat_location_ids\": [%d, %d]\n", boat_start_loc_id, boat_end_loc_id);
     fprintf(out, "  },\n");
 
     fprintf(out, "  \"problem\": {\n");
@@ -364,15 +549,62 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
         int end_loc = resolve_segment_boundary_loc(
             0, b, num_nodes, types, resolved_loc_ids, boat_start_loc_id, boat_end_loc_id);
 
-        fprintf(out, "      [%d", start_loc);
+        fprintf(out, "      [");
+
+        /* Build base chain (without waypoint expansion): start, station_start/end pairs, end. */
+        int base_cap = 2 + 2 * (b - a + 1);
+        int *base = (int*)malloc((size_t)base_cap * sizeof(int));
+        int base_n = 0;
+
+        base[base_n++] = start_loc;
         for (int i = a; i <= b; i++) {
             if (types[i] == NODE_TYPE_STATION) {
-                fprintf(out, ", %d, %d", resolved_loc_ids[i], station_end_loc_ids[i]);
+                base[base_n++] = resolved_loc_ids[i];
+                base[base_n++] = station_end_loc_ids[i];
             }
         }
-        fprintf(out, ", %d]%s\n", end_loc, (s + 1 < segment_count) ? "," : "");
+        base[base_n++] = end_loc;
+
+        /* Emit expanded chain: between each consecutive pair, insert waypoint_path nodes. */
+        if (base_n > 0) {
+            fprintf(out, "%d", base[0]);
+            for (int i = 0; i < base_n - 1; i++) {
+                int from_loc = base[i];
+                int to_loc = base[i + 1];
+                int *wps = NULL;
+                int n_wps = lookup_waypoint_path(db, from_loc, to_loc, &wps);
+
+                if (n_wps > 0) {
+                    validate_waypoint_chain_distance(db, from_loc, to_loc, wps, n_wps);
+                    for (int k = 0; k < n_wps; k++) {
+                        fprintf(out, ", %d", wps[k]);
+                        (void)append_unique_int(&unique_waypoint_location_ids, &uniq_wp_n, &uniq_wp_cap, wps[k]);
+                    }
+                }
+
+                fprintf(out, ", %d", to_loc);
+                free(wps);
+            }
+        }
+
+        free(base);
+        fprintf(out, "]%s\n", (s + 1 < segment_count) ? "," : "");
     }
     fprintf(out, "    ],\n");
+
+    fprintf(out, "    \"dock_location_ids\": [");
+    for (int i = 0; i < dock_n; i++) {
+        if (i) fprintf(out, ", ");
+        fprintf(out, "%d", dock_location_ids[i]);
+    }
+    fprintf(out, "],\n");
+
+    fprintf(out, "    \"unique_waypoint_location_ids\": [");
+    for (int i = 0; i < uniq_wp_n; i++) {
+        if (i) fprintf(out, ", ");
+        fprintf(out, "%d", unique_waypoint_location_ids[i]);
+    }
+    fprintf(out, "],\n");
 
     /* Build tour_segments_station_ids as station-id lists only, one list per segment. */
     fprintf(out, "    \"tour_segments_station_ids\": [\n");
@@ -465,6 +697,8 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     }
     printf("]\n");
 
+    free(dock_location_ids);
+    free(unique_waypoint_location_ids);
     free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station); free(segment_distance_nm);
     return 0;
 }

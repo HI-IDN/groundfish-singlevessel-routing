@@ -88,6 +88,18 @@ coastline <- read_db_table(db_path, "SELECT lat, lon FROM coastline")
 cat("Loading location data...\n")
 locations <- read_db_table(db_path, "SELECT id, lat, lon FROM locations")
 
+# Build lookup sets from JSON annotations
+boat_loc_ids     <- unlist(survey$metadata$boat_location_ids)
+dock_loc_ids     <- unlist(survey$solution$dock_location_ids)
+waypoint_loc_ids <- unlist(survey$solution$unique_waypoint_location_ids)
+
+classify_point <- function(loc_id) {
+  if (loc_id %in% boat_loc_ids)     return("BOAT")
+  if (loc_id %in% dock_loc_ids)     return("PORT")
+  if (loc_id %in% waypoint_loc_ids) return("WAYP")
+  return("Station")
+}
+
 # Build route path from tour_segments_location_ids
 cat("Building route path from segments...\n")
 tour_segments <- survey$solution$tour_segments_location_ids
@@ -95,33 +107,19 @@ route_path <- tibble()
 segment_id <- 1
 
 for (segment in tour_segments) {
-  # Each segment is a list of location IDs
   for (i in seq_along(segment)) {
     loc_id <- segment[i]
-
-    # Find coordinates for this location
     loc_row <- locations %>% filter(id == loc_id)
 
     if (nrow(loc_row) > 0) {
-      # Determine point type: first/last are ports, middle are stations
-      if (i == 1) {
-        point_type <- "Port (Start)"
-      } else if (i == length(segment)) {
-        point_type <- "Port (End)"
-      } else if (i %% 2 == 0) {
-        point_type <- "Station (Start)"
-      } else {
-        point_type <- "Station (End)"
-      }
-
       route_path <- bind_rows(route_path,
                               tibble(
-                                segment = segment_id,
-                                sequence = nrow(route_path) + 1,
-                                lat = loc_row$lat[1],
-                                lon = loc_row$lon[1],
+                                segment    = segment_id,
+                                sequence   = nrow(route_path) + 1,
+                                lat        = loc_row$lat[1],
+                                lon        = loc_row$lon[1],
                                 location_id = loc_id,
-                                point_type = point_type
+                                point_type = classify_point(loc_id)
                               ))
     }
   }
@@ -131,15 +129,31 @@ for (segment in tour_segments) {
 cat(sprintf("Built route path with %d waypoints across %d segments\n\n",
             nrow(route_path), segment_count))
 
+# Add cumulative metrics
+cat("Calculating cumulative distance and catch...\n")
+route_path <- route_path %>%
+  mutate(
+    cumulative_distance_nm = cumsum(ifelse(point_type %in% c("PORT", "BOAT"),
+                                           segment_distance[segment],
+                                           0)),
+    cumulative_catch_kg = cumsum(ifelse(point_type %in% c("PORT", "BOAT"),
+                                        segment_catch[segment],
+                                        0))
+  ) %>%
+  # Forward-fill cumulative values within each segment
+  group_by(segment) %>%
+  fill(cumulative_distance_nm, cumulative_catch_kg, .direction = "down") %>%
+  ungroup()
+
 # Create base plot with coastline
 cat("Creating survey route visualization...\n")
 p <- base_coastline_plot(coastline)
 
 # Create legend labels with segment statistics
 segment_labels <- sprintf("#%d: %.0f nm, %d kg",
-                         seq_along(segment_distance),
-                         segment_distance,
-                         segment_catch)
+                          seq_along(segment_distance),
+                          segment_distance,
+                          segment_catch)
 
 # Add route path with segment coloring
 p <- p +
@@ -150,23 +164,27 @@ p <- p +
                         name = "Segment Stats",
                         labels = segment_labels)
 
-# Add station points
+# Add station points with cumsum tooltip
 station_points <- route_path %>%
-  filter(grepl("Station", point_type))
+  filter(point_type == "Station")
 
 p <- p +
   geom_point(data = station_points,
-             aes(x = lon, y = lat),
+             aes(x = lon, y = lat,
+                 text = sprintf("Loc: %d\nCum Dist: %.1f nm\nCum Catch: %.0f kg",
+                                location_id, cumulative_distance_nm, cumulative_catch_kg)),
              size = 1.5, color = "steelblue", alpha = 0.4, inherit.aes = FALSE)
 
-# Add port points
+# Add port points with cumsum tooltip
 port_points <- route_path %>%
-  filter(grepl("Port", point_type)) %>%
+  filter(point_type == "PORT") %>%
   distinct(lat, lon, .keep_all = TRUE)
 
 p <- p +
   geom_point(data = port_points,
-             aes(x = lon, y = lat),
+             aes(x = lon, y = lat,
+                 text = sprintf("PORT\nLoc: %d\nCum Dist: %.1f nm\nCum Catch: %.0f kg",
+                                location_id, cumulative_distance_nm, cumulative_catch_kg)),
              size = 3, shape = 1, inherit.aes = FALSE)
 
 # Add home port marker using annotate() to avoid data length warnings
@@ -177,13 +195,24 @@ p <- p +
            label = "Home", hjust = -0.2, vjust = 0.5,
            size = 3.5, fontface = "bold")
 
+# Plot waypoints with shape 42
+waypoints <- route_path %>%
+  filter(point_type == "WAYP") %>%
+  distinct(lat, lon, .keep_all = TRUE)
+
+p <- p +
+  geom_point(data = waypoints,
+             aes(x = lon, y = lat),
+             shape=42, size = 1.5, inherit.aes = FALSE)
+
+
 # Create subtitle with feasibility info
 subtitle_text <- sprintf(
   "Distance: %.0f nm | Stations: %d | Segments: %d | Capacity: %d tons",
   total_distance,
   num_stations,
   segment_count,
-  capacity/1000  # Convert kg to tons for subtitle
+  capacity / 1000  # Convert kg to tons for subtitle
 )
 
 # Finalize plot
@@ -202,7 +231,7 @@ p <- p + gsp_common_theme(legend_position = "bottom", legend_direction = "horizo
 # Override legend to use 2 columns
 p <- p + guides(color = guide_legend(ncol = 2, byrow = TRUE))
 
-print(p)
+plotly::ggplotly(p)
 
 # Save plot
 output_file <- gsub("\\.json$", ".png", survey_file)
@@ -219,6 +248,11 @@ ggsave(
 
 cat(sprintf("✓ Plot saved to: %s\n", normalizePath(output_file)))
 cat("✓ Visualization complete!\n")
+
+# Interactive usage: In R console, run:
+# plotly::ggplotly(p, tooltip = "text")
+# This will show cumulative distance and catch on hover
+
 
 
 
