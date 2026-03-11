@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "init_nn_1.0",
-    "timestamp": "1773231028",
+    "timestamp": "1773231363",
     "mode": "init_nn",
     "strategy": "nn",
     "boat_id": 2,
@@ -49,7 +49,7 @@
     ],
     "tour_length": [73, 87, 131, 107, 141, 195, 77, 83, 49, 17, 69, 93, 50],
     "segment_count": 13,
-    "segment_catch_amount": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "segment_catch_amount": [44941, 44708, 42039, 39803, 44188, 44902, 38288, 44375, 42591, 43127, 44690, 44304, 10109],
     "segment_distance_nm": [973.17, 974.87, 1340.62, 1373.84, 1784.71, 2261.64, 1596.19, 201479.28, 933.45, 453.54, 883.12, 1856.73, 722.30],
     "total_distance_nm": 217310.32,
     "feasible": true

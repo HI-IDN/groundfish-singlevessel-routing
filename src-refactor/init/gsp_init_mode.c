@@ -268,7 +268,7 @@ static void write_json(const char *output_path, const nn_instance_t *inst,
 
     fprintf(fp, "    \"segment_catch_amount\": [");
     for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%.0f", sol->segment_catches[s]);
+        fprintf(fp, "%d", sol->segment_catches[s]);
         if (s + 1 < sol->segment_count) fprintf(fp, ", ");
     }
     fprintf(fp, "],\n");
