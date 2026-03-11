@@ -2,7 +2,7 @@
 #define INIT_UTILS_H
 
 #include <stdlib.h>
-#include "nearest_neighbor.h"
+#include "../include/init_types.h"
 
 /* ── array growth ────────────────────────────────────────────── */
 
