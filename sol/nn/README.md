@@ -13,3 +13,4 @@ behavior can lead to noisy or irregular segmentations, especially in regions wit
 or sharp load gradients. Despite this, NN provides a lightweight and fully deterministic baseline
 that is often useful for benchmarking more sophisticated initialization strategies.
 
+![NN Initialization](init.png)

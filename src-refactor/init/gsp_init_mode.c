@@ -190,8 +190,103 @@ static int load_distance_matrix(sqlite3 *db, nn_instance_t *inst) {
     return 0;
 }
 
+static int append_int_local(int **arr, int *n, int *cap, int v) {
+    if (!arr || !n || !cap) return 0;
+    if (*n >= *cap) {
+        int new_cap = (*cap == 0) ? 16 : (*cap * 2);
+        int *tmp = (int*)realloc(*arr, (size_t)new_cap * sizeof(int));
+        if (!tmp) return 0;
+        *arr = tmp;
+        *cap = new_cap;
+    }
+    (*arr)[(*n)++] = v;
+    return 1;
+}
+
+static int append_unique_int_local(int **arr, int *n, int *cap, int v) {
+    if (!arr || !n || !cap) return 0;
+    for (int i = 0; i < *n; i++) {
+        if ((*arr)[i] == v) return 1;
+    }
+    return append_int_local(arr, n, cap, v);
+}
+
+static int parse_waypoint_path_json_local(const char *json_text, int **out_ids) {
+    int *ids = NULL;
+    int count = 0;
+    const char *p;
+
+    if (out_ids) *out_ids = NULL;
+    if (!json_text || !out_ids) return 0;
+
+    p = json_text;
+    while (*p) {
+        char *endptr;
+        long val;
+        while (*p && !((*p >= '0' && *p <= '9') || *p == '-')) p++;
+        if (!*p) break;
+        val = strtol(p, &endptr, 10);
+        if (endptr == p) break;
+        {
+            int *tmp = (int*)realloc(ids, (size_t)(count + 1) * sizeof(int));
+            if (!tmp) {
+                free(ids);
+                *out_ids = NULL;
+                return 0;
+            }
+            ids = tmp;
+            ids[count++] = (int)val;
+        }
+        p = endptr;
+    }
+
+    *out_ids = ids;
+    return count;
+}
+
+static int lookup_waypoint_path_local(sqlite3 *db, int from_loc_id, int to_loc_id, int **out_ids) {
+    static const char *sql =
+        "SELECT waypoint_path FROM distances WHERE from_location_id = ? AND to_location_id = ?;";
+    sqlite3_stmt *stmt = NULL;
+    int count = 0;
+
+    if (out_ids) *out_ids = NULL;
+    if (!db || !out_ids || from_loc_id <= 0 || to_loc_id <= 0) return 0;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, from_loc_id);
+        sqlite3_bind_int(stmt, 2, to_loc_id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *txt = sqlite3_column_text(stmt, 0);
+            if (txt) count = parse_waypoint_path_json_local((const char*)txt, out_ids);
+            sqlite3_finalize(stmt);
+            return count;
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, to_loc_id);
+        sqlite3_bind_int(stmt, 2, from_loc_id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *txt = sqlite3_column_text(stmt, 0);
+            if (txt) {
+                count = parse_waypoint_path_json_local((const char*)txt, out_ids);
+                for (int i = 0; i < count / 2; i++) {
+                    int tmp = (*out_ids)[i];
+                    (*out_ids)[i] = (*out_ids)[count - 1 - i];
+                    (*out_ids)[count - 1 - i] = tmp;
+                }
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    return count;
+}
+
 /* Write NN solution to JSON in survey format */
-static void write_json(const char *output_path, const nn_instance_t *inst,
+static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
                        const nn_solution_t *sol, int boat_id,
                        const char *boat_name,
                        int boat_start_loc_id, int boat_end_loc_id,
@@ -222,24 +317,45 @@ static void write_json(const char *output_path, const nn_instance_t *inst,
     fprintf(fp, "    \"capacity\": %.0f\n", boat_capacity);
     fprintf(fp, "  },\n");
 
+    int *unique_waypoint_location_ids = NULL;
+    int uniq_wp_n = 0, uniq_wp_cap = 0;
+
     fprintf(fp, "  \"solution\": {\n");
 
-    /* Output segments: tour_segments_location_ids includes all visited locations */
+    /* Output segments: tour_segments_location_ids includes all visited locations with waypoint expansion */
     fprintf(fp, "    \"tour_segments_location_ids\": [\n");
     for (int s = 0; s < sol->segment_count; s++) {
         fprintf(fp, "      [");
         int start = sol->segment_starts[s];
         int end = sol->segment_ends[s];
-        for (int i = start; i <= end; i++) {
-            fprintf(fp, "%d", sol->tour[i]);
-            if (i < end) fprintf(fp, ", ");
+        if (start <= end) {
+            fprintf(fp, "%d", sol->tour[start]);
+            for (int i = start; i < end; i++) {
+                int from_loc = sol->tour[i];
+                int to_loc = sol->tour[i + 1];
+                int *wps = NULL;
+                int n_wps = lookup_waypoint_path_local(db, from_loc, to_loc, &wps);
+                if (n_wps > 0) {
+                    for (int k = 0; k < n_wps; k++) {
+                        fprintf(fp, ", %d", wps[k]);
+                        (void)append_unique_int_local(&unique_waypoint_location_ids, &uniq_wp_n, &uniq_wp_cap, wps[k]);
+                    }
+                }
+                fprintf(fp, ", %d", to_loc);
+                free(wps);
+            }
         }
         fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
     }
     fprintf(fp, "    ],\n");
 
     fprintf(fp, "    \"dock_location_ids\": [%d, %d],\n", boat_start_loc_id, boat_end_loc_id);
-    fprintf(fp, "    \"unique_waypoint_location_ids\": [],\n");
+    fprintf(fp, "    \"unique_waypoint_location_ids\": [");
+    for (int i = 0; i < uniq_wp_n; i++) {
+        if (i) fprintf(fp, ", ");
+        fprintf(fp, "%d", unique_waypoint_location_ids[i]);
+    }
+    fprintf(fp, "],\n");
 
     /* Output segments: station IDs only (never ports/boats) */
     fprintf(fp, "    \"tour_segments_station_ids\": [\n");
@@ -293,6 +409,7 @@ static void write_json(const char *output_path, const nn_instance_t *inst,
     fprintf(fp, "}\n");
 
     fclose(fp);
+    free(unique_waypoint_location_ids);
     printf("[OUTPUT] Solution written to %s\n", output_path);
 }
 
@@ -473,7 +590,7 @@ int mode_init(int argc, char **argv) {
         is_feasible = 0;
     }
 
-    write_json(output, &inst, &sol, boat_id, boat_name, boat_start_loc_id, boat_end_loc_id, boat_capacity,
+    write_json(db, output, &inst, &sol, boat_id, boat_name, boat_start_loc_id, boat_end_loc_id, boat_capacity,
                boat_start_lat, boat_start_lon, is_feasible);
 
     printf("\n[SUCCESS] Initialization complete!\n");
