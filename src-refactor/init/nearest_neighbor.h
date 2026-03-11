@@ -32,17 +32,17 @@ typedef struct {
     int segment_count;
     int *segment_starts;        /* index in tour where each segment starts */
     int *segment_ends;          /* index in tour where each segment ends */
-    double *segment_catches;    /* catch amount for each segment */
+    int *segment_catches;       /* catch amount for each segment */
     double *segment_dists;      /* distance for each segment */
 
     double total_distance;
-    double total_catch;
+    int total_catch;
 } nn_solution_t;
 
 /* Solve NN heuristic with capacity-aware segmentation using pre-loaded distance matrix */
 int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
              int boat_start_loc_id, int boat_end_loc_id,
-             double boat_capacity);
+             int boat_capacity);
 
 #endif
 

@@ -19,6 +19,7 @@
 #include <sqlite3.h>
 
 #include "nearest_neighbor.h"
+#include "../include/feasibility.h"
 
 #define MAX_LINE 1024
 
@@ -195,7 +196,8 @@ static void write_json(const char *output_path, const nn_instance_t *inst,
                        const char *boat_name,
                        int boat_start_loc_id, int boat_end_loc_id,
                        double boat_capacity,
-                       double boat_start_lat, double boat_start_lon) {
+                       double boat_start_lat, double boat_start_lon,
+                       int is_feasible) {
     FILE *fp = fopen(output_path, "w");
     if (!fp) {
         perror("Cannot open output file");
@@ -279,7 +281,7 @@ static void write_json(const char *output_path, const nn_instance_t *inst,
     fprintf(fp, "],\n");
 
     fprintf(fp, "    \"total_distance_nm\": %.2f,\n", sol->total_distance);
-    fprintf(fp, "    \"feasible\": true\n");
+    fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"solver_stats\": {\n");
@@ -453,32 +455,6 @@ int mode_init(int argc, char **argv) {
     printf("[LOAD] Boat capacity: %.0f\n", boat_capacity);
     printf("[LOAD] Boat start: %d, end: %d\n\n", boat_start_loc_id, boat_end_loc_id);
 
-    /* Debug mode: skip NN solve and emit metadata-only JSON. */
-    write_metadata_only_json(output,
-                             boat_id,
-                             boat_name,
-                             boat_start_loc_id,
-                             boat_end_loc_id,
-                             boat_capacity,
-                             boat_start_lat,
-                             boat_start_lon,
-                             inst.num_stations,
-                             inst.num_ports);
-
-    printf("\n[SUCCESS] Initialization debug export complete (solver skipped).\n");
-    printf("============================================================\n");
-
-    /* Cleanup */
-    sqlite3_close(db);
-    free(inst.nodes);
-    for (int i = 0; i < inst.max_loc_id; i++) {
-        free(inst.distances[i]);
-    }
-    free(inst.distances);
-    free(inst.loc_to_idx);
-
-    return 0;
-
     /* Solve NN */
     nn_solution_t sol = {0};
     if (nn_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, boat_capacity) != 0) {
@@ -489,8 +465,16 @@ int mode_init(int argc, char **argv) {
 
     /* Write JSON output */
     printf("\n");
+    int is_feasible = 1;
+    if (!stations_have_no_duplicates(sol.visit_station_ids, sol.visit_station_count)) {
+        is_feasible = 0;
+    }
+    if (!segments_within_capacity(sol.segment_catches, sol.segment_count, boat_capacity)) {
+        is_feasible = 0;
+    }
+
     write_json(output, &inst, &sol, boat_id, boat_name, boat_start_loc_id, boat_end_loc_id, boat_capacity,
-               boat_start_lat, boat_start_lon);
+               boat_start_lat, boat_start_lon, is_feasible);
 
     printf("\n[SUCCESS] Initialization complete!\n");
     printf("============================================================\n");

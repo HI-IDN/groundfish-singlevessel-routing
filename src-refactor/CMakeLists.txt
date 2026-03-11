@@ -62,6 +62,7 @@ add_executable(gsp
     gsp.c
     init/gsp_init_mode.c
     init/nearest_neighbor.c
+    common/feasibility.c
     sweep/gsp_sweep_mode.c
 )
 
@@ -115,6 +116,7 @@ add_custom_target(run_init_opt
 # Export survey_2023 to JSON for plotting
 add_executable(export_survey_json
     tools/export_survey_json.c
+    common/feasibility.c
 )
 
 target_link_libraries(export_survey_json
