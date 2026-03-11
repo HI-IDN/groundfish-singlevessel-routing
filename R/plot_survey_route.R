@@ -229,7 +229,7 @@ p <- apply_degree_axes(p)
 p <- p + gsp_common_theme(legend_position = "bottom", legend_direction = "horizontal")
 
 # Override legend to use 2 columns
-p <- p + guides(color = guide_legend(ncol = 2, byrow = TRUE))
+p <- p + guides(color = guide_legend(ncol = 3, byrow = TRUE))
 
 plotly::ggplotly(p)
 
