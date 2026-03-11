@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "init_nn_1.0",
-    "timestamp": "1773236175",
+    "timestamp": "1773236862",
     "mode": "init_ci",
     "strategy": "ci",
     "boat_id": 2,
@@ -56,7 +56,8 @@
   },
   "solver_stats": {
     "status": "init_complete",
-    "runtime_seconds": 0.0,
+    "preprocessing_seconds": 0.508994,
+    "runtime_seconds": 1.625668,
     "method": "cheapest_insertion"
   }
 }

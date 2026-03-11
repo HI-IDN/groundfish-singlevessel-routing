@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "init_nn_1.0",
-    "timestamp": "1773232945",
+    "timestamp": "1773236679",
     "mode": "init_nn",
     "strategy": "nn",
     "boat_id": 2,
@@ -56,7 +56,8 @@
   },
   "solver_stats": {
     "status": "init_complete",
-    "runtime_seconds": 0.0,
+    "preprocessing_seconds": 0.462413,
+    "runtime_seconds": 0.013820,
     "method": "nearest_neighbor"
   }
 }

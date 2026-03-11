@@ -18,6 +18,12 @@
 #include <time.h>
 #include <sqlite3.h>
 
+/* Helper: get elapsed seconds from two timespec structs */
+static double elapsed_seconds(struct timespec start, struct timespec end) {
+    return (double)(end.tv_sec - start.tv_sec) +
+           (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+}
+
 #include "nearest_neighbor.h"
 #include "greedy_insertion.h"
 #include "cheapest_insertion.h"
@@ -558,7 +564,8 @@ int mode_init(int argc, char **argv) {
     printf("GSP Solver - Phase 0: Initialization\n");
     printf("============================================================\n\n");
 
-    clock_t t_mode_start = clock();
+    struct timespec t_mode_start;
+    clock_gettime(CLOCK_MONOTONIC, &t_mode_start);
 
     const char *strategy, *database, *config, *output;
     parse_args(argc, argv, &strategy, &database, &config, &output);
@@ -632,12 +639,16 @@ int mode_init(int argc, char **argv) {
 
     printf("[LOAD] Boat capacity: %.0f\n", boat_capacity);
     printf("[LOAD] Boat start: %d, end: %d\n\n", boat_start_loc_id, boat_end_loc_id);
-    double preprocessing_seconds = (double)(clock() - t_mode_start) / CLOCKS_PER_SEC;
+
+    struct timespec t_preproc_end;
+    clock_gettime(CLOCK_MONOTONIC, &t_preproc_end);
+    double preprocessing_seconds = elapsed_seconds(t_mode_start, t_preproc_end);
 
     /* Solve selected init heuristic */
     nn_solution_t sol = {0};
     const char *method_name = NULL;
-    clock_t t_solve_start = clock();
+    struct timespec t_solve_start;
+    clock_gettime(CLOCK_MONOTONIC, &t_solve_start);
     if (strcmp(strategy, "nn") == 0) {
         method_name = "nearest_neighbor";
         if (nn_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
@@ -660,9 +671,11 @@ int mode_init(int argc, char **argv) {
             return 1;
         }
     }
-    double solve_runtime_seconds = (double)(clock() - t_solve_start) / CLOCKS_PER_SEC;
+    struct timespec t_solve_end;
+    clock_gettime(CLOCK_MONOTONIC, &t_solve_end);
+    double solve_runtime_seconds = elapsed_seconds(t_solve_start, t_solve_end);
 
-    /* Write JSON output */
+    /* Write JSON output (feasibility check NOT included in runtime) */
     printf("\n");
     int is_feasible = 1;
     if (!stations_have_no_duplicates(sol.visit_station_ids, sol.visit_station_count)) {
