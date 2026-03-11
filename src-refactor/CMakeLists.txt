@@ -63,6 +63,7 @@ add_executable(gsp
     init/gsp_init_mode.c
     init/nearest_neighbor.c
     init/greedy_insertion.c
+    init/cheapest_insertion.c
     common/feasibility.c
     sweep/gsp_sweep_mode.c
 )

@@ -20,6 +20,7 @@
 
 #include "nearest_neighbor.h"
 #include "greedy_insertion.h"
+#include "cheapest_insertion.h"
 #include "../include/feasibility.h"
 
 #define MAX_LINE 1024
@@ -295,7 +296,9 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                        int boat_start_loc_id, int boat_end_loc_id,
                        double boat_capacity,
                        double boat_start_lat, double boat_start_lon,
-                       int is_feasible) {
+                       int is_feasible,
+                       double preprocessing_seconds,
+                       double solve_runtime_seconds) {
     FILE *fp = fopen(output_path, "w");
     if (!fp) {
         perror("Cannot open output file");
@@ -456,7 +459,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
 
     fprintf(fp, "  \"solver_stats\": {\n");
     fprintf(fp, "    \"status\": \"init_complete\",\n");
-    fprintf(fp, "    \"runtime_seconds\": 0.0,\n");
+    fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
+    fprintf(fp, "    \"runtime_seconds\": %.6f,\n", solve_runtime_seconds);
     fprintf(fp, "    \"method\": \"%s\"\n", method_name ? method_name : "unknown");
     fprintf(fp, "  }\n");
 
@@ -554,6 +558,8 @@ int mode_init(int argc, char **argv) {
     printf("GSP Solver - Phase 0: Initialization\n");
     printf("============================================================\n\n");
 
+    clock_t t_mode_start = clock();
+
     const char *strategy, *database, *config, *output;
     parse_args(argc, argv, &strategy, &database, &config, &output);
 
@@ -563,8 +569,8 @@ int mode_init(int argc, char **argv) {
         return 1;
     }
 
-    if (strcmp(strategy, "nn") != 0 && strcmp(strategy, "gi") != 0) {
-        fprintf(stderr, "ERROR: Only 'nn' and 'gi' strategies are currently implemented\n");
+    if (strcmp(strategy, "nn") != 0 && strcmp(strategy, "gi") != 0 && strcmp(strategy, "ci") != 0) {
+        fprintf(stderr, "ERROR: Only 'nn', 'gi', and 'ci' strategies are currently implemented\n");
         return 1;
     }
 
@@ -626,10 +632,12 @@ int mode_init(int argc, char **argv) {
 
     printf("[LOAD] Boat capacity: %.0f\n", boat_capacity);
     printf("[LOAD] Boat start: %d, end: %d\n\n", boat_start_loc_id, boat_end_loc_id);
+    double preprocessing_seconds = (double)(clock() - t_mode_start) / CLOCKS_PER_SEC;
 
     /* Solve selected init heuristic */
     nn_solution_t sol = {0};
     const char *method_name = NULL;
+    clock_t t_solve_start = clock();
     if (strcmp(strategy, "nn") == 0) {
         method_name = "nearest_neighbor";
         if (nn_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
@@ -637,14 +645,22 @@ int mode_init(int argc, char **argv) {
             sqlite3_close(db);
             return 1;
         }
-    } else {
+    } else if (strcmp(strategy, "gi") == 0) {
         method_name = "greedy_insertion";
         if (gi_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
             fprintf(stderr, "ERROR: Failed to solve GI\n");
             sqlite3_close(db);
             return 1;
         }
+    } else {
+        method_name = "cheapest_insertion";
+        if (ci_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
+            fprintf(stderr, "ERROR: Failed to solve CI\n");
+            sqlite3_close(db);
+            return 1;
+        }
     }
+    double solve_runtime_seconds = (double)(clock() - t_solve_start) / CLOCKS_PER_SEC;
 
     /* Write JSON output */
     printf("\n");
@@ -658,7 +674,8 @@ int mode_init(int argc, char **argv) {
 
     write_json(db, output, &inst, &sol, boat_id, boat_name, strategy, method_name,
                boat_start_loc_id, boat_end_loc_id, boat_capacity,
-               boat_start_lat, boat_start_lon, is_feasible);
+               boat_start_lat, boat_start_lon, is_feasible,
+               preprocessing_seconds, solve_runtime_seconds);
 
     printf("\n[SUCCESS] Initialization complete!\n");
     printf("============================================================\n");
