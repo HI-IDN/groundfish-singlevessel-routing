@@ -149,36 +149,27 @@ int ci_solve(const nn_instance_t *inst, nn_solution_t *sol,
 
     for (int ord = 0; ord < station_order_n; ord++) {
         int st_idx = station_order[ord];
-        int st_amount = (int)(inst->nodes[st_idx].amount + 0.5);
+        int st_amount = inst->nodes[st_idx].amount;
 
-        // If the next station would overflow, close at nearest port first.
+        // Pre-station trigger: if next station exceeds capacity, insert port first.
         if (current_load > 0 && current_load + st_amount > boat_capacity) {
             int port_idx = find_nearest_port(inst, current_loc_id);
             if (port_idx >= 0) {
-                if (!grow_int_array(&tour, &tour_cap, tour_len + 1) ||
-                    !grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 1) ||
-                    !grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1) ||
-                    !grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1) ||
-                    !grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) {
-                    free(station_order);
-                    return -1;
+                int new_loc, new_seg_start;
+                if (!insert_port_segment(inst, port_idx, current_loc_id,
+                        &tour, &tour_cap, &tour_len,
+                        &segment_starts, &seg_starts_cap,
+                        &segment_ends,   &seg_ends_cap,
+                        &segment_catches,&seg_catches_cap,
+                        &segment_dists,  &seg_dists_cap,
+                        &segment_count, segment_start_idx,
+                        current_load, &current_segment_dist,
+                        &new_loc, &new_seg_start)) {
+                    free(station_order); return -1;
                 }
-
-                int port_loc = inst->nodes[port_idx].start_loc_id;
-                double d_port = get_distance(inst, current_loc_id, port_loc);
-                if (d_port > 0.0) current_segment_dist += d_port;
-                tour[tour_len++] = port_loc;
-
-                segment_starts[segment_count] = segment_start_idx;
-                segment_ends[segment_count] = tour_len - 1;
-                segment_catches[segment_count] = current_load;
-                segment_dists[segment_count] = current_segment_dist;
-                segment_count++;
-
-                current_loc_id = port_loc;
+                current_loc_id = new_loc;
                 current_load = 0;
-                current_segment_dist = 0.0;
-                segment_start_idx = tour_len;
+                segment_start_idx = new_seg_start;
             }
         }
 
@@ -189,8 +180,7 @@ int ci_solve(const nn_instance_t *inst, nn_solution_t *sol,
         if (!grow_int_array(&tour, &tour_cap, tour_len + ((stat_end != stat_start) ? 2 : 1)) ||
             !grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1) ||
             !grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1)) {
-            free(station_order);
-            return -1;
+            free(station_order); return -1;
         }
 
         double d1 = get_distance(inst, current_loc_id, stat_start);
@@ -211,52 +201,40 @@ int ci_solve(const nn_instance_t *inst, nn_solution_t *sol,
         visit_station_segment[visit_station_count] = segment_count;
         visit_station_count++;
 
+        // Post-station trigger: if load at capacity and more stations remain, insert port.
         if (current_load >= boat_capacity && ord + 1 < station_order_n) {
-            // Optional immediate cut once segment reaches capacity threshold.
             int port_idx = find_nearest_port(inst, current_loc_id);
             if (port_idx >= 0) {
-                if (!grow_int_array(&tour, &tour_cap, tour_len + 1) ||
-                    !grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 1) ||
-                    !grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1) ||
-                    !grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1) ||
-                    !grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) {
-                    free(station_order);
-                    return -1;
+                int new_loc, new_seg_start;
+                if (!insert_port_segment(inst, port_idx, current_loc_id,
+                        &tour, &tour_cap, &tour_len,
+                        &segment_starts, &seg_starts_cap,
+                        &segment_ends,   &seg_ends_cap,
+                        &segment_catches,&seg_catches_cap,
+                        &segment_dists,  &seg_dists_cap,
+                        &segment_count, segment_start_idx,
+                        current_load, &current_segment_dist,
+                        &new_loc, &new_seg_start)) {
+                    free(station_order); return -1;
                 }
-
-                int port_loc = inst->nodes[port_idx].start_loc_id;
-                double d_port = get_distance(inst, current_loc_id, port_loc);
-                if (d_port > 0.0) current_segment_dist += d_port;
-                tour[tour_len++] = port_loc;
-
-                segment_starts[segment_count] = segment_start_idx;
-                segment_ends[segment_count] = tour_len - 1;
-                segment_catches[segment_count] = current_load;
-                segment_dists[segment_count] = current_segment_dist;
-                segment_count++;
-
-                current_loc_id = port_loc;
+                current_loc_id = new_loc;
                 current_load = 0;
-                current_segment_dist = 0.0;
-                segment_start_idx = tour_len;
+                segment_start_idx = new_seg_start;
             }
         }
     }
 
+    // Flush final open segment.
     if (current_load > 0 || segment_count == 0) {
-        // Flush the final segment not yet closed by a port insertion.
-        if (!grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 1) ||
-            !grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1) ||
-            !grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1) ||
-            !grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) {
-            free(station_order);
-            return -1;
+        if (!flush_final_segment(
+                &segment_starts, &seg_starts_cap,
+                &segment_ends,   &seg_ends_cap,
+                &segment_catches,&seg_catches_cap,
+                &segment_dists,  &seg_dists_cap,
+                &segment_count, segment_start_idx,
+                tour_len, current_load, current_segment_dist)) {
+            free(station_order); return -1;
         }
-        segment_starts[segment_count] = segment_start_idx;
-        segment_ends[segment_count] = tour_len - 1;
-        segment_catches[segment_count] = current_load;
-        segment_dists[segment_count] = current_segment_dist;
-        segment_count++;
     }
 
     double total_dist = 0.0;

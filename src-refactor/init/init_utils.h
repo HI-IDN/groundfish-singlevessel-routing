@@ -73,6 +73,79 @@ static inline double min_dist_node_pair(const nn_instance_t *inst, int a_idx, in
     return best;
 }
 
+/* ── segmentation helpers ────────────────────────────────────── */
+
+/* Insert a port into the tour, close the current segment, and reset state.
+ * Returns 0 on allocation failure, 1 on success.
+ * from_loc_id  : current location ID (used to compute distance to port)
+ * port_node_idx: index into inst->nodes[] for the chosen port            */
+static inline int insert_port_segment(
+    const nn_instance_t *inst,
+    int port_node_idx,
+    int from_loc_id,
+    int **tour,        int *tour_cap,        int *tour_len,
+    int **seg_starts,  int *seg_starts_cap,
+    int **seg_ends,    int *seg_ends_cap,
+    int **seg_catches, int *seg_catches_cap,
+    double **seg_dists,int *seg_dists_cap,
+    int *segment_count,
+    int  segment_start_idx,
+    int  current_load,
+    double *current_segment_dist,
+    int *new_loc_id,
+    int *new_segment_start_idx)
+{
+    if (!grow_int_array(tour,       tour_cap,       *tour_len + 1)       ||
+        !grow_int_array(seg_starts, seg_starts_cap, *segment_count + 1)  ||
+        !grow_int_array(seg_ends,   seg_ends_cap,   *segment_count + 1)  ||
+        !grow_int_array(seg_catches,seg_catches_cap,*segment_count + 1)  ||
+        !grow_dist_array(seg_dists, seg_dists_cap,  *segment_count + 1))
+        return 0;
+
+    int port_loc = inst->nodes[port_node_idx].start_loc_id;
+    double d = get_distance(inst, from_loc_id, port_loc);
+    if (d > 0.0) *current_segment_dist += d;
+
+    (*tour)[(*tour_len)++] = port_loc;
+    (*seg_starts)[*segment_count] = segment_start_idx;
+    (*seg_ends)  [*segment_count] = *tour_len - 1;
+    (*seg_catches)[*segment_count] = current_load;
+    (*seg_dists) [*segment_count] = *current_segment_dist;
+    (*segment_count)++;
+
+    *new_loc_id            = port_loc;
+    *new_segment_start_idx = *tour_len;
+    *current_segment_dist  = 0.0;
+    return 1;
+}
+
+/* Flush the still-open trailing segment (no port at end).
+ * Returns 0 on allocation failure, 1 on success.                         */
+static inline int flush_final_segment(
+    int **seg_starts,  int *seg_starts_cap,
+    int **seg_ends,    int *seg_ends_cap,
+    int **seg_catches, int *seg_catches_cap,
+    double **seg_dists,int *seg_dists_cap,
+    int *segment_count,
+    int  segment_start_idx,
+    int  tour_len,
+    int  current_load,
+    double current_segment_dist)
+{
+    if (!grow_int_array(seg_starts, seg_starts_cap, *segment_count + 1)  ||
+        !grow_int_array(seg_ends,   seg_ends_cap,   *segment_count + 1)  ||
+        !grow_int_array(seg_catches,seg_catches_cap,*segment_count + 1)  ||
+        !grow_dist_array(seg_dists, seg_dists_cap,  *segment_count + 1))
+        return 0;
+
+    (*seg_starts) [*segment_count] = segment_start_idx;
+    (*seg_ends)   [*segment_count] = tour_len - 1;
+    (*seg_catches)[*segment_count] = current_load;
+    (*seg_dists)  [*segment_count] = current_segment_dist;
+    (*segment_count)++;
+    return 1;
+}
+
 /* Get minimum distance from a location to a node's endpoints. */
 static inline double min_dist_from_loc_to_node(const nn_instance_t *inst, int from_loc, int to_node_idx)
 {
