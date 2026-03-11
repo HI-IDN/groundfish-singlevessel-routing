@@ -6,56 +6,7 @@
 #include <stdlib.h>
 
 #include "nearest_neighbor.h"
-
-static int ensure_int_capacity(int **arr, int *cap, int need)
-{
-    if (need <= *cap) return 1;
-    int new_cap = (*cap <= 0) ? 64 : *cap;
-    while (new_cap < need) new_cap *= 2;
-    int *tmp = (int*)realloc(*arr, (size_t)new_cap * sizeof(int));
-    if (!tmp) return 0;
-    *arr = tmp;
-    *cap = new_cap;
-    return 1;
-}
-
-static int ensure_double_capacity(double **arr, int *cap, int need)
-{
-    if (need <= *cap) return 1;
-    int new_cap = (*cap <= 0) ? 64 : *cap;
-    while (new_cap < need) new_cap *= 2;
-    double *tmp = (double*)realloc(*arr, (size_t)new_cap * sizeof(double));
-    if (!tmp) return 0;
-    *arr = tmp;
-    *cap = new_cap;
-    return 1;
-}
-
-/* Get distance from pre-loaded matrix using location IDs */
-static double get_distance(const nn_instance_t *inst, int from_id, int to_id) {
-    if (from_id < 0 || from_id >= inst->max_loc_id ||
-        to_id < 0 || to_id >= inst->max_loc_id) {
-        return -1.0;
-    }
-
-    return inst->distances[from_id][to_id];
-}
-
-/* Find nearest port from current location ID */
-static int find_nearest_port(const nn_instance_t *inst, int from_loc_id) {
-    double min_dist = 1e100;
-    int nearest_port = -1;
-
-    for (int i = inst->num_stations; i < inst->num_stations + inst->num_ports; i++) {
-        double dist = get_distance(inst, from_loc_id, inst->nodes[i].start_loc_id);
-        if (dist > 0.0 && dist < min_dist) {
-            min_dist = dist;
-            nearest_port = i;
-        }
-    }
-
-    return nearest_port;
-}
+#include "init_utils.h"
 
 /* Nearest Neighbor with capacity-aware segmentation */
 int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
@@ -128,11 +79,11 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
             int nearest_port = find_nearest_port(inst, current_loc_id);
 
             if (nearest_port != -1) {
-                if (!ensure_int_capacity(&tour_nodes, &tour_cap, tour_len + 1)) return -1;
-                if (!ensure_int_capacity(&segment_starts, &seg_starts_cap, segment_count + 2)) return -1;
-                if (!ensure_int_capacity(&segment_ends, &seg_ends_cap, segment_count + 1)) return -1;
-                if (!ensure_int_capacity(&segment_catches, &seg_catches_cap, segment_count + 1)) return -1;
-                if (!ensure_double_capacity(&segment_dists, &seg_dists_cap, segment_count + 1)) return -1;
+                if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + 1)) return -1;
+                if (!grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 2)) return -1;
+                if (!grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1)) return -1;
+                if (!grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1)) return -1;
+                if (!grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) return -1;
 
                 int port_loc = inst->nodes[nearest_port].start_loc_id;
                 tour_nodes[tour_len++] = port_loc;
@@ -156,9 +107,9 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
         int stat_start = inst->nodes[nearest_station].start_loc_id;
         int stat_end = inst->nodes[nearest_station].end_loc_id;
 
-        if (!ensure_int_capacity(&tour_nodes, &tour_cap, tour_len + ((stat_end != stat_start) ? 2 : 1))) return -1;
-        if (!ensure_int_capacity(&visit_station_ids, &visit_ids_cap, visit_station_count + 1)) return -1;
-        if (!ensure_int_capacity(&visit_station_segment, &visit_seg_cap, visit_station_count + 1)) return -1;
+        if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + ((stat_end != stat_start) ? 2 : 1))) return -1;
+        if (!grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1)) return -1;
+        if (!grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1)) return -1;
 
         double d1 = get_distance(inst, current_loc_id, stat_start);
         if (d1 > 0.0) current_segment_dist += d1;
@@ -182,10 +133,10 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
     }
 
     if (current_load > 0 || segment_count == 0) {
-        if (!ensure_int_capacity(&segment_starts, &seg_starts_cap, segment_count + 1)) return -1;
-        if (!ensure_int_capacity(&segment_ends, &seg_ends_cap, segment_count + 1)) return -1;
-        if (!ensure_int_capacity(&segment_catches, &seg_catches_cap, segment_count + 1)) return -1;
-        if (!ensure_double_capacity(&segment_dists, &seg_dists_cap, segment_count + 1)) return -1;
+        if (!grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 1)) return -1;
+        if (!grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1)) return -1;
+        if (!grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1)) return -1;
+        if (!grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) return -1;
         segment_starts[segment_count] = segment_start_idx;
         segment_ends[segment_count] = tour_len - 1;
         segment_catches[segment_count] = current_load;

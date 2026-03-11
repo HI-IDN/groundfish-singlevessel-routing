@@ -19,6 +19,7 @@
 #include <sqlite3.h>
 
 #include "nearest_neighbor.h"
+#include "greedy_insertion.h"
 #include "../include/feasibility.h"
 
 #define MAX_LINE 1024
@@ -289,6 +290,8 @@ static int lookup_waypoint_path_local(sqlite3 *db, int from_loc_id, int to_loc_i
 static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
                        const nn_solution_t *sol, int boat_id,
                        const char *boat_name,
+                       const char *strategy_name,
+                       const char *method_name,
                        int boat_start_loc_id, int boat_end_loc_id,
                        double boat_capacity,
                        double boat_start_lat, double boat_start_lon,
@@ -303,8 +306,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "  \"metadata\": {\n");
     fprintf(fp, "    \"solver_version\": \"init_nn_1.0\",\n");
     fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"init_nn\",\n");
-    fprintf(fp, "    \"strategy\": \"nn\",\n");
+    fprintf(fp, "    \"mode\": \"init_%s\",\n", strategy_name ? strategy_name : "unknown");
+    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
     fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
     fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
     fprintf(fp, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
@@ -454,7 +457,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "  \"solver_stats\": {\n");
     fprintf(fp, "    \"status\": \"init_complete\",\n");
     fprintf(fp, "    \"runtime_seconds\": 0.0,\n");
-    fprintf(fp, "    \"method\": \"nearest_neighbor\"\n");
+    fprintf(fp, "    \"method\": \"%s\"\n", method_name ? method_name : "unknown");
     fprintf(fp, "  }\n");
 
     fprintf(fp, "}\n");
@@ -560,8 +563,8 @@ int mode_init(int argc, char **argv) {
         return 1;
     }
 
-    if (strcmp(strategy, "nn") != 0) {
-        fprintf(stderr, "ERROR: Only 'nn' strategy is currently implemented\n");
+    if (strcmp(strategy, "nn") != 0 && strcmp(strategy, "gi") != 0) {
+        fprintf(stderr, "ERROR: Only 'nn' and 'gi' strategies are currently implemented\n");
         return 1;
     }
 
@@ -624,12 +627,23 @@ int mode_init(int argc, char **argv) {
     printf("[LOAD] Boat capacity: %.0f\n", boat_capacity);
     printf("[LOAD] Boat start: %d, end: %d\n\n", boat_start_loc_id, boat_end_loc_id);
 
-    /* Solve NN */
+    /* Solve selected init heuristic */
     nn_solution_t sol = {0};
-    if (nn_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, boat_capacity) != 0) {
-        fprintf(stderr, "ERROR: Failed to solve\n");
-        sqlite3_close(db);
-        return 1;
+    const char *method_name = NULL;
+    if (strcmp(strategy, "nn") == 0) {
+        method_name = "nearest_neighbor";
+        if (nn_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
+            fprintf(stderr, "ERROR: Failed to solve NN\n");
+            sqlite3_close(db);
+            return 1;
+        }
+    } else {
+        method_name = "greedy_insertion";
+        if (gi_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
+            fprintf(stderr, "ERROR: Failed to solve GI\n");
+            sqlite3_close(db);
+            return 1;
+        }
     }
 
     /* Write JSON output */
@@ -642,7 +656,8 @@ int mode_init(int argc, char **argv) {
         is_feasible = 0;
     }
 
-    write_json(db, output, &inst, &sol, boat_id, boat_name, boat_start_loc_id, boat_end_loc_id, boat_capacity,
+    write_json(db, output, &inst, &sol, boat_id, boat_name, strategy, method_name,
+               boat_start_loc_id, boat_end_loc_id, boat_capacity,
                boat_start_lat, boat_start_lon, is_feasible);
 
     printf("\n[SUCCESS] Initialization complete!\n");

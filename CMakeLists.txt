@@ -23,10 +23,6 @@ add_executable(Code
         src-refactor/include/output.h
         src-refactor/include/sql_utils.h
         src-refactor/init/init.c
-        src-refactor/init/strategy_ci.c
-        src-refactor/init/strategy_ge.c
-        src-refactor/init/strategy_nn.c
-        src-refactor/init/strategy_opt.c
         src-refactor/mip/include/mip_capacity_aware.h
         src-refactor/mip/include/mip_endpaired_tsp.h
         src-refactor/mip/include/mip_noport.h
