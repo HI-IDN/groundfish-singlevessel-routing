@@ -173,28 +173,25 @@ int ci_solve(const nn_instance_t *inst, nn_solution_t *sol,
             }
         }
 
-        int stat_start = inst->nodes[st_idx].start_loc_id;
-        int stat_end = inst->nodes[st_idx].end_loc_id;
+        int stat_entry, stat_exit;
+        double stat_added = 0.0;
+        if (!choose_station_orientation(inst, current_loc_id, st_idx, &stat_entry, &stat_exit, &stat_added)) {
+            free(station_order); return -1;
+        }
 
-        // Emit station start/end legs and register station->segment mapping.
-        if (!grow_int_array(&tour, &tour_cap, tour_len + ((stat_end != stat_start) ? 2 : 1)) ||
+        // Emit station traversal and register station->segment mapping.
+        if (!grow_int_array(&tour, &tour_cap, tour_len + ((stat_exit != stat_entry) ? 2 : 1)) ||
             !grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1) ||
             !grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1)) {
             free(station_order); return -1;
         }
 
-        double d1 = get_distance(inst, current_loc_id, stat_start);
-        if (d1 > 0.0) current_segment_dist += d1;
-        tour[tour_len++] = stat_start;
-
-        if (stat_end != stat_start) {
-            double d2 = get_distance(inst, stat_start, stat_end);
-            if (d2 > 0.0) current_segment_dist += d2;
-            tour[tour_len++] = stat_end;
-            current_loc_id = stat_end;
-        } else {
-            current_loc_id = stat_start;
+        if (stat_added > 0.0) current_segment_dist += stat_added;
+        tour[tour_len++] = stat_entry;
+        if (stat_exit != stat_entry) {
+            tour[tour_len++] = stat_exit;
         }
+        current_loc_id = stat_exit;
 
         current_load += st_amount;
         visit_station_ids[visit_station_count] = inst->nodes[st_idx].table_id;

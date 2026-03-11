@@ -160,4 +160,48 @@ static inline double min_dist_from_loc_to_node(const nn_instance_t *inst, int fr
     return (d_start < d_end) ? d_start : d_end;
 }
 
+/* Choose station traversal orientation from a current location.
+ * Returns 1 on success, 0 if no valid directed traversal is available.
+ * Chosen path is either current->start->end or current->end->start. */
+static inline int choose_station_orientation(
+    const nn_instance_t *inst,
+    int current_loc_id,
+    int station_idx,
+    int *entry_loc,
+    int *exit_loc,
+    double *added_dist)
+{
+    int s = inst->nodes[station_idx].start_loc_id;
+    int e = inst->nodes[station_idx].end_loc_id;
+
+    double d_cs = get_distance(inst, current_loc_id, s);
+    double d_se = get_distance(inst, s, e);
+    double d_ce = get_distance(inst, current_loc_id, e);
+    double d_es = get_distance(inst, e, s);
+
+    double opt_se = (d_cs > 0.0 && d_se > 0.0) ? (d_cs + d_se) : -1.0;
+    double opt_es = (d_ce > 0.0 && d_es > 0.0) ? (d_ce + d_es) : -1.0;
+
+    if (s == e) {
+        if (d_cs <= 0.0) return 0;
+        if (entry_loc) *entry_loc = s;
+        if (exit_loc) *exit_loc = e;
+        if (added_dist) *added_dist = d_cs;
+        return 1;
+    }
+
+    if (opt_se <= 0.0 && opt_es <= 0.0) return 0;
+
+    if (opt_es > 0.0 && (opt_se <= 0.0 || opt_es < opt_se)) {
+        if (entry_loc) *entry_loc = e;
+        if (exit_loc) *exit_loc = s;
+        if (added_dist) *added_dist = opt_es;
+    } else {
+        if (entry_loc) *entry_loc = s;
+        if (exit_loc) *exit_loc = e;
+        if (added_dist) *added_dist = opt_se;
+    }
+    return 1;
+}
+
 #endif

@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "init_nn_1.0",
-    "timestamp": "1773238142",
+    "timestamp": "1773247000",
     "mode": "init_nn",
     "strategy": "nn",
     "boat_id": 2,
@@ -48,14 +48,14 @@
     "tour_length": [101, 49, 171, 201, 103, 161, 75, 27, 79, 27, 51, 126],
     "segment_count": 12,
     "segment_catch_amount": [44991, 44994, 45000, 44996, 44993, 44984, 44977, 44980, 44989, 44987, 45000, 33174],
-    "segment_distance_nm": [1326.44, 1032.99, 1995.48, 2589.27, 1359.19, 103332.91, 1266.95, 730.43, 1930.61, 101457.54, 2592.52, 102343.23],
-    "total_distance_nm": 321957.56,
+    "segment_distance_nm": [1482.54, 1202.63, 1995.48, 3437.82, 1584.28, 103834.46, 1558.11, 1058.70, 2758.85, 101958.42, 2592.52, 102343.23],
+    "total_distance_nm": 325807.04,
     "feasible": true
   },
   "solver_stats": {
     "status": "init_complete",
-    "preprocessing_seconds": 0.518293,
-    "runtime_seconds": 0.030164,
+    "preprocessing_seconds": 0.420542,
+    "runtime_seconds": 0.024666,
     "method": "nearest_neighbor"
   }
 }
