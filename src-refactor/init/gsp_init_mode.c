@@ -1,20 +1,37 @@
-/* GSP Phase 0: Initialization Solver
- * Supports: OPT, NN, GE, CI strategies
- * Currently implemented: NN (Nearest Neighbor)
+/* GSP Phase 0: Initialization Solver - Common Entry Point
+ *
+ * This is the common entry point for all initialization strategies.
+ * Currently implements: NN (Nearest Neighbor)
+ *
+ * Responsibilities:
+ * 1. Parse command-line arguments
+ * 2. Load all stations and ports from database
+ * 3. Load boat information (capacity, start/end locations)
+ * 4. Pre-load distance matrix from database
+ * 5. Call strategy-specific solver (e.g., nn_solve)
+ * 6. Output results to JSON in survey format
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 #include <time.h>
 #include <sqlite3.h>
 
-#define MAX_NODES 1000
+#include "nearest_neighbor.h"
+
 #define MAX_LINE 1024
 
-/* Simple YAML parser - just extract boat.id */
-int read_boat_id_from_yaml(const char *yaml_path) {
+typedef struct {
+    int id;
+    double lat;
+    double lon;
+    double amount;
+    int is_port;
+} node_t;
+
+/* Read boat ID from YAML config */
+static int read_boat_id_from_yaml(const char *yaml_path) {
     FILE *fp = fopen(yaml_path, "r");
     if (!fp) {
         fprintf(stderr, "Warning: Cannot open %s, using default boat_id=2\n", yaml_path);
@@ -22,32 +39,18 @@ int read_boat_id_from_yaml(const char *yaml_path) {
     }
 
     char line[MAX_LINE];
-    int in_boat_section = 0;
-    int boat_id = 2;  // default
+    int boat_id = 2;
 
     while (fgets(line, MAX_LINE, fp)) {
-        // Remove leading whitespace
-        char *trimmed = line;
-        while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
-
-        // Check for boat section
-        if (strncmp(trimmed, "boat:", 5) == 0) {
-            in_boat_section = 1;
-            continue;
-        }
-
-        // If in boat section, look for id
-        if (in_boat_section) {
-            if (strncmp(trimmed, "id:", 3) == 0) {
-                char *value = trimmed + 3;
-                while (*value == ' ' || *value == '\t') value++;
-                boat_id = atoi(value);
-                break;
+        if (strstr(line, "boat:")) {
+            while (fgets(line, MAX_LINE, fp)) {
+                if (strstr(line, "id:")) {
+                    boat_id = atoi(line + strcspn(line, "0123456789"));
+                    break;
+                }
+                if (line[0] != ' ' && line[0] != '\t') break;
             }
-            // Exit boat section if we hit another top-level key
-            if (trimmed[0] != ' ' && trimmed[0] != '\t' && trimmed[0] != '#' && trimmed[0] != '\n') {
-                in_boat_section = 0;
-            }
+            break;
         }
     }
 
@@ -55,194 +58,144 @@ int read_boat_id_from_yaml(const char *yaml_path) {
     return boat_id;
 }
 
-typedef struct {
-    int id;
-    double lat;
-    double lon;
-    int type;  // 0=boat, 1=station, 2=port, 3=waypoint
-    double amount;
-} node_t;
-
-typedef struct {
-    int num_nodes;
-    node_t *nodes;
-    double **dist_matrix;
-} instance_t;
-
-typedef struct {
-    int *tour;
-    int tour_length;
-    double total_distance;
-    double runtime_seconds;
-} solution_t;
-
-/* Haversine distance in nautical miles */
-double haversine_nm(double lat1, double lon1, double lat2, double lon2) {
-    double R = 3440.065;  // Earth radius in nautical miles
-    double dLat = (lat2 - lat1) * M_PI / 180.0;
-    double dLon = (lon2 - lon1) * M_PI / 180.0;
-    double a = sin(dLat/2) * sin(dLat/2) +
-               cos(lat1 * M_PI / 180.0) * cos(lat2 * M_PI / 180.0) *
-               sin(dLon/2) * sin(dLon/2);
-    double c = 2 * atan2(sqrt(a), sqrt(1-a));
-    return R * c;
-}
-
-/* Load instance from database */
-int load_instance(const char *db_path, int boat_id, instance_t *inst) {
-    sqlite3 *db;
+/* Load all stations and ports from database */
+static int load_nodes(sqlite3 *db, nn_instance_t *inst) {
     sqlite3_stmt *stmt;
-    int rc = sqlite3_open(db_path, &db);
-    if (rc != SQLITE_OK) {
-        fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
+
+    /* Count stations and ports */
+    const char *count_sql =
+        "SELECT (SELECT COUNT(*) FROM stations) as num_stat, "
+        "       (SELECT COUNT(*) FROM ports) as num_port";
+
+    sqlite3_prepare_v2(db, count_sql, -1, &stmt, NULL);
+    int num_stations = 0, num_ports = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        num_stations = sqlite3_column_int(stmt, 0);
+        num_ports = sqlite3_column_int(stmt, 1);
+    }
+    sqlite3_finalize(stmt);
+
+    inst->num_stations = num_stations;
+    inst->num_ports = num_ports;
+    int total_nodes = num_stations + num_ports;
+
+    printf("[LOAD] Found %d stations and %d ports\n", num_stations, num_ports);
+
+    if (num_stations == 0) {
+        fprintf(stderr, "ERROR: No stations found in database\n");
         return -1;
     }
 
-    // Count total nodes
-    const char *count_sql =
-        "SELECT COUNT(*) FROM ("
-        "  SELECT id FROM locations WHERE id IN ("
-        "    SELECT location_id FROM boats WHERE id = ?"
-        "  )"
-        "  UNION ALL"
-        "  SELECT start_location_id FROM stations"
-        "  UNION ALL"
-        "  SELECT location_id FROM ports"
-        ");";
-
-    sqlite3_prepare_v2(db, count_sql, -1, &stmt, NULL);
-    sqlite3_bind_int(stmt, 1, boat_id);
-
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        inst->num_nodes = sqlite3_column_int(stmt, 0);
-    }
-    sqlite3_finalize(stmt);
-
-    printf("[LOADING] Estimated nodes: %d\n", inst->num_nodes);
-
-    // Allocate
-    inst->nodes = (node_t*)malloc(inst->num_nodes * sizeof(node_t));
-    inst->dist_matrix = (double**)malloc(inst->num_nodes * sizeof(double*));
-    for (int i = 0; i < inst->num_nodes; i++) {
-        inst->dist_matrix[i] = (double*)malloc(inst->num_nodes * sizeof(double));
+    /* Allocate nodes array */
+    inst->nodes = (nn_node_t*)malloc(total_nodes * sizeof(nn_node_t));
+    if (!inst->nodes) {
+        fprintf(stderr, "ERROR: Memory allocation failed\n");
+        return -1;
     }
 
-    // Load boat location
-    const char *boat_sql =
-        "SELECT l.id, l.lat, l.lon "
-        "FROM boats b "
-        "JOIN locations l ON b.location_id = l.id "
-        "WHERE b.id = ?";
-
-    sqlite3_prepare_v2(db, boat_sql, -1, &stmt, NULL);
-    sqlite3_bind_int(stmt, 1, boat_id);
-
-    int idx = 0;
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        inst->nodes[idx].id = sqlite3_column_int(stmt, 0);
-        inst->nodes[idx].lat = sqlite3_column_double(stmt, 1);
-        inst->nodes[idx].lon = sqlite3_column_double(stmt, 2);
-        inst->nodes[idx].type = 0;  // boat
-        inst->nodes[idx].amount = 0.0;
-        idx++;
-    }
-    sqlite3_finalize(stmt);
-
-    // Load stations
+    /* Load all stations (table id + start/end location ids) */
     const char *stations_sql =
-        "SELECT s.id, start.lat, start.lon, s.amount "
+        "SELECT s.id, s.start_location_id, s.end_location_id, s.amount "
         "FROM stations s "
-        "JOIN locations start ON s.start_location_id = start.id";
+        "ORDER BY s.id";
 
     sqlite3_prepare_v2(db, stations_sql, -1, &stmt, NULL);
-
-    while (sqlite3_step(stmt) == SQLITE_ROW && idx < inst->num_nodes) {
-        inst->nodes[idx].id = sqlite3_column_int(stmt, 0);
-        inst->nodes[idx].lat = sqlite3_column_double(stmt, 1);
-        inst->nodes[idx].lon = sqlite3_column_double(stmt, 2);
+    int idx = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW && idx < num_stations) {
+        inst->nodes[idx].table_id = sqlite3_column_int(stmt, 0);
+        inst->nodes[idx].start_loc_id = sqlite3_column_int(stmt, 1);
+        inst->nodes[idx].end_loc_id = sqlite3_column_int(stmt, 2);
         inst->nodes[idx].amount = sqlite3_column_double(stmt, 3);
-        inst->nodes[idx].type = 1;  // station
+        inst->nodes[idx].is_port = 0;
         idx++;
     }
     sqlite3_finalize(stmt);
 
-    inst->num_nodes = idx;
-    printf("[LOADING] Loaded %d nodes (1 boat, %d stations)\n", inst->num_nodes, inst->num_nodes - 1);
+    /* Load all ports (table id + single location id) */
+    const char *ports_sql =
+        "SELECT p.id, p.location_id "
+        "FROM ports p "
+        "ORDER BY p.id";
 
-    // Build distance matrix
-    printf("[BUILDING] Distance matrix...\n");
-    for (int i = 0; i < inst->num_nodes; i++) {
-        for (int j = 0; j < inst->num_nodes; j++) {
-            if (i == j) {
-                inst->dist_matrix[i][j] = 0.0;
-            } else {
-                inst->dist_matrix[i][j] = haversine_nm(
-                    inst->nodes[i].lat, inst->nodes[i].lon,
-                    inst->nodes[j].lat, inst->nodes[j].lon
-                );
-            }
-        }
+    sqlite3_prepare_v2(db, ports_sql, -1, &stmt, NULL);
+    int port_idx = num_stations;
+    while (sqlite3_step(stmt) == SQLITE_ROW && port_idx < total_nodes) {
+        int port_id = sqlite3_column_int(stmt, 0);
+        int loc_id = sqlite3_column_int(stmt, 1);
+        inst->nodes[port_idx].table_id = port_id;
+        inst->nodes[port_idx].start_loc_id = loc_id;
+        inst->nodes[port_idx].end_loc_id = loc_id;
+        inst->nodes[port_idx].amount = 0.0;
+        inst->nodes[port_idx].is_port = 1;
+        port_idx++;
     }
+    sqlite3_finalize(stmt);
 
-    sqlite3_close(db);
+    printf("[LOAD] Loaded %d stations + %d ports\n", num_stations, num_ports);
     return 0;
 }
 
-/* Nearest Neighbor Heuristic */
-int solve_nearest_neighbor(const instance_t *inst, solution_t *sol) {
-    clock_t start = clock();
+/* Pre-load distance matrix from database */
+static int load_distance_matrix(sqlite3 *db, nn_instance_t *inst) {
+    sqlite3_stmt *stmt;
 
-    sol->tour = (int*)malloc(inst->num_nodes * sizeof(int));
-    sol->tour_length = 0;
-    sol->total_distance = 0.0;
+    /* Find max location ID to size the matrix */
+    const char *max_sql = "SELECT MAX(id) FROM locations";
+    sqlite3_prepare_v2(db, max_sql, -1, &stmt, NULL);
+    int max_loc_id = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        max_loc_id = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
 
-    int *visited = (int*)calloc(inst->num_nodes, sizeof(int));
+    inst->max_loc_id = max_loc_id + 1;
 
-    // Start at boat (node 0)
-    int current = 0;
-    sol->tour[sol->tour_length++] = current;
-    visited[current] = 1;
+    printf("[LOAD] Max location ID: %d\n", max_loc_id);
 
-    printf("[NN] Starting from boat (node %d)\n", current);
+    /* Allocate distance matrix (indexed by location ID) */
+    inst->distances = (double**)malloc(inst->max_loc_id * sizeof(double*));
+    inst->loc_to_idx = (int*)malloc(inst->max_loc_id * sizeof(int));
 
-    // Greedily select nearest unvisited node
-    while (sol->tour_length < inst->num_nodes) {
-        double min_dist = 1e100;
-        int nearest = -1;
-
-        for (int i = 0; i < inst->num_nodes; i++) {
-            if (!visited[i] && inst->dist_matrix[current][i] < min_dist) {
-                min_dist = inst->dist_matrix[current][i];
-                nearest = i;
-            }
-        }
-
-        if (nearest == -1) break;
-
-        sol->tour[sol->tour_length++] = nearest;
-        visited[nearest] = 1;
-        sol->total_distance += min_dist;
-
-        current = nearest;
+    for (int i = 0; i < inst->max_loc_id; i++) {
+        inst->distances[i] = (double*)malloc(inst->max_loc_id * sizeof(double));
+        inst->loc_to_idx[i] = i;  /* Direct mapping for now */
     }
 
-    // Return to start
-    sol->total_distance += inst->dist_matrix[current][0];
+    /* Initialize all distances to -1 (not set) */
+    for (int i = 0; i < inst->max_loc_id; i++) {
+        for (int j = 0; j < inst->max_loc_id; j++) {
+            inst->distances[i][j] = -1.0;
+        }
+    }
 
-    free(visited);
+    /* Load distances from database */
+    const char *dist_sql = "SELECT from_location_id, to_location_id, distance_nm FROM distances";
+    sqlite3_prepare_v2(db, dist_sql, -1, &stmt, NULL);
 
-    clock_t end = clock();
-    sol->runtime_seconds = (double)(end - start) / CLOCKS_PER_SEC;
+    int dist_count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int from_id = sqlite3_column_int(stmt, 0);
+        int to_id = sqlite3_column_int(stmt, 1);
+        double dist = sqlite3_column_double(stmt, 2);
 
-    printf("[NN] Tour length: %d nodes\n", sol->tour_length);
-    printf("[NN] Total distance: %.2f nm\n", sol->total_distance);
-    printf("[NN] Runtime: %.3f seconds\n", sol->runtime_seconds);
+        if (from_id < inst->max_loc_id && to_id < inst->max_loc_id) {
+            inst->distances[from_id][to_id] = dist;
+            dist_count++;
+        }
+    }
+    sqlite3_finalize(stmt);
 
+    printf("[LOAD] Loaded %d distance entries\n", dist_count);
     return 0;
 }
 
-/* Write solution to JSON */
-void write_json(const char *output_path, const instance_t *inst, const solution_t *sol, int boat_id, const char *strategy) {
+/* Write NN solution to JSON in survey format */
+static void write_json(const char *output_path, const nn_instance_t *inst,
+                       const nn_solution_t *sol, int boat_id,
+                       const char *boat_name,
+                       int boat_start_loc_id, int boat_end_loc_id,
+                       double boat_capacity,
+                       double boat_start_lat, double boat_start_lon) {
     FILE *fp = fopen(output_path, "w");
     if (!fp) {
         perror("Cannot open output file");
@@ -251,34 +204,88 @@ void write_json(const char *output_path, const instance_t *inst, const solution_
 
     fprintf(fp, "{\n");
     fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"1.0.0\",\n");
-    fprintf(fp, "    \"timestamp\": \"%ld\",\n", time(NULL));
-    fprintf(fp, "    \"mode\": \"init\",\n");
-    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy);
-    fprintf(fp, "    \"boat_id\": %d\n", boat_id);
+    fprintf(fp, "    \"solver_version\": \"init_nn_1.0\",\n");
+    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
+    fprintf(fp, "    \"mode\": \"init_nn\",\n");
+    fprintf(fp, "    \"strategy\": \"nn\",\n");
+    fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
+    fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
+    fprintf(fp, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
+    fprintf(fp, "    \"boat_location_ids\": [%d, %d]\n", boat_start_loc_id, boat_end_loc_id);
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"problem\": {\n");
-    fprintf(fp, "    \"num_nodes\": %d,\n", inst->num_nodes);
-    fprintf(fp, "    \"num_stations\": %d\n", inst->num_nodes - 1);
+    fprintf(fp, "    \"num_nodes\": %d,\n", sol->tour_length);
+    fprintf(fp, "    \"num_stations\": %d,\n", inst->num_stations);
+    fprintf(fp, "    \"capacity\": %.0f\n", boat_capacity);
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"solution\": {\n");
-    fprintf(fp, "    \"tour\": [");
-    for (int i = 0; i < sol->tour_length; i++) {
-        fprintf(fp, "%d", sol->tour[i]);
-        if (i < sol->tour_length - 1) fprintf(fp, ", ");
+
+    /* Output segments: tour_segments_location_ids includes all visited locations */
+    fprintf(fp, "    \"tour_segments_location_ids\": [\n");
+    for (int s = 0; s < sol->segment_count; s++) {
+        fprintf(fp, "      [");
+        int start = sol->segment_starts[s];
+        int end = sol->segment_ends[s];
+        for (int i = start; i <= end; i++) {
+            fprintf(fp, "%d", sol->tour[i]);
+            if (i < end) fprintf(fp, ", ");
+        }
+        fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
+    }
+    fprintf(fp, "    ],\n");
+
+    fprintf(fp, "    \"dock_location_ids\": [%d, %d],\n", boat_start_loc_id, boat_end_loc_id);
+    fprintf(fp, "    \"unique_waypoint_location_ids\": [],\n");
+
+    /* Output segments: station IDs only (never ports/boats) */
+    fprintf(fp, "    \"tour_segments_station_ids\": [\n");
+    for (int s = 0; s < sol->segment_count; s++) {
+        fprintf(fp, "      [");
+        int first = 1;
+        for (int i = 0; i < sol->visit_station_count; i++) {
+            if (sol->visit_station_segment[i] == s) {
+                if (!first) fprintf(fp, ", ");
+                fprintf(fp, "%d", sol->visit_station_ids[i]);
+                first = 0;
+            }
+        }
+        fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
+    }
+    fprintf(fp, "    ],\n");
+
+    fprintf(fp, "    \"tour_length\": [");
+    for (int s = 0; s < sol->segment_count; s++) {
+        fprintf(fp, "%d", sol->segment_ends[s] - sol->segment_starts[s] + 1);
+        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
     }
     fprintf(fp, "],\n");
-    fprintf(fp, "    \"tour_length\": %d,\n", sol->tour_length);
+
+    fprintf(fp, "    \"segment_count\": %d,\n", sol->segment_count);
+
+    fprintf(fp, "    \"segment_catch_amount\": [");
+    for (int s = 0; s < sol->segment_count; s++) {
+        fprintf(fp, "%.0f", sol->segment_catches[s]);
+        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+
+    fprintf(fp, "    \"segment_distance_nm\": [");
+    for (int s = 0; s < sol->segment_count; s++) {
+        fprintf(fp, "%.2f", sol->segment_dists[s]);
+        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+
     fprintf(fp, "    \"total_distance_nm\": %.2f,\n", sol->total_distance);
     fprintf(fp, "    \"feasible\": true\n");
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"solver_stats\": {\n");
-    fprintf(fp, "    \"status\": \"completed\",\n");
-    fprintf(fp, "    \"runtime_seconds\": %.3f,\n", sol->runtime_seconds);
-    fprintf(fp, "    \"method\": \"%s_heuristic\"\n", strategy);
+    fprintf(fp, "    \"status\": \"init_complete\",\n");
+    fprintf(fp, "    \"runtime_seconds\": 0.0,\n");
+    fprintf(fp, "    \"method\": \"nearest_neighbor\"\n");
     fprintf(fp, "  }\n");
 
     fprintf(fp, "}\n");
@@ -287,16 +294,72 @@ void write_json(const char *output_path, const instance_t *inst, const solution_
     printf("[OUTPUT] Solution written to %s\n", output_path);
 }
 
-/* Parse command-line arguments for init mode */
-void parse_init_args(int argc, char **argv,
-                     const char **strategy, const char **database,
-                     const char **config, const char **output,
-                     int *time_limit) {
+/* Debug writer: metadata/problem only, no solution tour. */
+static void write_metadata_only_json(const char *output_path,
+                                     int boat_id,
+                                     const char *boat_name,
+                                     int boat_start_loc_id,
+                                     int boat_end_loc_id,
+                                     double boat_capacity,
+                                     double boat_start_lat,
+                                     double boat_start_lon,
+                                     int num_stations,
+                                     int num_ports) {
+    FILE *fp = fopen(output_path, "w");
+    if (!fp) {
+        perror("Cannot open output file");
+        return;
+    }
+
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"metadata\": {\n");
+    fprintf(fp, "    \"solver_version\": \"init_nn_debug_meta_1.0\",\n");
+    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
+    fprintf(fp, "    \"mode\": \"init_nn\",\n");
+    fprintf(fp, "    \"strategy\": \"nn\",\n");
+    fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
+    fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
+    fprintf(fp, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
+    fprintf(fp, "    \"boat_location_ids\": [%d, %d],\n", boat_start_loc_id, boat_end_loc_id);
+    fprintf(fp, "    \"debug_solver_skipped\": true\n");
+    fprintf(fp, "  },\n");
+
+    fprintf(fp, "  \"problem\": {\n");
+    fprintf(fp, "    \"num_stations\": %d,\n", num_stations);
+    fprintf(fp, "    \"num_ports\": %d,\n", num_ports);
+    fprintf(fp, "    \"capacity\": %.0f\n", boat_capacity);
+    fprintf(fp, "  },\n");
+
+    fprintf(fp, "  \"solution\": {\n");
+    fprintf(fp, "    \"tour_segments_location_ids\": [],\n");
+    fprintf(fp, "    \"tour_segments_station_ids\": [],\n");
+    fprintf(fp, "    \"tour_length\": [],\n");
+    fprintf(fp, "    \"segment_count\": 0,\n");
+    fprintf(fp, "    \"segment_catch_amount\": [],\n");
+    fprintf(fp, "    \"segment_distance_nm\": [],\n");
+    fprintf(fp, "    \"total_distance_nm\": 0.0,\n");
+    fprintf(fp, "    \"feasible\": false\n");
+    fprintf(fp, "  },\n");
+
+    fprintf(fp, "  \"solver_stats\": {\n");
+    fprintf(fp, "    \"status\": \"debug_metadata_only\",\n");
+    fprintf(fp, "    \"runtime_seconds\": 0.0,\n");
+    fprintf(fp, "    \"method\": \"none\"\n");
+    fprintf(fp, "  }\n");
+    fprintf(fp, "}\n");
+
+    fclose(fp);
+    printf("[OUTPUT] Metadata-only JSON written to %s\n", output_path);
+}
+
+/* Parse command-line arguments */
+static void parse_args(int argc, char **argv,
+                       const char **strategy, const char **database,
+                       const char **config, const char **output) {
     *strategy = NULL;
     *database = NULL;
     *config = NULL;
     *output = NULL;
-    *time_limit = 0;
 
     for (int i = 1; i < argc - 1; i++) {
         if (strcmp(argv[i], "--strategy") == 0) {
@@ -307,103 +370,146 @@ void parse_init_args(int argc, char **argv,
             *config = argv[i + 1];
         } else if (strcmp(argv[i], "--output") == 0) {
             *output = argv[i + 1];
-        } else if (strcmp(argv[i], "--time-limit") == 0) {
-            *time_limit = atoi(argv[i + 1]);
         }
     }
 }
 
-/* Mode: init */
+/* Main entry point */
 int mode_init(int argc, char **argv) {
     printf("============================================================\n");
     printf("GSP Solver - Phase 0: Initialization\n");
     printf("============================================================\n\n");
 
     const char *strategy, *database, *config, *output;
-    int time_limit;
+    parse_args(argc, argv, &strategy, &database, &config, &output);
 
-    parse_init_args(argc, argv, &strategy, &database, &config, &output, &time_limit);
-
-    /* Validate required arguments */
-    if (!strategy) {
-        fprintf(stderr, "ERROR: Missing --strategy argument\n");
-        fprintf(stderr, "Valid strategies: nn, ge, ci, opt\n");
+    if (!strategy || !database || !config) {
+        fprintf(stderr, "ERROR: Missing required arguments\n");
+        fprintf(stderr, "Usage: gsp --mode init --strategy nn --database <db> --config <yaml> --output <json>\n");
         return 1;
     }
 
-    if (!database) {
-        fprintf(stderr, "ERROR: Missing --database argument\n");
+    if (strcmp(strategy, "nn") != 0) {
+        fprintf(stderr, "ERROR: Only 'nn' strategy is currently implemented\n");
         return 1;
     }
 
-    if (!config) {
-        fprintf(stderr, "ERROR: Missing --config argument\n");
-        return 1;
-    }
-
-    /* Validate strategy */
-    if (strcmp(strategy, "nn") != 0 && strcmp(strategy, "ge") != 0 &&
-        strcmp(strategy, "ci") != 0 && strcmp(strategy, "opt") != 0) {
-        fprintf(stderr, "ERROR: Unknown strategy '%s'\n", strategy);
-        fprintf(stderr, "Valid strategies: nn, ge, ci, opt\n");
-        return 1;
-    }
-
-    /* Check if strategy is implemented */
-    if (strcmp(strategy, "ge") == 0 || strcmp(strategy, "ci") == 0 || strcmp(strategy, "opt") == 0) {
-        fprintf(stderr, "ERROR: Strategy '%s' is not yet implemented\n", strategy);
-        fprintf(stderr, "Currently implemented: nn (Nearest Neighbor)\n");
-        fprintf(stderr, "\nComing soon:\n");
-        fprintf(stderr, "  - ge: Greedy Edge construction\n");
-        fprintf(stderr, "  - ci: Cheapest Insertion heuristic\n");
-        fprintf(stderr, "  - opt: Optimal NP-MIP solver\n");
-        return 1;
-    }
-
-    /* Generate default output if not provided */
-    char default_output[256];
-    if (!output) {
-        snprintf(default_output, sizeof(default_output), "sol/init_%s.json", strategy);
-        output = default_output;
-    }
-
-    /* Read boat_id from YAML */
     int boat_id = read_boat_id_from_yaml(config);
-
-    printf("Strategy: %s (Nearest Neighbor)\n", strategy);
-    printf("Config: %s\n", config);
+    printf("Strategy: %s\n", strategy);
     printf("Database: %s\n", database);
+    printf("Config: %s\n", config);
     printf("Output: %s\n", output);
-    printf("Boat ID: %d (from config)\n", boat_id);
-    if (time_limit > 0) {
-        printf("Time limit: %d seconds\n", time_limit);
-    }
-    printf("\n");
+    printf("Boat ID: %d\n\n", boat_id);
 
-    instance_t inst;
-    if (load_instance(database, boat_id, &inst) != 0) {
-        fprintf(stderr, "Failed to load instance\n");
+    /* Open database */
+    sqlite3 *db;
+    if (sqlite3_open(database, &db) != SQLITE_OK) {
+        fprintf(stderr, "ERROR: Cannot open database: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
         return 1;
     }
 
-    solution_t sol;
-    if (solve_nearest_neighbor(&inst, &sol) != 0) {
-        fprintf(stderr, "Failed to solve\n");
+    /* Load nodes (stations + ports) */
+    nn_instance_t inst = {0};
+    if (load_nodes(db, &inst) != 0) {
+        sqlite3_close(db);
         return 1;
     }
 
-    write_json(output, &inst, &sol, boat_id, strategy);
+    /* Load distance matrix */
+    if (load_distance_matrix(db, &inst) != 0) {
+        sqlite3_close(db);
+        return 1;
+    }
 
-    printf("\n[SUCCESS] Initialization (%s) completed!\n", strategy);
+    /* Get boat info */
+    sqlite3_stmt *stmt;
+    double boat_capacity = 0.0;
+    int boat_start_loc_id = 0;
+    int boat_end_loc_id = 0;
+    double boat_start_lat = 0.0;
+    double boat_start_lon = 0.0;
+    char boat_name[256] = "Unknown";
+
+    const char *boat_sql =
+        "SELECT b.name, b.capacity, b.start_location_id, b.end_location_id, l.lat, l.lon "
+        "FROM boats b "
+        "JOIN locations l ON l.id = b.start_location_id "
+        "WHERE b.id = ?";
+
+    sqlite3_prepare_v2(db, boat_sql, -1, &stmt, NULL);
+    sqlite3_bind_int(stmt, 1, boat_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *name_txt = sqlite3_column_text(stmt, 0);
+        if (name_txt) snprintf(boat_name, sizeof(boat_name), "%s", (const char*)name_txt);
+        boat_capacity = sqlite3_column_double(stmt, 1);
+        boat_start_loc_id = sqlite3_column_int(stmt, 2);
+        boat_end_loc_id = sqlite3_column_int(stmt, 3);
+        boat_start_lat = sqlite3_column_double(stmt, 4);
+        boat_start_lon = sqlite3_column_double(stmt, 5);
+    }
+    sqlite3_finalize(stmt);
+
+    printf("[LOAD] Boat capacity: %.0f\n", boat_capacity);
+    printf("[LOAD] Boat start: %d, end: %d\n\n", boat_start_loc_id, boat_end_loc_id);
+
+    /* Debug mode: skip NN solve and emit metadata-only JSON. */
+    write_metadata_only_json(output,
+                             boat_id,
+                             boat_name,
+                             boat_start_loc_id,
+                             boat_end_loc_id,
+                             boat_capacity,
+                             boat_start_lat,
+                             boat_start_lon,
+                             inst.num_stations,
+                             inst.num_ports);
+
+    printf("\n[SUCCESS] Initialization debug export complete (solver skipped).\n");
     printf("============================================================\n");
 
     /* Cleanup */
-    free(sol.tour);
+    sqlite3_close(db);
     free(inst.nodes);
-    for (int i = 0; i < inst.num_nodes; i++) {
-        free(inst.dist_matrix[i]);
+    for (int i = 0; i < inst.max_loc_id; i++) {
+        free(inst.distances[i]);
     }
-    free(inst.dist_matrix);
+    free(inst.distances);
+    free(inst.loc_to_idx);
+
+    return 0;
+
+    /* Solve NN */
+    nn_solution_t sol = {0};
+    if (nn_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, boat_capacity) != 0) {
+        fprintf(stderr, "ERROR: Failed to solve\n");
+        sqlite3_close(db);
+        return 1;
+    }
+
+    /* Write JSON output */
+    printf("\n");
+    write_json(output, &inst, &sol, boat_id, boat_name, boat_start_loc_id, boat_end_loc_id, boat_capacity,
+               boat_start_lat, boat_start_lon);
+
+    printf("\n[SUCCESS] Initialization complete!\n");
+    printf("============================================================\n");
+
+    /* Cleanup */
+    sqlite3_close(db);
+    free(sol.tour);
+    free(sol.segment_starts);
+    free(sol.segment_ends);
+    free(sol.segment_catches);
+    free(sol.segment_dists);
+    free(sol.visit_station_ids);
+    free(sol.visit_station_segment);
+    free(inst.nodes);
+    for (int i = 0; i < inst.max_loc_id; i++) {
+        free(inst.distances[i]);
+    }
+    free(inst.distances);
+    free(inst.loc_to_idx);
 
     return 0;
 }

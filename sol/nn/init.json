@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "solver_version": "init_nn_debug_meta_1.0",
+    "timestamp": "1773229834",
+    "mode": "init_nn",
+    "strategy": "nn",
+    "boat_id": 2,
+    "boat_name": "Árni Friðriksson",
+    "home_port": {"lat": 64.046333, "lon": -22.139000},
+    "boat_location_ids": [2, 2],
+    "debug_solver_skipped": true
+  },
+  "problem": {
+    "num_stations": 580,
+    "num_ports": 23,
+    "capacity": 45000
+  },
+  "solution": {
+    "tour_segments_location_ids": [],
+    "tour_segments_station_ids": [],
+    "tour_length": [],
+    "segment_count": 0,
+    "segment_catch_amount": [],
+    "segment_distance_nm": [],
+    "total_distance_nm": 0.0,
+    "feasible": false
+  },
+  "solver_stats": {
+    "status": "debug_metadata_only",
+    "runtime_seconds": 0.0,
+    "method": "none"
+  }
+}

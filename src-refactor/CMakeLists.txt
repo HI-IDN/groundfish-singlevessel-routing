@@ -61,6 +61,7 @@ add_custom_target(preprocess
 add_executable(gsp
     gsp.c
     init/gsp_init_mode.c
+    init/nearest_neighbor.c
     sweep/gsp_sweep_mode.c
 )
 
