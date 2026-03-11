@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 
 #include "../include/constants.h"
+#include "../include/feasibility.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -432,49 +433,33 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     /* Check feasibility: each station visited exactly once and capacity constraints satisfied */
     int is_feasible = 1;
 
-    /* Check 1: Each station ID appears exactly once - use dynamic sizing */
-    int max_station_id = 0;
-    for (int i = 0; i < num_nodes; i++) {
-        if (types[i] == NODE_TYPE_STATION) {
-            int station_id = table_ids[i];
-            if (station_id > max_station_id) {
-                max_station_id = station_id;
-            }
-        }
-    }
-
-    int *station_visit_count = NULL;
-    if (max_station_id > 0) {
-        station_visit_count = (int*)calloc((size_t)(max_station_id + 1), sizeof(int));
-        if (!station_visit_count) {
-            fprintf(stderr, "Memory allocation failed for station_visit_count\n");
+    int *station_ids = NULL;
+    int station_n = 0;
+    if (num_stations > 0) {
+        station_ids = (int*)malloc((size_t)num_stations * sizeof(int));
+        if (!station_ids) {
+            fprintf(stderr, "Memory allocation failed for station_ids\n");
             free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids);
             free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch);
             free(force_append_boat_end_station);
             return 1;
         }
-
         for (int i = 0; i < num_nodes; i++) {
             if (types[i] == NODE_TYPE_STATION) {
-                int station_id = table_ids[i];
-                if (station_id > 0 && station_id <= max_station_id) {
-                    station_visit_count[station_id]++;
-                    if (station_visit_count[station_id] > 1) {
-                        is_feasible = 0;
-                    }
-                }
+                station_ids[station_n++] = table_ids[i];
             }
         }
-        free(station_visit_count);
     }
 
-    /* Check 2: Each segment's catch amount <= capacity */
-    for (int s = 0; s < segment_count; s++) {
-        if (segment_catch[s] > capacity) {
-            is_feasible = 0;
-            break;
-        }
+    if (!stations_have_no_duplicates(station_ids, station_n)) {
+        is_feasible = 0;
     }
+
+    if (!segments_within_capacity(segment_catch, segment_count, (double)capacity)) {
+        is_feasible = 0;
+    }
+
+    free(station_ids);
 
     /* Compute segment and total distance along adjacent pairs implied by exported segment location lists. */
     double *segment_distance_nm = (double*)calloc((size_t)segment_count, sizeof(double));
