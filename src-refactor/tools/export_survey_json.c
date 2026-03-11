@@ -114,6 +114,15 @@ static int resolve_segment_boundary_type(
     return -1;
 }
 
+/* Return 1 if [a,b] contains at least one station row. */
+static int segment_has_station(const int *types, int a, int b) {
+    if (!types || a > b) return 0;
+    for (int i = a; i <= b; i++) {
+        if (types[i] == NODE_TYPE_STATION) return 1;
+    }
+    return 0;
+}
+
 /* Lookup distance for a location pair; fallback to reverse direction if needed. */
 static double lookup_distance_nm(sqlite3 *db, int from_loc_id, int to_loc_id) {
     static const char *dist_sql =
@@ -396,6 +405,24 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
             if (types[i] == NODE_TYPE_STATION) sum += catch_amounts[i];
         }
         segment_catch[s] = sum;
+    }
+
+    /* Remove synthetic/empty segments (typically trailing duplicated port segment). */
+    {
+        int write_s = 0;
+        for (int s = 0; s < segment_count; s++) {
+            if (!segment_has_station(types, seg_start[s], seg_end[s])) {
+                continue;
+            }
+            if (write_s != s) {
+                seg_start[write_s] = seg_start[s];
+                seg_end[write_s] = seg_end[s];
+                segment_length[write_s] = segment_length[s];
+                segment_catch[write_s] = segment_catch[s];
+            }
+            write_s++;
+        }
+        segment_count = write_s;
     }
 
     for (int s = 0; s < segment_count; s++) {

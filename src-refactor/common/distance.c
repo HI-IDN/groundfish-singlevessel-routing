@@ -366,75 +366,61 @@ static int min_distance(double* dist, int* sptSet, int n)
 }
 
 /* Dijkstra shortest path distance - works with 1D array representation
- * Also tracks the path taken through waypoints
+ * Also tracks the path taken through waypoints.
  *
- * IMPORTANT: Uses an initialization trick to enforce waypoint routing:
- * - Waypoints are initialized to 2*INFTY to prevent them from being visited
- * - Stations are initialized to INFTY (can be updated/visited)
- * - This forces the algorithm to route through waypoints, not through stations
- *
- * Parameters:
- *   graph: 1D array (M*M) representing graph adjacency matrix (COLUMN-MAJOR)
- *   M: number of nodes in graph
- *   n_wayp: number of waypoints (waypoints are indices 0..n_wayp-1, stations are n_wayp..M-1)
- *   src: source node index (must be a station: src >= n_wayp)
- *   dest: destination node index (must be a station: dest >= n_wayp)
- *   out_path: (output) pointer to receive allocated path array (caller must free)
- *   out_path_len: (output) receives length of path (number of nodes)
- *
- * Returns: shortest distance from src to dest, or DIJKSTRA_INFINITY if unreachable
+ * In the refactored N×N graph, only waypoint nodes may be used as intermediates.
+ * Non-waypoint nodes are allowed only as the source and destination.
  */
-static double dijkstra_distance_with_path(double* graph, int M, int n_wayp,
+static double dijkstra_distance_with_path(double* graph, int M, const int *types,
                                           int src, int dest,
                                           int** out_path, int* out_path_len)
 {
     double *dist, INFTY = DIJKSTRA_INFINITY;
-    int *sptSet, *parent, i, count, u, v;
+    int *sptSet, *parent, i, u, v;
 
-    dist = (double*)malloc(M * sizeof(double));
-    sptSet = (int*)calloc(M, sizeof(int));
-    parent = (int*)malloc(M * sizeof(int));
+    dist = (double*)malloc((size_t)M * sizeof(double));
+    sptSet = (int*)calloc((size_t)M, sizeof(int));
+    parent = (int*)malloc((size_t)M * sizeof(int));
 
-    /* Initialize distances using the old algorithm's clever trick:
-     * Waypoints (0..n_wayp-1) get 2*INFTY: prevents them from being visited
-     * Stations (n_wayp..M-1) get INFTY: can be visited/relaxed
-     * This forces routing: src_station -> waypoint(s) -> dest_station */
-    for (i = 0; i < n_wayp; i++) {
-        dist[i] = 2 * INFTY;  /* Waypoints: blocked from relaxation */
-        parent[i] = -1;
+    if (!dist || !sptSet || !parent) {
+        free(dist);
+        free(sptSet);
+        free(parent);
+        if (out_path) *out_path = NULL;
+        if (out_path_len) *out_path_len = 0;
+        return DIJKSTRA_INFINITY;
     }
-    for (i = n_wayp; i < M; i++) {
-        dist[i] = INFTY;      /* Stations: can be visited */
+
+    for (i = 0; i < M; i++) {
+        dist[i] = INFTY;
         parent[i] = -1;
     }
     dist[src] = 0.0;
 
-    /* Loop only over stations (n_wayp to M-1) - skips waypoint relaxation */
-    for (count = n_wayp; count < M - 1; count++)
+    for (i = 0; i < M; i++)
     {
         u = min_distance(dist, sptSet, M);
+        if (sptSet[u] != 0 || dist[u] >= INFTY / 2.0) break;
         sptSet[u] = 1;
 
-        /* Early exit if we've reached destination */
         if (u == dest) break;
 
-        /* Check direct edge to destination (line 269-273 in old code) */
-        v = dest;
-        if ((sptSet[v] == 0) && (GRAPH_2D(graph, M, u, v) > 0) && (dist[u] < INFTY) &&
-            (dist[u] + GRAPH_2D(graph, M, u, v) < dist[v]))
-        {
-            dist[v] = dist[u] + GRAPH_2D(graph, M, u, v);
-            parent[v] = u;
+        /* Only the source and waypoint nodes may expand onward. */
+        if (u != src && types[u] != NODE_TYPE_WAYPOINT) {
+            continue;
         }
 
-        /* Only relax edges to other stations (not waypoints) */
-        /* This mirrors line 275 in old code: for (v = n_wayp; v < n; v++) */
-        for (v = n_wayp; v < M; v++)
+        for (v = 0; v < M; v++)
         {
-            if ((sptSet[v] == 0) && (GRAPH_2D(graph, M, u, v) > 0) && (dist[u] < INFTY) &&
-                (dist[u] + GRAPH_2D(graph, M, u, v) < dist[v]))
+            double edge = GRAPH_2D(graph, M, u, v);
+            if (sptSet[v] != 0 || edge <= 0.0) continue;
+
+            /* Only waypoint nodes or the final destination may be reached. */
+            if (v != dest && types[v] != NODE_TYPE_WAYPOINT) continue;
+
+            if (dist[u] + edge < dist[v])
             {
-                dist[v] = dist[u] + GRAPH_2D(graph, M, u, v);
+                dist[v] = dist[u] + edge;
                 parent[v] = u;
             }
         }
@@ -442,9 +428,7 @@ static double dijkstra_distance_with_path(double* graph, int M, int n_wayp,
 
     double result = dist[dest];
 
-    /* Reconstruct path if destination was reached */
     if (result < INFTY / 2.0 && out_path && out_path_len) {
-        /* Count path length by traversing backwards */
         int path_len = 0;
         int node = dest;
         while (node != -1) {
@@ -452,16 +436,19 @@ static double dijkstra_distance_with_path(double* graph, int M, int n_wayp,
             node = parent[node];
         }
 
-        /* Allocate and fill path array (forward order: src -> dest) */
-        *out_path = (int*)malloc(path_len * sizeof(int));
-        *out_path_len = path_len;
-        node = dest;
-        for (i = path_len - 1; i >= 0; i--) {
-            (*out_path)[i] = node;
-            node = parent[node];
+        *out_path = (int*)malloc((size_t)path_len * sizeof(int));
+        if (!*out_path) {
+            *out_path_len = 0;
+            result = DIJKSTRA_INFINITY;
+        } else {
+            *out_path_len = path_len;
+            node = dest;
+            for (int k = path_len - 1; k >= 0; k--) {
+                (*out_path)[k] = node;
+                node = parent[node];
+            }
         }
     } else if (out_path && out_path_len) {
-        /* No path found */
         *out_path = NULL;
         *out_path_len = 0;
     }
@@ -712,7 +699,7 @@ static void create_distance_matrix(PARAMS params)
                 /* Compute Dijkstra path and distance for non-waypoint pairs only */
                 int* path = NULL;
                 int path_len = 0;
-                double d = dijkstra_distance_with_path(params.Graph, params.Size, waypoint_count,
+                double d = dijkstra_distance_with_path(params.Graph, params.Size, params.Type,
                                                       i, j, &path, &path_len);
 
                 if (d >= DIJKSTRA_INFINITY / 2.0)

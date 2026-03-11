@@ -240,6 +240,44 @@ static int build_survey_assignments(sqlite3 *db, const ItemVec *items) {
  * Compute and store distance matrix in database
  * Queries locations from database, calls distance computation, stores results
  */
+static char *build_waypoint_path_json(const int *path, int path_len,
+                                      const int *types, const int *loc_ids, int n)
+{
+    int waypoint_count = 0;
+    char *json_path = NULL;
+
+    if (!path || path_len <= 2 || !types || !loc_ids) return NULL;
+
+    for (int k = 1; k < path_len - 1; k++) {
+        int node_idx = path[k];
+        if (node_idx >= 0 && node_idx < n && types[node_idx] == NODE_TYPE_WAYPOINT) {
+            waypoint_count++;
+        }
+    }
+
+    if (waypoint_count == 0) return NULL;
+
+    int json_buffer_size = waypoint_count * 20 + 10;
+    json_path = (char*)malloc((size_t)json_buffer_size);
+    if (!json_path) return NULL;
+
+    int json_pos = 0;
+    int stored_waypoints = 0;
+    json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, "[");
+    for (int k = 1; k < path_len - 1; k++) {
+        int node_idx = path[k];
+        if (node_idx >= 0 && node_idx < n && types[node_idx] == NODE_TYPE_WAYPOINT) {
+            if (stored_waypoints > 0) {
+                json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, ",");
+            }
+            json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, "%d", loc_ids[node_idx]);
+            stored_waypoints++;
+        }
+    }
+    snprintf(json_path + json_pos, json_buffer_size - json_pos, "]");
+    return json_path;
+}
+
 static int compute_and_store_distances(sqlite3 *db) {
     printf("\n=== Computing Distance Matrix ===\n");
     printf("  Computing distances with Dijkstra waypoint routing\n");
@@ -375,125 +413,119 @@ static int compute_and_store_distances(sqlite3 *db) {
 
     /* Begin transaction */
     sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DELETE FROM distances;", NULL, NULL, NULL);
 
     int stored = 0;
-    int skipped = 0;
     int paths_stored = 0;
-    int waypoint_distances_stored = 0;
+    int waypoint_pairs_stored = 0;
+    int diagonal_stored = 0;
+    int expected_pairs = n * n;
 
     for (i = 0; i < n; i++) {
-        /* Skip if source is a waypoint (we only store FROM non-waypoints) */
-        if (types[i] == NODE_TYPE_WAYPOINT) {
-            skipped += n;
-            continue;
+        sqlite3_bind_int(insert_stmt, 1, loc_ids[i]);
+        sqlite3_bind_int(insert_stmt, 2, loc_ids[i]);
+        sqlite3_bind_double(insert_stmt, 3, 0.0);
+        sqlite3_bind_int(insert_stmt, 4, 0);
+        sqlite3_bind_null(insert_stmt, 5);
+        if (sqlite3_step(insert_stmt) != SQLITE_DONE) {
+            fprintf(stderr, "  ✗ Insert error: %s\n", sqlite3_errmsg(db));
+            sqlite3_finalize(insert_stmt);
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            free(D);
+            cleanup_distance_matrices();
+            free(loc_ids);
+            free(types);
+            for (int k = 0; k < 2; k++) free(latlon_rad[k]);
+            return SQLITE_ERROR;
         }
+        sqlite3_reset(insert_stmt);
+        sqlite3_clear_bindings(insert_stmt);
+        stored++;
+        diagonal_stored++;
 
-        for (int j = 0; j < n; j++) {
-            if (i == j) continue; /* Skip diagonal */
+        for (int j = i + 1; j < n; j++) {
+            double dist_ij = D[i + n * j];
+            double dist_ji = D[j + n * i];
+            int crosses_land_ij = (F[i + n * j] == 0) ? 1 : 0;
+            int crosses_land_ji = (F[j + n * i] == 0) ? 1 : 0;
+            int path_len_ij = 0;
+            int path_len_ji = 0;
+            int *path_ij = get_dijkstra_path(i, j, &path_len_ij);
+            int *path_ji = get_dijkstra_path(j, i, &path_len_ji);
+            char *json_ij = build_waypoint_path_json(path_ij, path_len_ij, types, loc_ids, n);
+            char *json_ji = build_waypoint_path_json(path_ji, path_len_ji, types, loc_ids, n);
 
-            /* Get haversine distance from matrix */
-            double dist = D[i * n + j];
-
-            /* Set crosses_land from feasibility matrix: F[i*n+j]==0 means crosses land */
-            int crosses_land = (F[i * n + j] == 0) ? 1 : 0;
-
-            /* For waypoint destinations: store haversine distance only, no Dijkstra */
-            if (types[j] == NODE_TYPE_WAYPOINT) {
-                sqlite3_bind_int(insert_stmt, 1, loc_ids[i]);
-                sqlite3_bind_int(insert_stmt, 2, loc_ids[j]);
-
-                /* If crosses land to waypoint, mark as infeasible (no path through it) */
-                if (crosses_land) {
-                    sqlite3_bind_double(insert_stmt, 3, INFEASIBLE_LINK_PENALTY);
-                } else {
-                    sqlite3_bind_double(insert_stmt, 3, dist);
-                }
-
-                sqlite3_bind_int(insert_stmt, 4, crosses_land);
-                sqlite3_bind_null(insert_stmt, 5); /* No waypoint_path for waypoint destinations */
-
-                waypoint_distances_stored++;
-            } else {
-                /* Non-waypoint to non-waypoint: check for Dijkstra path */
-                int path_len = 0;
-                int* path = get_dijkstra_path(i, j, &path_len);
-                int waypoint_count = 0;
-
-                /* Check if path contains actual waypoints (not just stations/ports) */
-                if (crosses_land && path && path_len > 2) {
-                    for (int k = 1; k < path_len - 1; k++) {
-                        int node_idx = path[k];
-                        if (node_idx >= 0 && node_idx < n && types[node_idx] == NODE_TYPE_WAYPOINT) {
-                            waypoint_count++;
-                        }
-                    }
-                }
-
-                /* If crosses land but no waypoint route exists, use infeasible penalty */
-                if (crosses_land && waypoint_count == 0) {
-                    dist = INFEASIBLE_LINK_PENALTY;
-                }
-
-                sqlite3_bind_int(insert_stmt, 1, loc_ids[i]);
-                sqlite3_bind_int(insert_stmt, 2, loc_ids[j]);
-                sqlite3_bind_double(insert_stmt, 3, dist);
-                sqlite3_bind_int(insert_stmt, 4, crosses_land);
-
-                /* Only store waypoint_path if we have actual waypoints */
-                if (waypoint_count > 0) {
-                    /* Build JSON array: [waypoint_id1, waypoint_id2, ...] */
-                    int json_buffer_size = path_len * 20 + 10;
-                    char *json_path = (char*)malloc(json_buffer_size);
-                    int json_pos = 0;
-                    int stored_waypoints = 0;
-
-                    json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, "[");
-
-                    /* Skip first (source) and last (destination), only include waypoints */
-                    for (int k = 1; k < path_len - 1; k++) {
-                        int node_idx = path[k];
-                        /* Only include if this node is actually a waypoint */
-                        if (node_idx >= 0 && node_idx < n && types[node_idx] == NODE_TYPE_WAYPOINT) {
-                            if (stored_waypoints > 0) {
-                                json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, ",");
-                            }
-                            json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, "%d", loc_ids[node_idx]);
-                            stored_waypoints++;
-                        }
-                    }
-                    json_pos += snprintf(json_path + json_pos, json_buffer_size - json_pos, "]");
-
-                    sqlite3_bind_text(insert_stmt, 5, json_path, -1, SQLITE_TRANSIENT);
-                    paths_stored++;
-                    free(json_path);
-                } else {
-                    sqlite3_bind_null(insert_stmt, 5);
-                }
-            }
-
+            sqlite3_bind_int(insert_stmt, 1, loc_ids[i]);
+            sqlite3_bind_int(insert_stmt, 2, loc_ids[j]);
+            sqlite3_bind_double(insert_stmt, 3, dist_ij);
+            sqlite3_bind_int(insert_stmt, 4, crosses_land_ij);
+            if (json_ij) sqlite3_bind_text(insert_stmt, 5, json_ij, -1, SQLITE_TRANSIENT);
+            else sqlite3_bind_null(insert_stmt, 5);
             if (sqlite3_step(insert_stmt) != SQLITE_DONE) {
                 fprintf(stderr, "  ✗ Insert error: %s\n", sqlite3_errmsg(db));
+                free(json_ij);
+                free(json_ji);
                 sqlite3_finalize(insert_stmt);
                 sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
                 free(D);
+                cleanup_distance_matrices();
                 free(loc_ids);
                 free(types);
                 for (int k = 0; k < 2; k++) free(latlon_rad[k]);
                 return SQLITE_ERROR;
             }
             sqlite3_reset(insert_stmt);
+            sqlite3_clear_bindings(insert_stmt);
+            stored++;
+            if (types[i] == NODE_TYPE_WAYPOINT || types[j] == NODE_TYPE_WAYPOINT) waypoint_pairs_stored++;
+            if (json_ij) paths_stored++;
+
+            sqlite3_bind_int(insert_stmt, 1, loc_ids[j]);
+            sqlite3_bind_int(insert_stmt, 2, loc_ids[i]);
+            sqlite3_bind_double(insert_stmt, 3, dist_ji);
+            sqlite3_bind_int(insert_stmt, 4, crosses_land_ji);
+            if (json_ji) sqlite3_bind_text(insert_stmt, 5, json_ji, -1, SQLITE_TRANSIENT);
+            else sqlite3_bind_null(insert_stmt, 5);
+            if (sqlite3_step(insert_stmt) != SQLITE_DONE) {
+                fprintf(stderr, "  ✗ Insert error: %s\n", sqlite3_errmsg(db));
+                free(json_ij);
+                free(json_ji);
+                sqlite3_finalize(insert_stmt);
+                sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+                free(D);
+                cleanup_distance_matrices();
+                free(loc_ids);
+                free(types);
+                for (int k = 0; k < 2; k++) free(latlon_rad[k]);
+                return SQLITE_ERROR;
+            }
+            sqlite3_reset(insert_stmt);
+            sqlite3_clear_bindings(insert_stmt);
+            stored++;
+            if (types[i] == NODE_TYPE_WAYPOINT || types[j] == NODE_TYPE_WAYPOINT) waypoint_pairs_stored++;
+            if (json_ji) paths_stored++;
+
+            free(json_ij);
+            free(json_ji);
         }
     }
 
     sqlite3_finalize(insert_stmt);
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
 
-    printf("  ✓ Stored %d distance pairs (skipped %d waypoint-to-waypoint pairs)\n", stored, skipped);
-    printf("  ✓ Stored %d distances to waypoints (haversine only)\n", waypoint_distances_stored);
-    printf("  ✓ Stored waypoint paths for %d routed pairs\n", paths_stored);
+    printf("  ✓ Stored %d distance rows (expected %d = %d×%d)\n", stored, expected_pairs, n, n);
+    printf("  ✓ Stored %d diagonal identity rows\n", diagonal_stored);
+    printf("  ✓ Stored %d waypoint-involved directed rows\n", waypoint_pairs_stored);
+    printf("  ✓ Stored waypoint paths for %d routed directed rows\n", paths_stored);
+    if (stored != expected_pairs) {
+        fprintf(stderr, "  ✗ WARNING: distance table row count mismatch (stored=%d expected=%d)\n",
+                stored, expected_pairs);
+    }
 
     /* Cleanup */
     free(D);
+    free(F);
+    cleanup_distance_matrices();
     free(loc_ids);
     free(types);
     for (int k = 0; k < 2; k++) free(latlon_rad[k]);
