@@ -15,6 +15,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
 
     int total_nodes = inst->num_stations + inst->num_ports;
 
+    // Allocate growable route/segment containers used by the solver output.
     int *visited = (int*)calloc((size_t)total_nodes, sizeof(int));
 
     int tour_cap = 256;
@@ -62,6 +63,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
         double min_dist = 1e100;
         int nearest_station = -1;
 
+        // Pick the nearest still-unvisited station from the current location.
         for (int i = 0; i < inst->num_stations; i++) {
             if (!visited[i]) {
                 double dist = get_distance(inst, current_loc_id, inst->nodes[i].start_loc_id);
@@ -76,6 +78,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
 
         int next_catch = (int)(inst->nodes[nearest_station].amount + 0.5);
         if (current_load + next_catch > boat_capacity && current_load > 0) {
+            // Capacity breach: close current segment at nearest port and reset load.
             int nearest_port = find_nearest_port(inst, current_loc_id);
 
             if (nearest_port != -1) {
@@ -107,6 +110,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
         int stat_start = inst->nodes[nearest_station].start_loc_id;
         int stat_end = inst->nodes[nearest_station].end_loc_id;
 
+        // Emit station as start->end legs (or one node when identical).
         if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + ((stat_end != stat_start) ? 2 : 1))) return -1;
         if (!grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1)) return -1;
         if (!grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1)) return -1;
@@ -133,6 +137,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
     }
 
     if (current_load > 0 || segment_count == 0) {
+        // Flush trailing segment even if no terminal port insertion happened.
         if (!grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 1)) return -1;
         if (!grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1)) return -1;
         if (!grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1)) return -1;

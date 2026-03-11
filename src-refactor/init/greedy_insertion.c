@@ -26,6 +26,7 @@ static int build_station_order(const nn_instance_t *inst, int boat_start_loc_id,
 
     int seed = -1;
     double best_seed = 1e100;
+    // Seed with station closest to boat start, then insert by least delta.
     for (int i = 0; i < n; i++) {
         double d = get_distance(inst, boat_start_loc_id, inst->nodes[i].start_loc_id);
         if (d > 0.0 && d < best_seed) { best_seed = d; seed = i; }
@@ -41,6 +42,7 @@ static int build_station_order(const nn_instance_t *inst, int boat_start_loc_id,
         int best_station = -1;
         int best_pos = -1;
 
+        // Evaluate every (unvisited station, insertion position) pair.
         for (int cand = 0; cand < n; cand++) {
             if (used[cand]) continue;
             for (int pos = 0; pos <= order_n; pos++) {
@@ -108,6 +110,7 @@ int gi_solve(const nn_instance_t *inst, nn_solution_t *sol,
         int station_idx = station_order[ord];
         int next_catch = (int)(inst->nodes[station_idx].amount + 0.5);
 
+        // Split segment at nearest port when next station would exceed capacity.
         if (current_load + next_catch > boat_capacity && current_load > 0) {
             int nearest_port = find_nearest_port(inst, current_loc_id);
             if (nearest_port < 0) { free(station_order); return -1; }
@@ -138,6 +141,7 @@ int gi_solve(const nn_instance_t *inst, nn_solution_t *sol,
 
         int stat_start = inst->nodes[station_idx].start_loc_id;
         int stat_end   = inst->nodes[station_idx].end_loc_id;
+        // Emit station traversal and attach it to the current segment id.
         if (!grow_int_array(&tour,                &tour_cap,      tour_len + ((stat_end != stat_start) ? 2 : 1)) ||
             !grow_int_array(&visit_station_ids,   &visit_ids_cap, visit_station_count + 1) ||
             !grow_int_array(&visit_station_segment,&visit_seg_cap,visit_station_count + 1)) {
@@ -169,6 +173,7 @@ int gi_solve(const nn_instance_t *inst, nn_solution_t *sol,
         !grow_dist_array(&segment_dists,  &seg_dists_cap,   segment_count + 1)) {
         free(station_order); return -1;
     }
+    // Flush final open segment.
     segment_starts[segment_count]  = segment_start_idx;
     segment_ends[segment_count]    = tour_len - 1;
     segment_catches[segment_count] = current_load;
