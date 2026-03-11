@@ -319,6 +319,23 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
 
     int *unique_waypoint_location_ids = NULL;
     int uniq_wp_n = 0, uniq_wp_cap = 0;
+    int *dock_location_ids = NULL;
+    int dock_n = 0, dock_cap = 0;
+    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_start_loc_id);
+    for (int i = 0; i < sol->tour_length; i++) {
+        int loc_id = sol->tour[i];
+        for (int j = inst->num_stations; j < inst->num_stations + inst->num_ports; j++) {
+            if (inst->nodes[j].start_loc_id == loc_id) {
+                if (dock_n == 0 || dock_location_ids[dock_n - 1] != loc_id) {
+                    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, loc_id);
+                }
+                break;
+            }
+        }
+    }
+    if (dock_n == 0 || dock_location_ids[dock_n - 1] != boat_end_loc_id) {
+        (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id);
+    }
 
     fprintf(fp, "  \"solution\": {\n");
 
@@ -335,6 +352,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         if (!base) {
             fclose(fp);
             free(unique_waypoint_location_ids);
+            free(dock_location_ids);
             return;
         }
 
@@ -371,7 +389,13 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     }
     fprintf(fp, "    ],\n");
 
-    fprintf(fp, "    \"dock_location_ids\": [%d, %d],\n", boat_start_loc_id, boat_end_loc_id);
+    fprintf(fp, "    \"dock_location_ids\": [");
+    for (int i = 0; i < dock_n; i++) {
+        if (i) fprintf(fp, ", ");
+        fprintf(fp, "%d", dock_location_ids[i]);
+    }
+    fprintf(fp, "],\n");
+
     fprintf(fp, "    \"unique_waypoint_location_ids\": [");
     for (int i = 0; i < uniq_wp_n; i++) {
         if (i) fprintf(fp, ", ");
@@ -437,6 +461,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
 
     fclose(fp);
     free(unique_waypoint_location_ids);
+    free(dock_location_ids);
     printf("[OUTPUT] Solution written to %s\n", output_path);
 }
 
