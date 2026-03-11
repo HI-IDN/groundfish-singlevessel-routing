@@ -114,7 +114,7 @@ static int load_nodes(sqlite3 *db, nn_instance_t *inst) {
         inst->nodes[idx].table_id = sqlite3_column_int(stmt, 0);
         inst->nodes[idx].start_loc_id = sqlite3_column_int(stmt, 1);
         inst->nodes[idx].end_loc_id = sqlite3_column_int(stmt, 2);
-        inst->nodes[idx].amount = sqlite3_column_double(stmt, 3);
+        inst->nodes[idx].amount = sqlite3_column_int(stmt, 3);
         inst->nodes[idx].is_port = 0;
         idx++;
     }

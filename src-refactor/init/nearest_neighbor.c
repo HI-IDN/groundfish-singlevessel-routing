@@ -1,5 +1,11 @@
 /* Nearest Neighbor Heuristic with Capacity-Aware Segmentation
- * Uses pre-loaded distance matrix from database
+ *
+ * 1. Start from boat location with empty load
+ * 2. Greedily pick nearest unvisited station that fits capacity
+ * 3. If capacity blocks all options, retry without capacity filter (fallback)
+ * 4. When no station is reachable, insert nearest port and reset load
+ * 5. After visiting a station, if load >= capacity and more remain, insert port
+ * 6. Segment boundaries occur at port insertions
  */
 
 #include <stdio.h>
@@ -8,91 +14,184 @@
 #include "nearest_neighbor.h"
 #include "init_utils.h"
 
-/* Nearest Neighbor with capacity-aware segmentation */
 int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
              int boat_start_loc_id, int boat_end_loc_id,
-             int boat_capacity) {
-
+             int boat_capacity)
+{
     int total_nodes = inst->num_stations + inst->num_ports;
-
-    // Allocate growable route/segment containers used by the solver output.
     int *visited = (int*)calloc((size_t)total_nodes, sizeof(int));
 
+    // Growable containers for tour and segments
     int tour_cap = 256;
     int *tour_nodes = (int*)malloc((size_t)tour_cap * sizeof(int));
     int tour_len = 0;
 
-    int seg_starts_cap = 64;
-    int seg_ends_cap = 64;
-    int seg_catches_cap = 64;
-    int seg_dists_cap = 64;
+    int seg_starts_cap = 64, seg_ends_cap = 64, seg_catches_cap = 64, seg_dists_cap = 64;
     int *segment_starts = (int*)malloc((size_t)seg_starts_cap * sizeof(int));
     int *segment_ends = (int*)malloc((size_t)seg_ends_cap * sizeof(int));
     int *segment_catches = (int*)malloc((size_t)seg_catches_cap * sizeof(int));
     double *segment_dists = (double*)malloc((size_t)seg_dists_cap * sizeof(double));
     int segment_count = 0;
 
-    int visit_ids_cap = 256;
-    int visit_seg_cap = 256;
+    int visit_ids_cap = 256, visit_seg_cap = 256;
     int *visit_station_ids = (int*)malloc((size_t)visit_ids_cap * sizeof(int));
     int *visit_station_segment = (int*)malloc((size_t)visit_seg_cap * sizeof(int));
     int visit_station_count = 0;
 
     if (!visited || !tour_nodes || !segment_starts || !segment_ends || !segment_catches ||
         !segment_dists || !visit_station_ids || !visit_station_segment) {
-        free(visited);
-        free(tour_nodes);
-        free(segment_starts);
-        free(segment_ends);
-        free(segment_catches);
-        free(segment_dists);
-        free(visit_station_ids);
+        free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
+        free(segment_catches); free(segment_dists); free(visit_station_ids);
         free(visit_station_segment);
         return -1;
     }
 
-    int current_loc_id = boat_start_loc_id;
+    int current_node_idx = -1;  // -1 = boat (use boat_start_loc_id)
     int current_load = 0;
     double current_segment_dist = 0.0;
     int segment_start_idx = 0;
+    int remaining_stations = inst->num_stations;
 
-    printf("[NN] Start: loc=%d cap=%d stations=%d ports=%d\n",
-           boat_start_loc_id, boat_capacity, inst->num_stations, inst->num_ports);
+    printf("[NN] Start: boat_start=%d boat_end=%d cap=%d stations=%d ports=%d\n",
+           boat_start_loc_id, boat_end_loc_id, boat_capacity, inst->num_stations, inst->num_ports);
 
-    while (1) {
-        double min_dist = 1e100;
-        int nearest_station = -1;
+    while (remaining_stations > 0) {
+        double best_dist = 1e100;
+        int best_station_idx = -1;
 
-        // Pick the nearest still-unvisited station from the current location.
+        // Phase 1: Find nearest unvisited station that fits capacity
         for (int i = 0; i < inst->num_stations; i++) {
-            if (!visited[i]) {
-                double dist = get_distance(inst, current_loc_id, inst->nodes[i].start_loc_id);
-                if (dist > 0.0 && dist < min_dist) {
-                    min_dist = dist;
-                    nearest_station = i;
+            if (visited[i]) continue;
+            int station_amount = inst->nodes[i].amount;
+            // Skip if capacity would be exceeded (but allow if load is empty)
+            if (current_load > 0 && current_load + station_amount > boat_capacity) continue;
+
+            double dist = (current_node_idx < 0)
+                ? min_dist_from_loc_to_node(inst, boat_start_loc_id, i)
+                : min_dist_node_pair(inst, current_node_idx, i);
+            if (dist > 0.0 && dist < best_dist) {
+                best_dist = dist;
+                best_station_idx = i;
+            }
+        }
+
+        // Phase 2: If no candidate found and load is empty, retry without capacity filter
+        if (best_station_idx < 0 && current_load <= 0) {
+            for (int i = 0; i < inst->num_stations; i++) {
+                if (visited[i]) continue;
+                double dist = (current_node_idx < 0)
+                    ? min_dist_from_loc_to_node(inst, boat_start_loc_id, i)
+                    : min_dist_node_pair(inst, current_node_idx, i);
+                if (dist > 0.0 && dist < best_dist) {
+                    best_dist = dist;
+                    best_station_idx = i;
                 }
             }
         }
 
-        if (nearest_station == -1) break;
+        // Phase 3: If still no station, insert nearest port and reset
+        if (best_station_idx < 0) {
+            if (current_node_idx < 0) {
+                printf("[NN] No feasible station from boat start\n");
+                break;
+            }
+            int nearest_port = find_nearest_port(inst, current_node_idx);
+            if (nearest_port < 0) {
+                printf("[NN] No port available (load=%d)\n", current_load);
+                break;
+            }
 
-        int next_catch = (int)(inst->nodes[nearest_station].amount + 0.5);
-        if (current_load + next_catch > boat_capacity && current_load > 0) {
-            // Capacity breach: close current segment at nearest port and reset load.
-            int nearest_port = find_nearest_port(inst, current_loc_id);
+            if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + 1)) {
+                free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
+                free(segment_catches); free(segment_dists); free(visit_station_ids);
+                free(visit_station_segment);
+                return -1;
+            }
 
-            if (nearest_port != -1) {
-                if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + 1)) return -1;
-                if (!grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 2)) return -1;
-                if (!grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1)) return -1;
-                if (!grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1)) return -1;
-                if (!grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) return -1;
+            int port_loc = inst->nodes[nearest_port].start_loc_id;
+            double d_to_port = get_distance(inst, current_node_idx, port_loc);
+            if (d_to_port > 0.0) current_segment_dist += d_to_port;
+            tour_nodes[tour_len++] = port_loc;
+
+            if (!grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 1) ||
+                !grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1) ||
+                !grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1) ||
+                !grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) {
+                free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
+                free(segment_catches); free(segment_dists); free(visit_station_ids);
+                free(visit_station_segment);
+                return -1;
+            }
+
+            segment_starts[segment_count] = segment_start_idx;
+            segment_ends[segment_count] = tour_len - 1;
+            segment_catches[segment_count] = current_load;
+            segment_dists[segment_count] = current_segment_dist;
+            segment_count++;
+
+            current_node_idx = nearest_port;
+            current_load = 0;
+            current_segment_dist = 0.0;
+            segment_start_idx = tour_len;
+            continue;
+        }
+
+        // Phase 4: Add selected station to tour
+        int station_amount = inst->nodes[best_station_idx].amount;
+
+        int stat_start = inst->nodes[best_station_idx].start_loc_id;
+        int stat_end = inst->nodes[best_station_idx].end_loc_id;
+
+        if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + ((stat_end != stat_start) ? 2 : 1)) ||
+            !grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1) ||
+            !grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1)) {
+            free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
+            free(segment_catches); free(segment_dists); free(visit_station_ids);
+            free(visit_station_segment);
+            return -1;
+        }
+
+        // Compute distance to station entry point
+        double d_to_start = (current_node_idx < 0)
+            ? get_distance(inst, boat_start_loc_id, stat_start)
+            : get_distance(inst, inst->nodes[current_node_idx].end_loc_id, stat_start);
+        if (d_to_start > 0.0) current_segment_dist += d_to_start;
+        tour_nodes[tour_len++] = stat_start;
+
+        // If station has distinct end, add it and compute internal distance
+        if (stat_end != stat_start) {
+            double d_inside = get_distance(inst, stat_start, stat_end);
+            if (d_inside > 0.0) current_segment_dist += d_inside;
+            tour_nodes[tour_len++] = stat_end;
+        }
+
+        current_load += station_amount;
+        visited[best_station_idx] = 1;
+        visit_station_ids[visit_station_count] = inst->nodes[best_station_idx].table_id;
+        visit_station_segment[visit_station_count] = segment_count;
+        visit_station_count++;
+        current_node_idx = best_station_idx;
+        remaining_stations--;
+
+        // Phase 5: After adding station, check if we should insert port
+        if (current_load >= boat_capacity && remaining_stations > 0) {
+            int nearest_port = find_nearest_port(inst, current_node_idx);
+            if (nearest_port >= 0) {
+                if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + 1) ||
+                    !grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 1) ||
+                    !grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1) ||
+                    !grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1) ||
+                    !grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) {
+                    free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
+                    free(segment_catches); free(segment_dists); free(visit_station_ids);
+                    free(visit_station_segment);
+                    return -1;
+                }
 
                 int port_loc = inst->nodes[nearest_port].start_loc_id;
+                double d_to_port = get_distance(inst, inst->nodes[current_node_idx].end_loc_id, port_loc);
+                if (d_to_port > 0.0) current_segment_dist += d_to_port;
                 tour_nodes[tour_len++] = port_loc;
-
-                double port_dist = get_distance(inst, current_loc_id, port_loc);
-                if (port_dist > 0.0) current_segment_dist += port_dist;
 
                 segment_starts[segment_count] = segment_start_idx;
                 segment_ends[segment_count] = tour_len - 1;
@@ -100,48 +199,25 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
                 segment_dists[segment_count] = current_segment_dist;
                 segment_count++;
 
-                current_loc_id = port_loc;
+                current_node_idx = nearest_port;
                 current_load = 0;
                 current_segment_dist = 0.0;
                 segment_start_idx = tour_len;
             }
         }
-
-        int stat_start = inst->nodes[nearest_station].start_loc_id;
-        int stat_end = inst->nodes[nearest_station].end_loc_id;
-
-        // Emit station as start->end legs (or one node when identical).
-        if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + ((stat_end != stat_start) ? 2 : 1))) return -1;
-        if (!grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1)) return -1;
-        if (!grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1)) return -1;
-
-        double d1 = get_distance(inst, current_loc_id, stat_start);
-        if (d1 > 0.0) current_segment_dist += d1;
-        tour_nodes[tour_len++] = stat_start;
-
-        if (stat_end != stat_start) {
-            double d2 = get_distance(inst, stat_start, stat_end);
-            if (d2 > 0.0) current_segment_dist += d2;
-            tour_nodes[tour_len++] = stat_end;
-            current_loc_id = stat_end;
-        } else {
-            current_loc_id = stat_start;
-        }
-
-        current_load += next_catch;
-        visited[nearest_station] = 1;
-
-        visit_station_ids[visit_station_count] = inst->nodes[nearest_station].table_id;
-        visit_station_segment[visit_station_count] = segment_count;
-        visit_station_count++;
     }
 
+    // Flush final segment
     if (current_load > 0 || segment_count == 0) {
-        // Flush trailing segment even if no terminal port insertion happened.
-        if (!grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 1)) return -1;
-        if (!grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1)) return -1;
-        if (!grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1)) return -1;
-        if (!grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) return -1;
+        if (!grow_int_array(&segment_starts, &seg_starts_cap, segment_count + 1) ||
+            !grow_int_array(&segment_ends, &seg_ends_cap, segment_count + 1) ||
+            !grow_int_array(&segment_catches, &seg_catches_cap, segment_count + 1) ||
+            !grow_dist_array(&segment_dists, &seg_dists_cap, segment_count + 1)) {
+            free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
+            free(segment_catches); free(segment_dists); free(visit_station_ids);
+            free(visit_station_segment);
+            return -1;
+        }
         segment_starts[segment_count] = segment_start_idx;
         segment_ends[segment_count] = tour_len - 1;
         segment_catches[segment_count] = current_load;
@@ -149,10 +225,17 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
         segment_count++;
     }
 
+    // Calculate total distance including return to boat end
     double total_dist = 0.0;
     for (int i = 0; i < segment_count; i++) total_dist += segment_dists[i];
-    double return_dist = get_distance(inst, current_loc_id, boat_end_loc_id);
-    if (return_dist > 0.0) total_dist += return_dist;
+    int last_node_idx = (current_node_idx >= 0) ? current_node_idx : -1;
+    if (last_node_idx >= 0) {
+        double d_return = get_distance(inst, inst->nodes[last_node_idx].end_loc_id, boat_end_loc_id);
+        if (d_return > 0.0) total_dist += d_return;
+    } else {
+        double d_return = get_distance(inst, boat_start_loc_id, boat_end_loc_id);
+        if (d_return > 0.0) total_dist += d_return;
+    }
 
     sol->tour = tour_nodes;
     sol->tour_length = tour_len;

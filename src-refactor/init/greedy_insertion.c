@@ -108,7 +108,7 @@ int gi_solve(const nn_instance_t *inst, nn_solution_t *sol,
 
     for (int ord = 0; ord < station_order_n; ord++) {
         int station_idx = station_order[ord];
-        int next_catch = (int)(inst->nodes[station_idx].amount + 0.5);
+        int next_catch = inst->nodes[station_idx].amount;
 
         // Split segment at nearest port when next station would exceed capacity.
         if (current_load + next_catch > boat_capacity && current_load > 0) {

@@ -5,7 +5,7 @@ typedef struct {
     int table_id;      /* stations.id or ports.id */
     int start_loc_id;  /* locations.id used as travel start */
     int end_loc_id;    /* locations.id used as travel end (ports: same as start) */
-    double amount;
+    int amount;
     int is_port;
 } nn_node_t;
 
