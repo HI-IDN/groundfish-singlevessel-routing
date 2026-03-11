@@ -161,15 +161,15 @@ static inline double min_dist_from_loc_to_node(const nn_instance_t *inst, int fr
 }
 
 /* Choose station traversal orientation from a current location.
- * Returns 1 on success, 0 if no valid directed traversal is available.
- * Chosen path is either current->start->end or current->end->start. */
-static inline int choose_station_orientation(
+ * direction: +1 means start->end, -1 means end->start. */
+static inline int choose_station_orientation_with_dir(
     const nn_instance_t *inst,
     int current_loc_id,
     int station_idx,
     int *entry_loc,
     int *exit_loc,
-    double *added_dist)
+    double *added_dist,
+    int *direction)
 {
     int s = inst->nodes[station_idx].start_loc_id;
     int e = inst->nodes[station_idx].end_loc_id;
@@ -187,6 +187,7 @@ static inline int choose_station_orientation(
         if (entry_loc) *entry_loc = s;
         if (exit_loc) *exit_loc = e;
         if (added_dist) *added_dist = d_cs;
+        if (direction) *direction = +1;
         return 1;
     }
 
@@ -196,12 +197,29 @@ static inline int choose_station_orientation(
         if (entry_loc) *entry_loc = e;
         if (exit_loc) *exit_loc = s;
         if (added_dist) *added_dist = opt_es;
+        if (direction) *direction = -1;
     } else {
         if (entry_loc) *entry_loc = s;
         if (exit_loc) *exit_loc = e;
         if (added_dist) *added_dist = opt_se;
+        if (direction) *direction = +1;
     }
     return 1;
 }
+
+/* Clean wrapper when caller does not need +1/-1 direction. */
+static inline int choose_station_orientation(
+    const nn_instance_t *inst,
+    int current_loc_id,
+    int station_idx,
+    int *entry_loc,
+    int *exit_loc,
+    double *added_dist)
+{
+    return choose_station_orientation_with_dir(
+        inst, current_loc_id, station_idx,
+        entry_loc, exit_loc, added_dist, NULL);
+}
+
 
 #endif

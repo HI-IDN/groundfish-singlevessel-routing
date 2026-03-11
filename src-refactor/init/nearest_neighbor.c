@@ -58,20 +58,31 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
     while (remaining_stations > 0) {
         double best_dist = 1e100;
         int best_station_idx = -1;
+        int best_entry = -1, best_exit = -1, best_dir = 0;
+
+        int from_loc_id = (current_node_idx < 0)
+            ? boat_start_loc_id
+            : inst->nodes[current_node_idx].end_loc_id;
 
         // Phase 1: Find nearest unvisited station that fits capacity
         for (int i = 0; i < inst->num_stations; i++) {
             if (visited[i]) continue;
             int station_amount = inst->nodes[i].amount;
-            // Skip if capacity would be exceeded (but allow if load is empty)
             if (current_load > 0 && current_load + station_amount > boat_capacity) continue;
 
-            double dist = (current_node_idx < 0)
-                ? min_dist_from_loc_to_node(inst, boat_start_loc_id, i)
-                : min_dist_node_pair(inst, current_node_idx, i);
-            if (dist > 0.0 && dist < best_dist) {
-                best_dist = dist;
+            int cand_entry = -1, cand_exit = -1, cand_dir = 0;
+            double cand_dist = 0.0;
+            if (!choose_station_orientation_with_dir(inst, from_loc_id, i,
+                                                     &cand_entry, &cand_exit,
+                                                     &cand_dist, &cand_dir)) {
+                continue;
+            }
+            if (cand_dist > 0.0 && cand_dist < best_dist) {
+                best_dist = cand_dist;
                 best_station_idx = i;
+                best_entry = cand_entry;
+                best_exit = cand_exit;
+                best_dir = cand_dir;
             }
         }
 
@@ -79,12 +90,19 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
         if (best_station_idx < 0 && current_load <= 0) {
             for (int i = 0; i < inst->num_stations; i++) {
                 if (visited[i]) continue;
-                double dist = (current_node_idx < 0)
-                    ? min_dist_from_loc_to_node(inst, boat_start_loc_id, i)
-                    : min_dist_node_pair(inst, current_node_idx, i);
-                if (dist > 0.0 && dist < best_dist) {
-                    best_dist = dist;
+                int cand_entry = -1, cand_exit = -1, cand_dir = 0;
+                double cand_dist = 0.0;
+                if (!choose_station_orientation_with_dir(inst, from_loc_id, i,
+                                                         &cand_entry, &cand_exit,
+                                                         &cand_dist, &cand_dir)) {
+                    continue;
+                }
+                if (cand_dist > 0.0 && cand_dist < best_dist) {
+                    best_dist = cand_dist;
                     best_station_idx = i;
+                    best_entry = cand_entry;
+                    best_exit = cand_exit;
+                    best_dir = cand_dir;
                 }
             }
         }
@@ -95,7 +113,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
                 printf("[NN] No feasible station from boat start\n");
                 break;
             }
-            int nearest_port = find_nearest_port(inst, current_node_idx);
+            int nearest_port = find_nearest_port(inst, inst->nodes[current_node_idx].end_loc_id);
             if (nearest_port < 0) {
                 printf("[NN] No port available (load=%d)\n", current_load);
                 break;
@@ -122,13 +140,12 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
             continue;
         }
 
-        // Phase 4: Add selected station to tour
+        // Phase 4: Add selected station to tour using orientation selected above.
         int station_amount = inst->nodes[best_station_idx].amount;
+        int stat_entry = best_entry;
+        int stat_exit = best_exit;
 
-        int stat_start = inst->nodes[best_station_idx].start_loc_id;
-        int stat_end = inst->nodes[best_station_idx].end_loc_id;
-
-        if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + ((stat_end != stat_start) ? 2 : 1)) ||
+        if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + ((stat_exit != stat_entry) ? 2 : 1)) ||
             !grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1) ||
             !grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1)) {
             free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
@@ -137,19 +154,14 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
             return -1;
         }
 
-        // Compute distance to station entry point
-        double d_to_start = (current_node_idx < 0)
-            ? get_distance(inst, boat_start_loc_id, stat_start)
-            : get_distance(inst, inst->nodes[current_node_idx].end_loc_id, stat_start);
-        if (d_to_start > 0.0) current_segment_dist += d_to_start;
-        tour_nodes[tour_len++] = stat_start;
-
-        // If station has distinct end, add it and compute internal distance
-        if (stat_end != stat_start) {
-            double d_inside = get_distance(inst, stat_start, stat_end);
-            if (d_inside > 0.0) current_segment_dist += d_inside;
-            tour_nodes[tour_len++] = stat_end;
+        if (best_dist > 0.0) current_segment_dist += best_dist;
+        tour_nodes[tour_len++] = stat_entry;
+        if (stat_exit != stat_entry) {
+            tour_nodes[tour_len++] = stat_exit;
         }
+
+        // best_dir currently tracked for deterministic orientation bookkeeping (+1/-1).
+        (void)best_dir;
 
         current_load += station_amount;
         visited[best_station_idx] = 1;
@@ -161,7 +173,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
 
         // Phase 5: After adding station, if load at capacity and more remain, insert port
         if (current_load >= boat_capacity && remaining_stations > 0) {
-            int nearest_port = find_nearest_port(inst, current_node_idx);
+            int nearest_port = find_nearest_port(inst, inst->nodes[current_node_idx].end_loc_id);
             if (nearest_port >= 0) {
                 int new_loc, new_seg_start;
                 if (!insert_port_segment(inst, nearest_port,
