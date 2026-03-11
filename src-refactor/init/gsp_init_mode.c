@@ -328,11 +328,31 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         fprintf(fp, "      [");
         int start = sol->segment_starts[s];
         int end = sol->segment_ends[s];
-        if (start <= end) {
-            fprintf(fp, "%d", sol->tour[start]);
-            for (int i = start; i < end; i++) {
-                int from_loc = sol->tour[i];
-                int to_loc = sol->tour[i + 1];
+
+        int base_cap = (end - start + 1) + 2;
+        int *base = (int*)malloc((size_t)base_cap * sizeof(int));
+        int base_n = 0;
+        if (!base) {
+            fclose(fp);
+            free(unique_waypoint_location_ids);
+            return;
+        }
+
+        /* Start boundary: boat start for first segment, prior segment end for others. */
+        base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
+        for (int i = start; i <= end; i++) {
+            base[base_n++] = sol->tour[i];
+        }
+        /* End boundary: boat end only for final segment; intermediate segments already end at a port. */
+        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
+            base[base_n++] = boat_end_loc_id;
+        }
+
+        if (base_n > 0) {
+            fprintf(fp, "%d", base[0]);
+            for (int i = 0; i < base_n - 1; i++) {
+                int from_loc = base[i];
+                int to_loc = base[i + 1];
                 int *wps = NULL;
                 int n_wps = lookup_waypoint_path_local(db, from_loc, to_loc, &wps);
                 if (n_wps > 0) {
@@ -345,6 +365,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                 free(wps);
             }
         }
+
+        free(base);
         fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
     }
     fprintf(fp, "    ],\n");
@@ -391,7 +413,12 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
 
     fprintf(fp, "    \"segment_distance_nm\": [");
     for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%.2f", sol->segment_dists[s]);
+        double seg_nm = sol->segment_dists[s];
+        if (s == sol->segment_count - 1 && sol->tour_length > 0) {
+            double final_leg = inst->distances[sol->tour[sol->tour_length - 1]][boat_end_loc_id];
+            if (final_leg > 0.0) seg_nm += final_leg;
+        }
+        fprintf(fp, "%.2f", seg_nm);
         if (s + 1 < sol->segment_count) fprintf(fp, ", ");
     }
     fprintf(fp, "],\n");
