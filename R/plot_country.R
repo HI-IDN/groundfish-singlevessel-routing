@@ -14,7 +14,7 @@ load_required_packages(required_packages)
 
 args <- commandArgs(trailingOnly = TRUE)
 db_path <- if (length(args) >= 1) args[1] else "dat/gsp_data.db"
-output_file <- if (length(args) >= 2) args[2] else "dat/country_waypoints.png"
+output_file <- if (length(args) >= 2) args[2] else "dat/coastline_waypoints_ports.png"
 
 cat("=== Country Waypoint Plot ===\n")
 cat(sprintf("Database: %s\n", db_path))
@@ -31,6 +31,14 @@ waypoints <- read_db_table(
    FROM waypoints w
    JOIN locations l ON l.id = w.location_id
    ORDER BY w.id"
+)
+
+ports <- read_db_table(
+  db_path,
+  "SELECT p.id AS port_id, p.name, l.lat, l.lon
+   FROM ports p
+   JOIN locations l ON l.id = p.location_id
+   ORDER BY p.id"
 )
 
 if (nrow(waypoints) == 0) {
@@ -57,9 +65,21 @@ p <- base_coastline_plot(coastline) +
     alpha = 0.9,
     inherit.aes = FALSE
   ) +
+  geom_point(
+    data = ports,
+    aes(x = lon, y = lat),
+    shape = 21,
+    stroke = 0.35,
+    size = 2.2,
+    color = "#1B9E77",
+    fill = "#E6FFF2",
+    alpha = 0.95,
+    inherit.aes = FALSE
+  ) +
   labs(
-    title = "Generated Country Waypoints",
-    subtitle = sprintf("Coastline points: %d | Waypoints: %d", nrow(coastline), nrow(waypoints)),
+    title = "Coastline, Inferred Waypoints, and Ports",
+    subtitle = sprintf("Coastline points: %d | Waypoints: %d | Ports: %d",
+                      nrow(coastline), nrow(waypoints), nrow(ports)),
     x = NULL,
     y = NULL
   ) +

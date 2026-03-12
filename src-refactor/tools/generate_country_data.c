@@ -26,6 +26,7 @@ static void die_usage(const char *argv0) {
             "\n"
             "Options:\n"
             "  --dat <datafile.dat>        Optional DAT file for manual WAYP seeds\n"
+            "  --port-file <datafile.dat>  DAT file used to import PORT rows into DB\n"
             "  --use-dat-waypoints        Load WAYP lines from --dat\n"
             "  --preserve-all-seeds       Force all loaded seed waypoints into final ring\n"
             "  --seed-hints-only          Use loaded seed waypoints only when insertion stays valid\n"
@@ -107,6 +108,135 @@ static int insert_point_after(const GeoPointVec *src, int insert_after, GeoPoint
         }
     }
     return 1;
+}
+
+static char *strip_quotes_local(const char *name) {
+    if (!name) {
+        char *empty = (char*)malloc(1);
+        if (empty) empty[0] = '\0';
+        return empty;
+    }
+    const char *start = name;
+    const char *end = name + strlen(name);
+    if (*start == '"') start++;
+    if (end > start && *(end - 1) == '"') end--;
+    size_t len = (size_t)(end - start);
+    char *out = (char*)malloc(len + 1);
+    if (!out) return NULL;
+    memcpy(out, start, len);
+    out[len] = '\0';
+    return out;
+}
+
+static int insert_location_from_degmin(sqlite3_stmt *insert_stmt,
+                                       sqlite3_stmt *select_stmt,
+                                       int lat_degmin,
+                                       int lon_degmin) {
+    double lat_deg = degmin_to_deg(lat_degmin);
+    double lon_deg = degmin_to_deg_lon(lon_degmin);
+
+    sqlite3_bind_int(select_stmt, 1, lat_degmin);
+    sqlite3_bind_int(select_stmt, 2, lon_degmin);
+    if (sqlite3_step(select_stmt) == SQLITE_ROW) {
+        int loc_id = sqlite3_column_int(select_stmt, 0);
+        sqlite3_reset(select_stmt);
+        sqlite3_clear_bindings(select_stmt);
+        return loc_id;
+    }
+    sqlite3_reset(select_stmt);
+    sqlite3_clear_bindings(select_stmt);
+
+    sqlite3_bind_int(insert_stmt, 1, lat_degmin);
+    sqlite3_bind_int(insert_stmt, 2, lon_degmin);
+    sqlite3_bind_double(insert_stmt, 3, lat_deg);
+    sqlite3_bind_double(insert_stmt, 4, lon_deg);
+    if (sqlite3_step(insert_stmt) != SQLITE_DONE) {
+        sqlite3_reset(insert_stmt);
+        sqlite3_clear_bindings(insert_stmt);
+        return -1;
+    }
+    sqlite3_reset(insert_stmt);
+    sqlite3_clear_bindings(insert_stmt);
+    return (int)sqlite3_last_insert_rowid(sqlite3_db_handle(insert_stmt));
+}
+
+static int store_ports_from_dat(sqlite3 *db,
+                                const char *dat_path,
+                                int *out_seen,
+                                int *out_inserted) {
+    ItemVec items;
+    sqlite3_stmt *loc_insert_stmt = NULL;
+    sqlite3_stmt *loc_select_stmt = NULL;
+    sqlite3_stmt *port_stmt = NULL;
+    int rc = SQLITE_OK;
+    int seen = 0;
+    int inserted = 0;
+
+    item_vec_init(&items);
+    read_dat_file_all_boats(dat_path, &items, 0);
+
+    rc = sqlite3_prepare_v2(db,
+                            "INSERT INTO locations (easting, northing, lat, lon) VALUES (?, ?, ?, ?);",
+                            -1, &loc_insert_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+
+    rc = sqlite3_prepare_v2(db,
+                            "SELECT id FROM locations WHERE easting = ? AND northing = ?;",
+                            -1, &loc_select_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+
+    rc = sqlite3_prepare_v2(db,
+                            "INSERT OR IGNORE INTO ports (name, location_id) VALUES (?, ?);",
+                            -1, &port_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+
+    sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+    for (int i = 0; i < items.n; i++) {
+        if (items.a[i].Type != tPORT) continue;
+        seen++;
+
+        int lat_degmin = (int)items.a[i].LatLonDegMin[0];
+        int lon_degmin = (int)items.a[i].LatLonDegMin[1];
+        int loc_id = insert_location_from_degmin(loc_insert_stmt, loc_select_stmt, lat_degmin, lon_degmin);
+        if (loc_id <= 0) {
+            rc = SQLITE_ERROR;
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            goto cleanup;
+        }
+
+        char *clean_name = strip_quotes_local(items.a[i].Name);
+        if (!clean_name) {
+            rc = SQLITE_NOMEM;
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            goto cleanup;
+        }
+
+        sqlite3_bind_text(port_stmt, 1, clean_name, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(port_stmt, 2, loc_id);
+        if (sqlite3_step(port_stmt) != SQLITE_DONE) {
+            free(clean_name);
+            sqlite3_reset(port_stmt);
+            sqlite3_clear_bindings(port_stmt);
+            rc = SQLITE_ERROR;
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            goto cleanup;
+        }
+        if (sqlite3_changes(db) > 0) inserted++;
+        sqlite3_reset(port_stmt);
+        sqlite3_clear_bindings(port_stmt);
+        free(clean_name);
+    }
+    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+
+cleanup:
+    sqlite3_finalize(loc_insert_stmt);
+    sqlite3_finalize(loc_select_stmt);
+    sqlite3_finalize(port_stmt);
+    item_vec_free(&items);
+
+    if (out_seen) *out_seen = seen;
+    if (out_inserted) *out_inserted = inserted;
+    return rc;
 }
 
 static const GEOSGeometry *pick_largest_polygon_component(GEOSContextHandle_t ctx, const GEOSGeometry *geom) {
@@ -525,8 +655,11 @@ static void write_metadata(sqlite3 *db,
                            const WaypointGenerationOptions *opts,
                            const char *island_bin_path,
                            const char *dat_path,
+                           const char *port_file,
                            int loaded_seed_count,
                            int inserted_seed_count,
+                           int ports_seen,
+                           int ports_inserted,
                            double buffer_distance,
                            double simplify_tolerance,
                            int final_point_count) {
@@ -542,6 +675,7 @@ static void write_metadata(sqlite3 *db,
         {"country_stage", "complete"},
         {"country_island_bin", island_bin_path ? island_bin_path : ""},
         {"country_dat_file", dat_path ? dat_path : ""},
+        {"country_port_file", port_file ? port_file : ""},
         {"country_seed_mode", opts->seed_mode == GSP_SEED_MODE_PRESERVE_ALL ? "preserve_all" : (opts->seed_mode == GSP_SEED_MODE_HINTS_ONLY ? "hints_only" : "none")}
     };
 
@@ -578,6 +712,16 @@ static void write_metadata(sqlite3 *db,
     sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
 
+    snprintf(value, sizeof(value), "%d", ports_seen);
+    sqlite3_bind_text(stmt, 1, "country_ports_seen", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
+
+    snprintf(value, sizeof(value), "%d", ports_inserted);
+    sqlite3_bind_text(stmt, 1, "country_ports_inserted", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
+
     snprintf(value, sizeof(value), "%.8f", buffer_distance);
     sqlite3_bind_text(stmt, 1, "country_buffer_distance_deg", -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
@@ -600,12 +744,15 @@ int main(int argc, char **argv) {
     const char *db_path = NULL;
     const char *island_bin_path = NULL;
     const char *dat_path = NULL;
+    const char *port_file = NULL;
     WaypointGenerationOptions opts;
     CoastlinePoints coastline = {0};
     GeoPointVec seeds = {0};
     GeoPointVec final_ring = {0};
     int loaded_seed_count = 0;
     int inserted_seed_count = 0;
+    int ports_seen = 0;
+    int ports_inserted = 0;
     int rc = 1;
     sqlite3 *db = NULL;
     GEOSContextHandle_t geos_ctx = NULL;
@@ -627,6 +774,8 @@ int main(int argc, char **argv) {
             island_bin_path = argv[++i];
         } else if (strcmp(argv[i], "--dat") == 0 && i + 1 < argc) {
             dat_path = argv[++i];
+        } else if (strcmp(argv[i], "--port-file") == 0 && i + 1 < argc) {
+            port_file = argv[++i];
         } else if (strcmp(argv[i], "--use-dat-waypoints") == 0) {
             opts.use_dat_waypoints = 1;
         } else if (strcmp(argv[i], "--preserve-all-seeds") == 0) {
@@ -661,7 +810,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (opts.use_dat_waypoints && !dat_path) {
-        fprintf(stderr, "--use-dat-waypoints requires --dat <datafile.dat>\n");
+        fprintf(stderr, "DAT-backed options require --dat <datafile.dat>\n");
         return 1;
     }
 
@@ -767,8 +916,20 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
-    write_metadata(db, &opts, island_bin_path, dat_path, loaded_seed_count,
-                   inserted_seed_count, buffer_distance, simplify_tolerance, final_ring.n);
+    if (port_file) {
+        if (store_ports_from_dat(db, port_file, &ports_seen, &ports_inserted) != SQLITE_OK) {
+            fprintf(stderr, "Failed to import ports from %s: %s\n", port_file, sqlite3_errmsg(db));
+            goto cleanup;
+        }
+        if (ports_seen == 0) {
+            fprintf(stderr, "No PORT rows found in port file: %s\n", port_file);
+            goto cleanup;
+        }
+    }
+
+    write_metadata(db, &opts, island_bin_path, dat_path, port_file,
+                   loaded_seed_count, inserted_seed_count, ports_seen, ports_inserted,
+                   buffer_distance, simplify_tolerance, final_ring.n);
 
     printf("Stored %d generated waypoints in %s\n", final_ring.n, db_path);
     if (opts.use_dat_waypoints) {
@@ -777,6 +938,9 @@ int main(int argc, char **argv) {
                inserted_seed_count,
                opts.seed_mode == GSP_SEED_MODE_PRESERVE_ALL ? "preserve_all" :
                (opts.seed_mode == GSP_SEED_MODE_HINTS_ONLY ? "hints_only" : "none"));
+    }
+    if (port_file) {
+        printf("Port import: file=%s seen=%d inserted=%d\n", port_file, ports_seen, ports_inserted);
     }
 
     printf("\nGenerated WAYP-style coordinates (decimal degrees):\n");
@@ -787,7 +951,11 @@ int main(int argc, char **argv) {
     }
 
     printf("\nPlot hint:\n");
-    printf("  Rscript R/plot_country_waypoints.R %s\n", db_path);
+    if (port_file) {
+        printf("  Rscript R/plot_country.R --db %s --port-file %s\n", db_path, port_file);
+    } else {
+        printf("  Rscript R/plot_country.R --db %s\n", db_path);
+    }
 
     rc = 0;
 
