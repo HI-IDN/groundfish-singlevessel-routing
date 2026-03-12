@@ -8,7 +8,7 @@ COUNTRY_ISLAND ?= ../dat/island.bin
 COUNTRY_DAT ?= ../dat/data2023spring.dat
 COUNTRY_PORT_FILE ?= ../dat/data2023spring.dat
 COUNTRY_MIN ?= 40
-COUNTRY_MAX ?= 60
+COUNTRY_MAX ?= 200
 COUNTRY_TARGET ?= 50
 
 .PHONY: all clean config build preprocessing init init_nn init_ge init_ci init_opt export_survey country help
@@ -38,10 +38,13 @@ country: config
 	@cd $(BUILD_DIR) && ./gsp_country \
 		--db $(COUNTRY_DB) \
 		--island-bin $(COUNTRY_ISLAND) \
-		--dat $(COUNTRY_DAT) \
-		--use-dat-waypoints --seed-hints-only \
+		--waypoint-file $(COUNTRY_DAT) \
+		--seed-hints-only \
 		--port-file $(COUNTRY_PORT_FILE) \
 		--min-points $(COUNTRY_MIN) --max-points $(COUNTRY_MAX) --target-points $(COUNTRY_TARGET)
+	@echo ""
+	@echo "Plot command:"
+	@echo "  Rscript R/plot_country.R dat/gsp_data.db"
 
 # Run Phase 0 strategies
 init_nn: build

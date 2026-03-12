@@ -148,25 +148,10 @@ target_include_directories(gsp_country PRIVATE
     ${GEOS_INCLUDE_DIRS}
 )
 
-add_executable(gsp_import_ports
-    tools/import_ports_from_dat.c
-    common/dat_parser.c
-)
-
-target_link_libraries(gsp_import_ports
-    ${SQLITE3_LIBRARIES}
-    m
-)
-
-target_include_directories(gsp_import_ports PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${SQLITE3_INCLUDE_DIRS}
-)
-
 # ============================================================
 # Install
 # ============================================================
 
-install(TARGETS gsp export_survey_json gsp_country gsp_import_ports
+install(TARGETS gsp export_survey_json gsp_country
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )

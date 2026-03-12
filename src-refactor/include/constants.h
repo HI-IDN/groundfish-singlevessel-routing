@@ -8,6 +8,17 @@ enum {
     NODE_TYPE_WAYPOINT = 3
 };
 
+/* Waypoint granularity levels stored in the waypoints.granularity INTEGER column.
+ *   0 = small  – coarse / low-resolution ring (fewer points, used for broad routing)
+ *   1 = medium – standard ring (default; balanced detail and performance)
+ *   2 = fine   – high-resolution ring (many points, used for detailed port access)
+ */
+enum {
+    GSP_WAYPOINT_GRANULARITY_SMALL  = 0,
+    GSP_WAYPOINT_GRANULARITY_MEDIUM = 1,
+    GSP_WAYPOINT_GRANULARITY_FINE   = 2
+};
+
 enum {
     LOG_DEBUG = 0,
     LOG_INFO = 1,
