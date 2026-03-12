@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sqlite3.h>
 #include <geos_c.h>
 #include "../include/coastline_db.h"
@@ -18,14 +19,7 @@ struct {
     double MINLAT, MAXLAT, MINLON, MAXLON;
 } MAP[1] = {{0}};  /* Initialize to zero */
 
-/* Sanitized coastline coordinates ready for DB insertion. */
-typedef struct {
-    double *lat;
-    double *lon;
-    int n;
-} CoastlinePoints;
-
-static void free_coastline_points(CoastlinePoints *pts) {
+void free_coastline_points(CoastlinePoints *pts) {
     if (!pts) return;
     free(pts->lat);
     free(pts->lon);
@@ -141,11 +135,15 @@ static int sanitize_coastline_geometry(const float *data, int num_points, Coastl
             }
         }
 
-        fprintf(stderr,
-                has_location
-                    ? "  ⚠ Warning: Coastline polygon invalid at (lat=%.6f, lon=%.6f): %s -> Fixing with buffer(0)...\n"
-                    : "  ⚠ Warning: Coastline polygon invalid: %s -> Fixing with buffer(0)...\n",
-                y, x, reason ? reason : "unknown reason");
+        if (has_location) {
+            fprintf(stderr,
+                    "  Warning: Coastline polygon invalid at (lat=%.6f, lon=%.6f): %s -> Fixing with buffer(0)...\n",
+                    y, x, reason ? reason : "unknown reason");
+        } else {
+            fprintf(stderr,
+                    "  Warning: Coastline polygon invalid: %s -> Fixing with buffer(0)...\n",
+                    reason ? reason : "unknown reason");
+        }
 
         if (reason) GEOSFree_r(ctx, reason);
         reason = NULL;
@@ -170,7 +168,7 @@ static int sanitize_coastline_geometry(const float *data, int num_points, Coastl
             goto cleanup;
         }
 
-        fprintf(stderr, "  ⚠ Warning: Coastline polygon repaired and valid after buffer(0).\n");
+        fprintf(stderr, "  Warning: Coastline polygon repaired and valid after buffer(0).\n");
         if (reason) GEOSFree_r(ctx, reason);
         if (location) GEOSGeom_destroy_r(ctx, location);
     }
@@ -192,7 +190,7 @@ static int sanitize_coastline_geometry(const float *data, int num_points, Coastl
             goto cleanup;
         }
         fprintf(stderr,
-                "  ⚠ Warning: Coastline repair returned MultiPolygon (%d parts); using largest component (area=%.6f).\n",
+                "  Warning: Coastline repair returned MultiPolygon (%d parts); using largest component (area=%.6f).\n",
                 components, area);
     } else if (type_id != GEOS_POLYGON) {
         fprintf(stderr, "  ✗ Coastline geometry type unsupported after repair (type_id=%d)\n", type_id);
@@ -212,6 +210,98 @@ cleanup:
     if (polygon) GEOSGeom_destroy_r(ctx, polygon);
     if (ctx) GEOS_finish_r(ctx);
     return rc;
+}
+
+int load_repaired_coastline_from_bin(const char *island_bin_path, CoastlinePoints *out) {
+    FILE *fp = NULL;
+    float *data = NULL;
+    size_t file_size = 0;
+    size_t num_floats = 0;
+    int rc = 0;
+
+    if (!island_bin_path || !out) {
+        return 0;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+    fp = fopen(island_bin_path, "rb");
+    if (!fp) {
+        fprintf(stderr, "  Warning: Could not open %s for coastline import\n", island_bin_path);
+        return 0;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    if (file_size <= 0 || (file_size % sizeof(float)) != 0) {
+        fprintf(stderr, "  ✗ Invalid island.bin file size\n");
+        goto cleanup;
+    }
+
+    num_floats = file_size / sizeof(float);
+    if ((num_floats % 2) != 0) {
+        fprintf(stderr, "  ✗ island.bin must have even number of floats (lat/lon pairs)\n");
+        goto cleanup;
+    }
+
+    data = (float*)malloc(file_size);
+    if (!data) {
+        fprintf(stderr, "  ✗ Memory allocation failed\n");
+        goto cleanup;
+    }
+
+    if (fread(data, sizeof(float), num_floats, fp) != num_floats) {
+        fprintf(stderr, "  ✗ Failed to read island.bin\n");
+        goto cleanup;
+    }
+
+    rc = sanitize_coastline_geometry(data, (int)(num_floats / 2), out);
+
+cleanup:
+    if (fp) fclose(fp);
+    free(data);
+    if (!rc) free_coastline_points(out);
+    return rc;
+}
+
+int replace_coastline_in_db(sqlite3 *db, const CoastlinePoints *coastline) {
+    const char *insert_sql = "INSERT INTO coastline (lat, lon) VALUES (?, ?);";
+    sqlite3_stmt *stmt = NULL;
+    int rc;
+
+    if (!db || !coastline || coastline->n < 3 || !coastline->lat || !coastline->lon) {
+        return SQLITE_ERROR;
+    }
+
+    rc = sqlite3_prepare_v2(db, insert_sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "  ✗ Failed to prepare coastline insert: %s\n", sqlite3_errmsg(db));
+        return rc;
+    }
+
+    sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+    sqlite3_exec(db, "DELETE FROM coastline;", NULL, NULL, NULL);
+
+    for (int i = 0; i < coastline->n; i++) {
+        sqlite3_bind_double(stmt, 1, coastline->lat[i]);
+        sqlite3_bind_double(stmt, 2, coastline->lon[i]);
+
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            fprintf(stderr, "  ✗ Failed to insert coastline point %d\n", i);
+            sqlite3_finalize(stmt);
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            return SQLITE_ERROR;
+        }
+        sqlite3_reset(stmt);
+        sqlite3_clear_bindings(stmt);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+    printf("  Imported %d coastline polygon points\n", coastline->n);
+    return SQLITE_OK;
 }
 
 /* Load island.bin file (land polygon data) - initializes global MAP structure */
@@ -321,92 +411,18 @@ double *load_island_bin(const char *fname, int *out_n) {
 
 /* Import island.bin polygon data into coastline table */
 int import_coastline_to_db(sqlite3 *db, const char *island_bin_path) {
-    FILE *fp = fopen(island_bin_path, "rb");
-    if (!fp) {
-        fprintf(stderr, "  ⚠ Warning: Could not open %s for coastline import\n", island_bin_path);
-        return SQLITE_ERROR;
-    }
-
-    /* Get file size */
-    fseek(fp, 0, SEEK_END);
-    size_t file_size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    if (file_size <= 0 || (file_size % sizeof(float)) != 0) {
-        fprintf(stderr, "  ✗ Invalid island.bin file size\n");
-        fclose(fp);
-        return SQLITE_ERROR;
-    }
-
-    size_t num_floats = file_size / sizeof(float);
-    if ((num_floats % 2) != 0) {
-        fprintf(stderr, "  ✗ island.bin must have even number of floats (lat/lon pairs)\n");
-        fclose(fp);
-        return SQLITE_ERROR;
-    }
-
-    /* Read all data */
-    float *data = (float*)malloc(file_size);
-    if (!data) {
-        fprintf(stderr, "  ✗ Memory allocation failed\n");
-        fclose(fp);
-        return SQLITE_ERROR;
-    }
-
-    if (fread(data, sizeof(float), num_floats, fp) != num_floats) {
-        fprintf(stderr, "  ✗ Failed to read island.bin\n");
-        free(data);
-        fclose(fp);
-        return SQLITE_ERROR;
-    }
-    fclose(fp);
-
-    int raw_points = (int)(num_floats / 2);
     CoastlinePoints sanitized = {0};
-    if (!sanitize_coastline_geometry(data, raw_points, &sanitized)) {
-        free(data);
+    if (!load_repaired_coastline_from_bin(island_bin_path, &sanitized)) {
         return SQLITE_ERROR;
     }
 
     /* Insert sanitized polygon into database. */
-    int num_points = sanitized.n;
-    printf("  → Importing %d coastline points...\n", num_points);
-
-    const char *insert_sql = "INSERT INTO coastline (lat, lon) VALUES (?, ?);";
-    sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(db, insert_sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) {
-        fprintf(stderr, "  ✗ Failed to prepare coastline insert: %s\n", sqlite3_errmsg(db));
-        free_coastline_points(&sanitized);
-        free(data);
-        return rc;
-    }
-
-    sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
-
-    for (int i = 0; i < num_points; i++) {
-        sqlite3_bind_double(stmt, 1, sanitized.lat[i]);
-        sqlite3_bind_double(stmt, 2, sanitized.lon[i]);
-
-        if (sqlite3_step(stmt) != SQLITE_DONE) {
-            fprintf(stderr, "  ✗ Failed to insert coastline point %d\n", i);
-            sqlite3_finalize(stmt);
-            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
-            free_coastline_points(&sanitized);
-            free(data);
-            return SQLITE_ERROR;
-        }
-        sqlite3_reset(stmt);
-    }
-
-    sqlite3_finalize(stmt);
-    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+    printf("  → Importing %d coastline points...\n", sanitized.n);
+    int rc = replace_coastline_in_db(db, &sanitized);
     free_coastline_points(&sanitized);
-    free(data);
-
-    printf("  ✓ Imported %d coastline polygon points\n", num_points);
-    return SQLITE_OK;
+    return rc;
 }
+
 
 /* Load island polygon data from database (stub - needs MAP structure access) */
 double *load_coastline_from_db(sqlite3 *db, int *out_n) {

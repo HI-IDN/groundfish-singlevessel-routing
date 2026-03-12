@@ -547,6 +547,91 @@ static char* strip_quotes(const char *name) {
     return result;
 }
 
+static int ensure_full_schema(sqlite3 *db) {
+    char *err_msg = NULL;
+    const char *sql_schema =
+        "CREATE TABLE IF NOT EXISTS locations ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  easting INT,"
+        "  northing INT,"
+        "  lat REAL,"
+        "  lon REAL,"
+        "  UNIQUE(easting, northing)"
+        ");"
+        "CREATE TABLE IF NOT EXISTS boats ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  start_location_id INTEGER REFERENCES locations(id),"
+        "  end_location_id INTEGER REFERENCES locations(id),"
+        "  capacity INTEGER,"
+        "  c1 INTEGER,"
+        "  c2 INTEGER,"
+        "  c3 INTEGER,"
+        "  c4 INTEGER,"
+        "  c5 INTEGER,"
+        "  c6 INTEGER,"
+        "  name TEXT"
+        ");"
+        "CREATE TABLE IF NOT EXISTS stations ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  ext_id INTEGER,"
+        "  start_location_id INTEGER,"
+        "  end_location_id INTEGER,"
+        "  c1 INTEGER,"
+        "  c2 INTEGER,"
+        "  c3 INTEGER,"
+        "  amount INTEGER,"
+        "  depth_thrown INTEGER,"
+        "  depth_haul INTEGER,"
+        "  comment TEXT,"
+        "  FOREIGN KEY (start_location_id) REFERENCES locations(id),"
+        "  FOREIGN KEY (end_location_id) REFERENCES locations(id)"
+        ");"
+        "CREATE TABLE IF NOT EXISTS ports ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  name TEXT,"
+        "  location_id INTEGER,"
+        "  UNIQUE(location_id),"
+        "  FOREIGN KEY (location_id) REFERENCES locations(id)"
+        ");"
+        "CREATE TABLE IF NOT EXISTS waypoints ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  location_id INTEGER,"
+        "  FOREIGN KEY (location_id) REFERENCES locations(id)"
+        ");"
+        "CREATE TABLE IF NOT EXISTS survey ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  boat_id INTEGER NOT NULL,"
+        "  table_type INTEGER,"
+        "  table_id INTEGER NOT NULL,"
+        "  segment INTEGER,"
+        "  FOREIGN KEY (boat_id) REFERENCES boats(id)"
+        ");"
+        "CREATE TABLE IF NOT EXISTS coastline ("
+        "  id INTEGER PRIMARY KEY,"
+        "  lat REAL,"
+        "  lon REAL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS metadata ("
+        "  key TEXT PRIMARY KEY,"
+        "  value TEXT"
+        ");"
+        "CREATE TABLE IF NOT EXISTS distances ("
+        "  id INTEGER PRIMARY KEY,"
+        "  from_location_id INTEGER REFERENCES locations(id),"
+        "  to_location_id INTEGER REFERENCES locations(id),"
+        "  distance_nm REAL,"
+        "  crosses_land INTEGER DEFAULT 0,"
+        "  waypoint_path TEXT"
+        ");";
+
+    int rc = sqlite3_exec(db, sql_schema, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "  ✗ SQL error: %s\n", err_msg ? err_msg : "unknown error");
+        sqlite3_free(err_msg);
+    }
+    return rc;
+}
+
 /* Removed stale fast_check_feasibility_pair helper (unused, depended on undefined DistanceInputs). */
 
 /* Helper to insert location and return its ID (reuses existing location if coordinates match) */
@@ -579,7 +664,7 @@ static int insert_location(sqlite3_stmt *insert_stmt, sqlite3_stmt *select_stmt,
 }
 
 /* Write parsed data to SQLite database */
-static int write_to_sqlite(const char *db_path, const ItemVec *items, const char *source_file) {
+static int write_to_sqlite(const char *db_path, const ItemVec *items, const char *source_file, int survey_only) {
     sqlite3 *db;
     int rc = sqlite3_open(db_path, &db);
 
@@ -589,118 +674,50 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
         return rc;
     }
 
-    /* Drop existing tables if they exist */
-    printf("  → Dropping existing tables (if any)...\n");
-    sqlite3_exec(db, "DROP TABLE IF EXISTS boats;", NULL, NULL, NULL);
-    sqlite3_exec(db, "DROP TABLE IF EXISTS stations;", NULL, NULL, NULL);
-    sqlite3_exec(db, "DROP TABLE IF EXISTS ports;", NULL, NULL, NULL);
-    sqlite3_exec(db, "DROP TABLE IF EXISTS waypoints;", NULL, NULL, NULL);
-    sqlite3_exec(db, "DROP TABLE IF EXISTS locations;", NULL, NULL, NULL);
-    sqlite3_exec(db, "DROP TABLE IF EXISTS survey;", NULL, NULL, NULL);
-    sqlite3_exec(db, "DROP TABLE IF EXISTS distances;", NULL, NULL, NULL);
-    sqlite3_exec(db, "DROP TABLE IF EXISTS coastline;", NULL, NULL, NULL);
-    sqlite3_exec(db, "DROP TABLE IF EXISTS metadata;", NULL, NULL, NULL);
+    if (!survey_only) {
+        printf("  → Dropping existing tables (if any)...\n");
+        sqlite3_exec(db, "DROP TABLE IF EXISTS boats;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DROP TABLE IF EXISTS stations;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DROP TABLE IF EXISTS ports;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DROP TABLE IF EXISTS waypoints;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DROP TABLE IF EXISTS locations;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DROP TABLE IF EXISTS survey;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DROP TABLE IF EXISTS distances;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DROP TABLE IF EXISTS coastline;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DROP TABLE IF EXISTS metadata;", NULL, NULL, NULL);
+    } else {
+        printf("  → Preserving coastline/waypoints; clearing survey-stage tables only...\n");
+        sqlite3_exec(db, "DELETE FROM distances;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DELETE FROM survey;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DELETE FROM boats;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DELETE FROM stations;", NULL, NULL, NULL);
+        sqlite3_exec(db, "DELETE FROM ports;", NULL, NULL, NULL);
+    }
 
-    /* Create normalized schema with survey assignment table */
-    char *err_msg = NULL;
-    const char *sql_schema =
-        /* Locations table - stores raw degmin format only */
-        "CREATE TABLE locations ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  easting INT,"
-        "  northing INT,"
-        "  lat REAL,"
-        "  lon REAL,"
-        "  UNIQUE(easting, northing)"
-        ");"
-
-        /* Boats table */
-        "CREATE TABLE boats ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  start_location_id INTEGER REFERENCES locations(id),"
-        "  end_location_id INTEGER REFERENCES locations(id),"
-        "  capacity INTEGER,"
-        "  c1 INTEGER,"
-        "  c2 INTEGER,"
-        "  c3 INTEGER,"
-        "  c4 INTEGER,"
-        "  c5 INTEGER,"
-        "  c6 INTEGER,"
-        "  name TEXT"
-        ");"
-
-        /* Stations table - NO boat_id, NO reitur/tog, pure station data */
-        "CREATE TABLE stations ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  ext_id INTEGER,"
-        "  start_location_id INTEGER,"
-        "  end_location_id INTEGER,"
-        "  c1 INTEGER,"
-        "  c2 INTEGER,"
-        "  c3 INTEGER,"
-        "  amount INTEGER,"
-        "  depth_thrown INTEGER,"     /* botndypi_kastad (depth when thrown/cast) */
-        "  depth_haul INTEGER,"       /* botndypi_hift (depth when hauled) */
-        "  comment TEXT,"             /* Cleaned comment (without depth info) */
-        "  FOREIGN KEY (start_location_id) REFERENCES locations(id),"
-        "  FOREIGN KEY (end_location_id) REFERENCES locations(id)"
-        ");"
-
-        /* Ports table - NO boat_id, pure port data */
-        "CREATE TABLE ports ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  name TEXT,"
-        "  location_id INTEGER,"
-        "  UNIQUE(location_id),"
-        "  FOREIGN KEY (location_id) REFERENCES locations(id)"
-        ");"
-
-        /* Waypoints table */
-        "CREATE TABLE waypoints ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  location_id INTEGER,"
-        "  FOREIGN KEY (location_id) REFERENCES locations(id)"
-        ");"
-
-        /* Survey assignment table - maps boats to stations/ports with order */
-        "CREATE TABLE survey ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT," /* Order in the survey route */
-        "  boat_id INTEGER NOT NULL,"
-        "  table_type INTEGER,"  /* NODE_TYPE_STATION or NODE_TYPE_PORT */
-        "  table_id INTEGER NOT NULL,"  /* FK to stations.id or ports.id */
-        "  segment INTEGER,"  /* Each segment is a trip at sea */
-        "  FOREIGN KEY (boat_id) REFERENCES boats(id)"
-        ");"
-
-        /* Coastline table for island polygon data */
-        "CREATE TABLE coastline ("
-        "  id INTEGER PRIMARY KEY,"
-        "  lat REAL,"       /* Decimal degrees (from island.bin) */
-        "  lon REAL"        /* Decimal degrees (from island.bin) */
-        ");"
-
-        /* Metadata table */
-        "CREATE TABLE metadata ("
-        "  key TEXT PRIMARY KEY,"
-        "  value TEXT"
-        ");"
-
-        /* Distances table - single distance matrix for all non-waypoint locations */
-        "CREATE TABLE distances ("
-        "  id INTEGER PRIMARY KEY,"
-        "  from_location_id INTEGER REFERENCES locations(id),"
-        "  to_location_id INTEGER REFERENCES locations(id),"
-        "  distance_nm REAL,"
-        "  crosses_land INTEGER DEFAULT 0,"  /* 1 if direct route crosses land, 0 otherwise */
-        "  waypoint_path TEXT"               /* JSON array of waypoint location IDs used (NULL if direct) */
-        ");";
-
-    rc = sqlite3_exec(db, sql_schema, NULL, NULL, &err_msg);
+    rc = ensure_full_schema(db);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "  ✗ SQL error: %s\n", err_msg);
-        sqlite3_free(err_msg);
         sqlite3_close(db);
         return rc;
+    }
+
+    if (survey_only) {
+        sqlite3_stmt *check_stmt = NULL;
+        int coastline_count = 0;
+        int waypoint_count = 0;
+
+        if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM coastline;", -1, &check_stmt, NULL) == SQLITE_OK) {
+            if (sqlite3_step(check_stmt) == SQLITE_ROW) coastline_count = sqlite3_column_int(check_stmt, 0);
+            sqlite3_finalize(check_stmt);
+        }
+        if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM waypoints;", -1, &check_stmt, NULL) == SQLITE_OK) {
+            if (sqlite3_step(check_stmt) == SQLITE_ROW) waypoint_count = sqlite3_column_int(check_stmt, 0);
+            sqlite3_finalize(check_stmt);
+        }
+        if (coastline_count == 0 || waypoint_count == 0) {
+            fprintf(stderr, "  ✗ Survey-only mode requires preloaded coastline and waypoints in %s\n", db_path);
+            sqlite3_close(db);
+            return SQLITE_ERROR;
+        }
     }
 
     /* Begin transaction */
@@ -794,7 +811,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
             port_count++;
 
 
-        } else if (items->a[i].Type == tWAYP) {
+        } else if (!survey_only && items->a[i].Type == tWAYP) {
             /* Insert waypoint location */
             int loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
@@ -826,24 +843,28 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
     /* Commit */
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
 
-    /* Import coastline data from island.bin */
-    /* Derive island.bin path from database path (same directory) */
-    char island_bin_path[512];
-    snprintf(island_bin_path, sizeof(island_bin_path), "%s", db_path);
-    char *last_slash = strrchr(island_bin_path, '/');
-    if (!last_slash) last_slash = strrchr(island_bin_path, '\\');
-    if (last_slash) {
-        strcpy(last_slash + 1, "island.bin");
-    } else {
-        strcpy(island_bin_path, "island.bin");
-    }
+    if (!survey_only) {
+        /* Import coastline data from island.bin */
+        /* Derive island.bin path from database path (same directory) */
+        char island_bin_path[512];
+        snprintf(island_bin_path, sizeof(island_bin_path), "%s", db_path);
+        char *last_slash = strrchr(island_bin_path, '/');
+        if (!last_slash) last_slash = strrchr(island_bin_path, '\\');
+        if (last_slash) {
+            strcpy(last_slash + 1, "island.bin");
+        } else {
+            strcpy(island_bin_path, "island.bin");
+        }
 
-    printf("\n=== Importing Coastline Data ===\n");
-    int coastline_rc = import_coastline_to_db(db, island_bin_path);
-    if (coastline_rc == SQLITE_OK) {
-        printf("  ✓ Coastline data imported successfully\n");
+        printf("\n=== Importing Coastline Data ===\n");
+        int coastline_rc = import_coastline_to_db(db, island_bin_path);
+        if (coastline_rc == SQLITE_OK) {
+            printf("  ✓ Coastline data imported successfully\n");
+        } else {
+            printf("  ⚠ Coastline import failed (continuing anyway)\n");
+        }
     } else {
-        printf("  ⚠ Coastline import failed (continuing anyway)\n");
+        printf("\n=== Using Existing Coastline + Waypoints ===\n");
     }
 
     /* Build survey assignments (must be after entity insertion, before distance computation) */
@@ -1168,6 +1189,7 @@ int main(int argc, char **argv) {
     const char *dat_file = NULL;
     const char *db_path = NULL;
     int debug_distance_mode = 0;
+    int survey_only_mode = 0;
     int from_location_id = -1;
     int to_location_id = -1;
 
@@ -1175,6 +1197,8 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--debug-distance") == 0) {
             debug_distance_mode = 1;
+        } else if (strcmp(argv[i], "--survey-only") == 0) {
+            survey_only_mode = 1;
         } else if (strcmp(argv[i], "--db") == 0 && (i + 1) < argc) {
             db_path = argv[++i];
         } else if ((strcmp(argv[i], "--fromid") == 0 || strcmp(argv[i], "--from-id") == 0) && (i + 1) < argc) {
@@ -1262,8 +1286,10 @@ int main(int argc, char **argv) {
     if (dat_file == NULL) {
         fprintf(stderr, "Usage: %s <datafile.dat> [database.db]\n", argv[0]);
         fprintf(stderr, "  Parses .dat file and prepares data for optimization\n");
+        fprintf(stderr, "  Use --survey-only to preserve coastline/waypoints already loaded into the DB\n");
         fprintf(stderr, "\nDebug mode:\n");
         fprintf(stderr, "  %s --debug-distance [--db path/to/gsp_data.db] [--fromid N --toid M]\n", argv[0]);
+        fprintf(stderr, "  %s --survey-only <datafile.dat> [database.db]\n", argv[0]);
         fprintf(stderr, "\nArguments:\n");
         fprintf(stderr, "  datafile.dat    Input .dat file to parse\n");
         fprintf(stderr, "  database.db     Output SQLite database (default: ../../../dat/gsp_data.db)\n");
@@ -1278,6 +1304,9 @@ int main(int argc, char **argv) {
 
     printf("=== GSP Data Preparation ===\n");
     printf("Input file: %s\n\n", dat_file);
+    if (survey_only_mode) {
+        printf("Mode: survey-only import (WAYP lines ignored; existing coastline/waypoints preserved)\n\n");
+    }
 
     /* Parse entire .dat file (all boats) */
     printf("Parsing .dat file...\n");
@@ -1368,7 +1397,7 @@ int main(int argc, char **argv) {
 
     printf("  Database: %s\n", db_path);
 
-    int db_rc = write_to_sqlite(db_path, &all_items, dat_file);
+    int db_rc = write_to_sqlite(db_path, &all_items, dat_file, survey_only_mode);
     if (db_rc == SQLITE_OK) {
         printf("  ✓ Successfully wrote data to database\n");
     } else {

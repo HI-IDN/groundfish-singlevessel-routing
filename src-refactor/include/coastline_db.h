@@ -3,6 +3,26 @@
 
 #include <sqlite3.h>
 
+typedef struct {
+	double *lat;
+	double *lon;
+	int n;
+} CoastlinePoints;
+
+typedef enum {
+	GSP_SEED_MODE_NONE = 0,
+	GSP_SEED_MODE_PRESERVE_ALL = 1,
+	GSP_SEED_MODE_HINTS_ONLY = 2
+} GspSeedMode;
+
+typedef struct {
+	int min_points;
+	int max_points;
+	int target_points;
+	int use_dat_waypoints;
+	GspSeedMode seed_mode;
+} WaypointGenerationOptions;
+
 /**
  * Load island.bin file (land polygon data) - initializes global MAP structure
  *
@@ -12,6 +32,10 @@
  */
 double *load_island_bin(const char *fname, int *out_n);
 
+int load_repaired_coastline_from_bin(const char *island_bin_path, CoastlinePoints *out);
+
+void free_coastline_points(CoastlinePoints *pts);
+
 /**
  * Import island.bin polygon data into database coastline table
  *
@@ -20,6 +44,8 @@ double *load_island_bin(const char *fname, int *out_n);
  * @return SQLITE_OK on success, error code otherwise
  */
 int import_coastline_to_db(sqlite3 *db, const char *island_bin_path);
+
+int replace_coastline_in_db(sqlite3 *db, const CoastlinePoints *coastline);
 
 /**
  * Load island polygon data from database coastline table
