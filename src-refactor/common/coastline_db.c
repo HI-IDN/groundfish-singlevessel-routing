@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sqlite3.h>
+#include <geos_c.h>
 #include "../include/coastline_db.h"
 
 /* MAP structure - shared global for land polygon data (used by distance computation) */
@@ -16,6 +17,202 @@ struct {
     double *LonDeg[10];
     double MINLAT, MAXLAT, MINLON, MAXLON;
 } MAP[1] = {{0}};  /* Initialize to zero */
+
+/* Sanitized coastline coordinates ready for DB insertion. */
+typedef struct {
+    double *lat;
+    double *lon;
+    int n;
+} CoastlinePoints;
+
+static void free_coastline_points(CoastlinePoints *pts) {
+    if (!pts) return;
+    free(pts->lat);
+    free(pts->lon);
+    pts->lat = NULL;
+    pts->lon = NULL;
+    pts->n = 0;
+}
+
+static GEOSGeometry *build_polygon_from_raw_points(GEOSContextHandle_t ctx, const float *data, int num_points) {
+    GEOSCoordSequence *seq = GEOSCoordSeq_create_r(ctx, (unsigned int)(num_points + 1), 2);
+    if (!seq) return NULL;
+
+    for (int i = 0; i < num_points; i++) {
+        GEOSCoordSeq_setX_r(ctx, seq, (unsigned int)i, (double)data[num_points + i]);
+        GEOSCoordSeq_setY_r(ctx, seq, (unsigned int)i, (double)data[i]);
+    }
+    GEOSCoordSeq_setX_r(ctx, seq, (unsigned int)num_points, (double)data[num_points]);
+    GEOSCoordSeq_setY_r(ctx, seq, (unsigned int)num_points, (double)data[0]);
+
+    GEOSGeometry *ring = GEOSGeom_createLinearRing_r(ctx, seq);
+    if (!ring) {
+        GEOSCoordSeq_destroy_r(ctx, seq);
+        return NULL;
+    }
+
+    GEOSGeometry *polygon = GEOSGeom_createPolygon_r(ctx, ring, NULL, 0);
+    if (!polygon) {
+        GEOSGeom_destroy_r(ctx, ring);
+        return NULL;
+    }
+    return polygon;
+}
+
+static int extract_exterior_ring_points(GEOSContextHandle_t ctx, const GEOSGeometry *polygon, CoastlinePoints *out) {
+    const GEOSGeometry *ring = GEOSGetExteriorRing_r(ctx, polygon);
+    if (!ring) return 0;
+
+    const GEOSCoordSequence *seq = GEOSGeom_getCoordSeq_r(ctx, ring);
+    if (!seq) return 0;
+
+    unsigned int size = 0;
+    if (!GEOSCoordSeq_getSize_r(ctx, seq, &size) || size < 4) return 0;
+
+    /* GEOS rings are closed; store only unique vertices (drop repeated final point). */
+    unsigned int n = size - 1;
+    double *lat = (double *)malloc((size_t)n * sizeof(double));
+    double *lon = (double *)malloc((size_t)n * sizeof(double));
+    if (!lat || !lon) {
+        free(lat);
+        free(lon);
+        return 0;
+    }
+
+    for (unsigned int i = 0; i < n; i++) {
+        GEOSCoordSeq_getX_r(ctx, seq, i, &lon[i]);
+        GEOSCoordSeq_getY_r(ctx, seq, i, &lat[i]);
+    }
+
+    out->lat = lat;
+    out->lon = lon;
+    out->n = (int)n;
+    return 1;
+}
+
+static const GEOSGeometry *pick_largest_polygon_component(GEOSContextHandle_t ctx,
+                                                           const GEOSGeometry *multipolygon,
+                                                           int *out_components,
+                                                           double *out_area) {
+    int num = GEOSGetNumGeometries_r(ctx, multipolygon);
+    if (out_components) *out_components = num;
+    if (num <= 0) return NULL;
+
+    const GEOSGeometry *best = NULL;
+    double best_area = -1.0;
+    for (int i = 0; i < num; i++) {
+        const GEOSGeometry *candidate = GEOSGetGeometryN_r(ctx, multipolygon, i);
+        double area = 0.0;
+        if (!candidate || !GEOSArea_r(ctx, candidate, &area)) continue;
+        if (area > best_area) {
+            best_area = area;
+            best = candidate;
+        }
+    }
+
+    if (out_area) *out_area = best_area;
+    return best;
+}
+
+static int sanitize_coastline_geometry(const float *data, int num_points, CoastlinePoints *out) {
+    GEOSContextHandle_t ctx = GEOS_init_r();
+    GEOSGeometry *polygon = NULL;
+    GEOSGeometry *fixed = NULL;
+    int rc = 0;
+
+    if (!ctx || !out || !data || num_points < 3) goto cleanup;
+
+    polygon = build_polygon_from_raw_points(ctx, data, num_points);
+    if (!polygon) {
+        fprintf(stderr, "  ✗ Failed to build coastline polygon from island.bin data\n");
+        goto cleanup;
+    }
+
+    char *reason = NULL;
+    GEOSGeometry *location = NULL;
+    char is_valid = GEOSisValidDetail_r(ctx, polygon, 0, &reason, &location);
+    if (!is_valid) {
+        double x = 0.0, y = 0.0;
+        int has_location = 0;
+        if (location && GEOSGeomTypeId_r(ctx, location) == GEOS_POINT) {
+            const GEOSCoordSequence *loc_seq = GEOSGeom_getCoordSeq_r(ctx, location);
+            if (loc_seq && GEOSCoordSeq_getX_r(ctx, loc_seq, 0, &x) && GEOSCoordSeq_getY_r(ctx, loc_seq, 0, &y)) {
+                has_location = 1;
+            }
+        }
+
+        fprintf(stderr,
+                has_location
+                    ? "  ⚠ Warning: Coastline polygon invalid at (lat=%.6f, lon=%.6f): %s -> Fixing with buffer(0)...\n"
+                    : "  ⚠ Warning: Coastline polygon invalid: %s -> Fixing with buffer(0)...\n",
+                y, x, reason ? reason : "unknown reason");
+
+        if (reason) GEOSFree_r(ctx, reason);
+        reason = NULL;
+        if (location) GEOSGeom_destroy_r(ctx, location);
+        location = NULL;
+
+        fixed = GEOSBuffer_r(ctx, polygon, 0.0, 8);
+        if (!fixed) {
+            fprintf(stderr, "  ✗ buffer(0) failed to repair coastline geometry\n");
+            goto cleanup;
+        }
+
+        GEOSGeom_destroy_r(ctx, polygon);
+        polygon = fixed;
+        fixed = NULL;
+
+        is_valid = GEOSisValidDetail_r(ctx, polygon, 0, &reason, &location);
+        if (!is_valid) {
+            fprintf(stderr, "  ✗ Coastline geometry still invalid after repair: %s\n", reason ? reason : "unknown reason");
+            if (reason) GEOSFree_r(ctx, reason);
+            if (location) GEOSGeom_destroy_r(ctx, location);
+            goto cleanup;
+        }
+
+        fprintf(stderr, "  ⚠ Warning: Coastline polygon repaired and valid after buffer(0).\n");
+        if (reason) GEOSFree_r(ctx, reason);
+        if (location) GEOSGeom_destroy_r(ctx, location);
+    }
+
+    if (GEOSisEmpty_r(ctx, polygon)) {
+        fprintf(stderr, "  ✗ Coastline geometry repair collapsed to empty geometry\n");
+        goto cleanup;
+    }
+
+    int type_id = GEOSGeomTypeId_r(ctx, polygon);
+    const GEOSGeometry *selected_polygon = polygon;
+
+    if (type_id == GEOS_MULTIPOLYGON) {
+        int components = 0;
+        double area = 0.0;
+        selected_polygon = pick_largest_polygon_component(ctx, polygon, &components, &area);
+        if (!selected_polygon || area <= 0.0) {
+            fprintf(stderr, "  ✗ Coastline multipolygon repair produced no usable polygon component\n");
+            goto cleanup;
+        }
+        fprintf(stderr,
+                "  ⚠ Warning: Coastline repair returned MultiPolygon (%d parts); using largest component (area=%.6f).\n",
+                components, area);
+    } else if (type_id != GEOS_POLYGON) {
+        fprintf(stderr, "  ✗ Coastline geometry type unsupported after repair (type_id=%d)\n", type_id);
+        goto cleanup;
+    }
+
+    if (!extract_exterior_ring_points(ctx, selected_polygon, out) || out->n < 3) {
+        fprintf(stderr, "  ✗ Failed to extract valid coastline ring points after repair\n");
+        goto cleanup;
+    }
+
+    rc = 1;
+
+cleanup:
+    if (!rc) free_coastline_points(out);
+    if (fixed) GEOSGeom_destroy_r(ctx, fixed);
+    if (polygon) GEOSGeom_destroy_r(ctx, polygon);
+    if (ctx) GEOS_finish_r(ctx);
+    return rc;
+}
 
 /* Load island.bin file (land polygon data) - initializes global MAP structure */
 double *load_island_bin(const char *fname, int *out_n) {
@@ -164,8 +361,15 @@ int import_coastline_to_db(sqlite3 *db, const char *island_bin_path) {
     }
     fclose(fp);
 
-    /* Insert into database */
-    int num_points = num_floats / 2;
+    int raw_points = (int)(num_floats / 2);
+    CoastlinePoints sanitized = {0};
+    if (!sanitize_coastline_geometry(data, raw_points, &sanitized)) {
+        free(data);
+        return SQLITE_ERROR;
+    }
+
+    /* Insert sanitized polygon into database. */
+    int num_points = sanitized.n;
     printf("  → Importing %d coastline points...\n", num_points);
 
     const char *insert_sql = "INSERT INTO coastline (lat, lon) VALUES (?, ?);";
@@ -173,6 +377,7 @@ int import_coastline_to_db(sqlite3 *db, const char *island_bin_path) {
     int rc = sqlite3_prepare_v2(db, insert_sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "  ✗ Failed to prepare coastline insert: %s\n", sqlite3_errmsg(db));
+        free_coastline_points(&sanitized);
         free(data);
         return rc;
     }
@@ -180,17 +385,14 @@ int import_coastline_to_db(sqlite3 *db, const char *island_bin_path) {
     sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
 
     for (int i = 0; i < num_points; i++) {
-        double lat = (double)data[i];
-        double lon = (double)data[num_points + i];
-
-        sqlite3_bind_double(stmt, 1, lat);
-        sqlite3_bind_double(stmt, 2, lon);
+        sqlite3_bind_double(stmt, 1, sanitized.lat[i]);
+        sqlite3_bind_double(stmt, 2, sanitized.lon[i]);
 
         if (sqlite3_step(stmt) != SQLITE_DONE) {
             fprintf(stderr, "  ✗ Failed to insert coastline point %d\n", i);
             sqlite3_finalize(stmt);
-            sqlite3_finalize(stmt);
             sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            free_coastline_points(&sanitized);
             free(data);
             return SQLITE_ERROR;
         }
@@ -199,6 +401,7 @@ int import_coastline_to_db(sqlite3 *db, const char *island_bin_path) {
 
     sqlite3_finalize(stmt);
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+    free_coastline_points(&sanitized);
     free(data);
 
     printf("  ✓ Imported %d coastline polygon points\n", num_points);
@@ -296,6 +499,5 @@ double *load_coastline_from_db(sqlite3 *db, int *out_n) {
     *out_n = num_points;
     return land;
 }
-
 
 
