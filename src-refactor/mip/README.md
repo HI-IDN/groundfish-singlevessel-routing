@@ -43,23 +43,29 @@ int solve_mip_capacity_aware(
 
 ### 2. No-Port MIP (`noport.c`)
 
-TSP without return-to-port constraints; used for initialization strategies.
+Anchored no-port paired-end TSP used as an OPT preprocessing step.
 
 **Formulation:**
-- Same as Capacity-Aware but **without** port/endpoint constraints
-- Models a pure circuit through survey stations
-- Used by `strategy_opt.c` initialization
+- Solves the directed paired-end TSP over all stations
+- Uses one fixed anchor port chosen by the entry code
+- Produces the no-port ordering written to `sol/opt/noport.json`
+- That ordering is later consumed by `init_opt`, which inserts ports for capacity feasibility
 
 **Function signature:**
 ```c
 int solve_mip_noport(
-    const mip_instance_t *instance,
-    const mip_params_t *params,
-    mip_solution_t *solution
+    const mip_noport_instance_t *instance,
+    const mip_noport_params_t *params,
+    mip_noport_solution_t *solution
 );
 ```
 
-**Parameters & Returns:** Same as Capacity-Aware.
+The standalone preprocessing executable is `noport_opt.c`, which:
+- reads YAML
+- loads boat/ports/stations/distances
+- chooses the anchor port nearest to the boat start location
+- calls `solve_mip_noport(...)`
+- writes `sol/opt/noport.json`
 
 ### 3. End-Paired TSP (`endpaired_tsp.c`)
 

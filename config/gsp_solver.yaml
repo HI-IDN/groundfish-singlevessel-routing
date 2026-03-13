@@ -3,8 +3,7 @@
 
 # Default boat configuration
 boat:
-  id: 2                                  # Árnì Friðriksson (boat_id in database)
-  name: "Árni Friðriksson"
+  id: 2                                  # Árni Friðriksson (boat_id in database)
 
 # Phase 0: Initialization Strategies
 init:

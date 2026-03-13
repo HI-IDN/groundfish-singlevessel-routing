@@ -1,9 +1,39 @@
 #ifndef GSP_MIP_NOPORT_H
 #define GSP_MIP_NOPORT_H
 
-#include "mip_capacity_aware.h"
+#include "constants.h"
+#include "dat_parser.h"
 
-int solve_mip_noport(const mip_instance_t *instance, const mip_params_t *params, mip_solution_t *solution);
+typedef struct {
+    double time_limit_seconds;
+    int thread_count;
+    int verbose;
+    double mip_gap;
+} mip_noport_params_t;
+
+typedef struct {
+    const Boat *boat;
+    const Port *anchor_port;
+    const Station *stations;
+    int n_stations;
+    double **distances;
+    int max_location_id;
+} mip_noport_instance_t;
+
+typedef struct {
+    int *signed_station_ids;
+    int order_length;
+    double total_distance_nm;
+    double objective_value;
+    int status;
+    double gap;
+    double runtime_seconds;
+} mip_noport_solution_t;
+
+int solve_mip_noport(const mip_noport_instance_t *instance,
+                     const mip_noport_params_t *params,
+                     mip_noport_solution_t *solution);
+
+void free_mip_noport_solution(mip_noport_solution_t *solution);
 
 #endif
-

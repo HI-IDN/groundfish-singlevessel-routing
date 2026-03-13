@@ -9,7 +9,7 @@ COUNTRY_DAT ?= ../dat/waypoints.dat
 COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 
-.PHONY: all clean config build country stations distance distances stations-with-distance preprocessing survey export_survey init init_nn init_ge init_ci init_opt help
+.PHONY: all clean config build country stations distance distances stations-with-distance preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt help
 
 all: build
 
@@ -57,6 +57,9 @@ init_ge: build
 init_ci: build
 	@cd $(BUILD_DIR) && $(MAKE) run_init_ci
 
+noport-opt: build
+	@cd $(BUILD_DIR) && $(MAKE) run_noport_opt
+
 init_opt: build
 	@cd $(BUILD_DIR) && $(MAKE) run_init_opt
 
@@ -87,6 +90,7 @@ help:
 	@echo "  make init_nn"
 	@echo "  make init_ge"
 	@echo "  make init_ci"
+	@echo "  make noport-opt"
 	@echo "  make init_opt"
 	@echo "  make clean"
 	@echo "  make reconfigure"

@@ -10,6 +10,7 @@ The current user-facing workflow is:
 2. `make stations`
 3. `make distance`
 4. `make survey`
+5. `make noport-opt`
 
 This keeps the stages separate:
 - `country` builds the coastline, waypoints, ports, and boats base database
@@ -27,6 +28,7 @@ make country
 make stations
 make distance
 make survey
+make noport-opt
 ```
 
 Current Build Targets
@@ -53,6 +55,9 @@ Current Build Targets
 
 - `gsp`
   Solver executable for the init/sweep stages.
+
+- `gsp_noport_opt`
+  Preprocessing executable that solves the no-port paired-end TSP and writes `sol/opt/noport.json`.
 
 Workflow Details
 ----------------
@@ -113,6 +118,20 @@ make survey
 
 This exports the historical survey already present in `dat/gsp_data.db` to JSON files under `sol/`.
 
+### Step 5: No-port OPT preprocessing
+
+```bash
+make noport-opt
+```
+
+This solves the no-port directed paired-end TSP over all stations, anchored at the port nearest to the configured boat start location. The output is:
+
+```text
+sol/opt/noport.json
+```
+
+That file is a preprocessing artifact for the later `init_opt` stage. It is not yet the capacity-feasible final OPT initialization.
+
 Compatibility Aliases
 ---------------------
 
@@ -132,4 +151,5 @@ Notes
 - `gsp_stations` is the new station-import stage for `dat/stations.dat` and does not use `ItemVec`.
 - `gsp_distances` is the new distance stage; it keeps waypoint nodes only as routing helpers.
 - The historical survey step for `dat/survey2023spring.dat` still needs its own dedicated import/export path.
+- `make noport-opt` is the current OPT preprocessing stage; `make init_opt` is still pending the capacity-feasible segmentation step that consumes `sol/opt/noport.json`.
 - The public workflow names are now based on the actual stages above.

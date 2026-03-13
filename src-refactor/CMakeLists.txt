@@ -34,6 +34,22 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(SQLITE3 REQUIRED sqlite3)
 pkg_check_modules(GEOS REQUIRED geos)
 
+if(DEFINED ENV{GUROBI_HOME})
+    file(TO_CMAKE_PATH "$ENV{GUROBI_HOME}" GUROBI_HOME_CMAKE)
+    set(GUROBI_INCLUDE_DIR "${GUROBI_HOME_CMAKE}/include")
+    set(GUROBI_LIBRARY_DIR "${GUROBI_HOME_CMAKE}/lib")
+    set(GUROBI_BIN_DIR "${GUROBI_HOME_CMAKE}/bin")
+endif()
+
+if(GUROBI_INCLUDE_DIR AND EXISTS "${GUROBI_INCLUDE_DIR}/gurobi_c.h" AND
+   GUROBI_LIBRARY_DIR AND EXISTS "${GUROBI_LIBRARY_DIR}")
+    message(STATUS "Found Gurobi include: ${GUROBI_INCLUDE_DIR}")
+    message(STATUS "Found Gurobi library dir: ${GUROBI_LIBRARY_DIR}")
+    message(STATUS "Found Gurobi bin dir: ${GUROBI_BIN_DIR}")
+else()
+    message(STATUS "Gurobi not found. GUROBI_HOME='${GUROBI_HOME_CMAKE}'")
+endif()
+
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -134,11 +150,47 @@ add_custom_target(run_init_ci
     COMMENT "Phase 0: CI (Cheapest Insertion) - NOT YET IMPLEMENTED"
 )
 
+if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
+    add_executable(gsp_noport_opt
+        mip/noport.c
+        mip/noport_opt.c
+        common/feasibility.c
+    )
+
+    target_include_directories(gsp_noport_opt PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/mip/include
+        ${SQLITE3_INCLUDE_DIRS}
+        ${GUROBI_INCLUDE_DIR}
+    )
+
+    target_link_libraries(gsp_noport_opt
+        ${SQLITE3_LIBRARIES}
+        -L${GUROBI_LIBRARY_DIR}
+        gurobi130
+        m
+    )
+
+    add_custom_target(run_noport_opt
+        COMMAND ${CMAKE_COMMAND} -E env PATH=${GUROBI_BIN_DIR}:$ENV{PATH} $<TARGET_FILE:gsp_noport_opt> --database ${DATABASE} --config ${CONFIG_YAML} --output ${SOL_OPT_DIR}/noport.json
+        DEPENDS gsp_noport_opt
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Preprocessing: no-port optimal station ordering"
+    )
+else()
+    add_custom_target(run_noport_opt
+        COMMAND ${CMAKE_COMMAND} -E echo "No-port OPT unavailable: Gurobi headers/library not found during CMake configure"
+        COMMAND ${CMAKE_COMMAND} -E false
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Preprocessing: no-port optimal station ordering"
+    )
+endif()
+
 add_custom_target(run_init_opt
-    COMMAND gsp --mode init --strategy opt --database ${DATABASE} --output ${SOL_OPT_DIR}/init.json --config ${CONFIG_YAML} --time-limit 600
-    DEPENDS gsp
+    COMMAND ${CMAKE_COMMAND} -E echo "init_opt is not implemented yet; run run_noport_opt first, then add capacity-feasible segmentation"
+    COMMAND ${CMAKE_COMMAND} -E false
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Phase 0: OPT (Optimal NP-MIP) - NOT YET IMPLEMENTED"
+    COMMENT "Phase 0: OPT initialization from no-port ordering"
 )
 
 # ============================================================
@@ -185,3 +237,9 @@ target_include_directories(gsp_country PRIVATE
 install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances gsp_historical_survey
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )
+
+if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
+    install(TARGETS gsp_noport_opt
+        RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
+    )
+endif()

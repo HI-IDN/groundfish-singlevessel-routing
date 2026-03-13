@@ -1,6 +1,6 @@
 /* GSP Unified Solver
  * Entry point supporting two modes:
- *   --mode init    : Initialization phase (strategies: nn, ge, ci, opt)
+ *   --mode init    : Initialization phase (strategies: nn, ge, ci)
  *   --mode sweep   : Improvement phase (sweep/local search)
  */
 
@@ -21,12 +21,10 @@ void print_usage(const char *prog_name) {
     fprintf(stderr, "  sweep   Improvement phase (local search/refinement)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Init mode options:\n");
-    fprintf(stderr, "  --mode init --strategy <nn|ge|ci|opt>\n");
+    fprintf(stderr, "  --mode init --strategy <nn|ge|ci>\n");
     fprintf(stderr, "              --database <path>     (required: gsp_data.db)\n");
     fprintf(stderr, "              --config <path>       (required: gsp_solver.yaml)\n");
     fprintf(stderr, "              --output <path>       (optional: sol/init_<strategy>.json)\n");
-    fprintf(stderr, "              --time-limit <seconds> (optional: for opt strategy)\n");
-    fprintf(stderr, "\n");
     fprintf(stderr, "Sweep mode options:\n");
     fprintf(stderr, "  --mode sweep --strategy <nn|ge|ci|opt>\n");
     fprintf(stderr, "              --database <path>     (required: gsp_data.db)\n");
