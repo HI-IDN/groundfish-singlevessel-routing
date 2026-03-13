@@ -21,7 +21,7 @@ include_directories(
     ${GEOS_INCLUDE_DIRS}
 )
 
-# Source files for preprocessing utility
+# Shared source files
 set(COMMON_SOURCES
     dat_parser.c
     distance.c
@@ -30,33 +30,67 @@ set(COMMON_SOURCES
     coastline_db.c
 )
 
-# Preprocessing executable (renamed to avoid conflict with custom target)
-add_executable(gsp_preprocess
+# Legacy combined preprocessing utility kept as backup
+add_executable(gsp_stations_with_distance
     preprocessing.c
     ${COMMON_SOURCES}
 )
 
-target_link_libraries(gsp_preprocess
+target_link_libraries(gsp_stations_with_distance
     ${SQLITE3_LIBRARIES}
     ${GEOS_LIBRARIES}
     m
 )
 
+# Station import using DataSet
+add_executable(gsp_stations
+    station_import.c
+    dat_parser.c
+    logging.c
+    sql_utils.c
+)
+
+target_link_libraries(gsp_stations
+    ${SQLITE3_LIBRARIES}
+    m
+)
+
 
 # Data files
-set(DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/data2023spring.dat)
+set(STATIONS_DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/stations.dat)
 set(DB_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/gsp_data.db)
 
-# Custom target: run preprocessing
-add_custom_target(run_preprocessing
+# Custom target: import stations
+add_custom_target(run_stations
     COMMAND ${CMAKE_COMMAND} -E echo ""
-    COMMAND ${CMAKE_COMMAND} -E echo "=== Preparing Data ==="
-    COMMAND ${CMAKE_COMMAND} -E echo "  Input: ${DAT_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E echo "=== Importing Stations ==="
+    COMMAND ${CMAKE_COMMAND} -E echo "  Input: ${STATIONS_DAT_FILE}"
     COMMAND ${CMAKE_COMMAND} -E echo "  Database: ${DB_FILE}"
     COMMAND ${CMAKE_COMMAND} -E echo ""
-    COMMAND gsp_preprocess ${DAT_FILE} ${DB_FILE}
-    DEPENDS gsp_preprocess
+    COMMAND gsp_stations ${STATIONS_DAT_FILE} ${DB_FILE}
+    DEPENDS gsp_stations
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Parsing .dat file and building SQLite database"
+    COMMENT "Importing stations from dat/stations.dat"
+)
+
+# Custom target: recompute distances from existing database
+add_custom_target(run_distance
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND ${CMAKE_COMMAND} -E echo "=== Recomputing Distances ==="
+    COMMAND ${CMAKE_COMMAND} -E echo "  Database: ${DB_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND gsp_stations_with_distance --debug-distance --db ${DB_FILE}
+    DEPENDS gsp_stations_with_distance
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Recomputing distance matrix from existing database"
+)
+
+# Compatibility target: keep combined step available
+add_custom_target(run_stations_with_distance
+    COMMAND ${CMAKE_MAKE_PROGRAM} run_stations
+    COMMAND ${CMAKE_MAKE_PROGRAM} run_distance
+    DEPENDS gsp_stations_with_distance
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Importing stations and recomputing distances"
 )
 

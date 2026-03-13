@@ -111,7 +111,7 @@ static int build_survey_assignments(sqlite3 *db, const ItemVec *items) {
     int segment = 0;
     
     for (int i = 0; i < items->n; i++) {
-        if (items->a[i].Type == tSHIP) {
+        if (items->a[i].Type == NODE_TYPE_BOAT) {
             /* Get boat_id from boats table by matching start location */
             sqlite3_stmt *boat_select;
             int start_lat = items->a[i].LatLonDegMin[0];
@@ -140,7 +140,7 @@ static int build_survey_assignments(sqlite3 *db, const ItemVec *items) {
             }
             sqlite3_finalize(boat_select);
             
-        } else if (items->a[i].Type == tSTAT && current_boat_id > 0) {
+        } else if (items->a[i].Type == NODE_TYPE_STATION && current_boat_id > 0) {
             /* Get station_id by matching start location */
             sqlite3_stmt *stat_select;
             int start_lat = items->a[i].LatLonDegMin[0];
@@ -167,7 +167,7 @@ static int build_survey_assignments(sqlite3 *db, const ItemVec *items) {
             }
             sqlite3_finalize(stat_select);
             
-        } else if (items->a[i].Type == tPORT && current_boat_id > 0 && items->a[i].PortSelected) {
+        } else if (items->a[i].Type == NODE_TYPE_PORT && current_boat_id > 0 && items->a[i].PortSelected) {
             /* Get port_id by matching location */
             sqlite3_stmt *port_select;
             int lat = items->a[i].LatLonDegMin[0];
@@ -596,6 +596,7 @@ static int ensure_full_schema(sqlite3 *db) {
         "CREATE TABLE IF NOT EXISTS waypoints ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  location_id INTEGER,"
+        "  granularity INTEGER NOT NULL DEFAULT 1,"
         "  FOREIGN KEY (location_id) REFERENCES locations(id)"
         ");"
         "CREATE TABLE IF NOT EXISTS survey ("
@@ -736,7 +737,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
 
 
     for (int i = 0; i < items->n; i++) {
-        if (items->a[i].Type == tSHIP) {
+        if (items->a[i].Type == NODE_TYPE_BOAT) {
             /* Insert boat location for start */
             int start_loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
@@ -763,7 +764,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
             free(clean_name);
 
 
-        } else if (items->a[i].Type == tSTAT) {
+        } else if (items->a[i].Type == NODE_TYPE_STATION) {
             /* Insert start location */
             int start_loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
@@ -796,7 +797,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
             if (clean_comment) free(clean_comment);
 
 
-        } else if (items->a[i].Type == tPORT) {
+        } else if (items->a[i].Type == NODE_TYPE_PORT) {
             /* Insert port location */
             int loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
@@ -811,7 +812,7 @@ static int write_to_sqlite(const char *db_path, const ItemVec *items, const char
             port_count++;
 
 
-        } else if (!survey_only && items->a[i].Type == tWAYP) {
+        } else if (!survey_only && items->a[i].Type == NODE_TYPE_WAYPOINT) {
             /* Insert waypoint location */
             int loc_id = insert_location(loc_insert_stmt, loc_select_stmt,
                 items->a[i].LatLonDegMin[0], items->a[i].LatLonDegMin[1]);
@@ -1312,19 +1313,18 @@ int main(int argc, char **argv) {
     printf("Parsing .dat file...\n");
     ItemVec all_items;
     item_vec_init(&all_items);
-    read_dat_file_all_boats(dat_file, &all_items, 0);
+    read_dat_file_all_boats(dat_file, &all_items);
 
     printf("  ✓ Loaded %d total items\n", all_items.n);
 
     /* List all boats found */
     char **boat_names = NULL;
-    int n_boats = get_boat_names(&all_items, &boat_names);
-    printf("\n=== Boats Found: %d ===\n", n_boats);
-    for (int i = 0; i < n_boats; i++) {
+    printf("\n=== Boats Found: %d ===\n", all_items.n_boats);
+    for (int i = 0; i < all_items.n_boats; i++) {
         /* Get boat capacity */
         double cap = 0.0;
         for (int j = 0; j < all_items.n; j++) {
-            if (all_items.a[j].Type == tSHIP &&
+            if (all_items.a[j].Type == NODE_TYPE_BOAT &&
                 strcmp(all_items.a[j].Name, boat_names[i]) == 0) {
                 cap = all_items.a[j].BoatData[4];
                 break;
@@ -1344,12 +1344,12 @@ int main(int argc, char **argv) {
     int total_port_selected = 0;
     for (int i = 0; i < all_items.n; i++) {
         switch (all_items.a[i].Type) {
-            case tSTAT: total_stat++; break;
-            case tPORT:
+            case NODE_TYPE_STATION: total_stat++; break;
+            case NODE_TYPE_PORT:
                 total_port++;
                 if (all_items.a[i].PortSelected) total_port_selected++;
                 break;
-            case tWAYP: total_wayp++; break;
+            case NODE_TYPE_WAYPOINT: total_wayp++; break;
         }
     }
 
@@ -1359,38 +1359,6 @@ int main(int argc, char **argv) {
     printf("  Ports:       %d (%d selected)\n", total_port, total_port_selected);
     printf("  Waypoints:   %d\n", total_wayp);
     printf("  Total items: %d\n", all_items.n);
-
-    /* Show statistics per boat */
-    printf("\n=== Per-Boat Statistics ===\n");
-    fflush(stdout);
-
-    for (int boat_idx = 0; boat_idx < n_boats; boat_idx++) {
-        ItemVec boat_items;
-        item_vec_init(&boat_items);
-        double ship_cap = 0.0;
-
-        printf("  Processing boat [%d]...\n", boat_idx);
-        fflush(stdout);
-
-        filter_items_by_boat(&all_items, boat_idx, &boat_items, &ship_cap);
-
-        int count_stat = 0, count_port = 0, count_port_sel = 0;
-        for (int i = 0; i < boat_items.n; i++) {
-            if (boat_items.a[i].Type == tSTAT) count_stat++;
-            else if (boat_items.a[i].Type == tPORT) {
-                count_port++;
-                if (boat_items.a[i].PortSelected) count_port_sel++;
-            }
-        }
-
-        printf("  [%d] %s\n", boat_idx, boat_names[boat_idx]);
-        printf("      Capacity: %.0f\n", ship_cap);
-        printf("      Stations: %d\n", count_stat);
-        printf("      Ports:    %d (%d selected)\n", count_port, count_port_sel);
-        fflush(stdout);
-
-        item_vec_free(&boat_items);
-    }
 
     printf("\n=== Writing to SQLite Database ===\n");
     fflush(stdout);

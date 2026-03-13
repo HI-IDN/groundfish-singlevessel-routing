@@ -61,17 +61,18 @@ static int insert_seed_into_ring(GEOSContextHandle_t ctx,
 
 static void die_usage(const char *argv0) {
     fprintf(stderr,
-            "Usage: %s --db <gsp_data.db> --island-bin <island.bin> [options]\n"
+            "Usage: %s --db <gsp_data.db> --coastline-file <island.bin> [options]\n"
             "\n"
             "Options:\n"
             "  --waypoint-file <datafile.dat> Optional DAT file for manual WAYP seeds\n"
             "  --dat <datafile.dat>        Deprecated alias for --waypoint-file\n"
             "  --port-file <datafile.dat>  DAT file used to import PORT rows into DB\n"
+            "  --boat-file <datafile.dat>  DAT file used to import BOAT rows into DB\n"
             "  --preserve-all-seeds       Force all loaded seed waypoints into final ring\n"
             "  --seed-hints-only          Use loaded seed waypoints only when insertion stays valid\n"
-            "  --min-points <N>           Min waypoints for medium ring (default: 30)\n"
-            "  --max-points <N>           Max waypoints for medium ring (default: 40)\n"
-            "  --target-points <N>        Preferred medium waypoint count (default: midpoint)\n"
+            "  --min-points <N>           Min waypoints for medium ring (default: 40)\n"
+            "  --max-points <N>           Max waypoints for medium ring (default: 200)\n"
+            "  --target-points <N>        Preferred medium waypoint count (default: 50)\n"
             "  --small-points <N>         Target waypoints for small/coarse ring (default: 12)\n"
             "  --fine-points <N>          Target waypoints for fine ring used in port augmentation (default: 200)\n",
             argv0);
@@ -218,7 +219,7 @@ static int store_ports_from_dat(sqlite3 *db,
                                 const char *dat_path,
                                 int *out_seen,
                                 int *out_inserted) {
-    ItemVec items;
+    DataSet dataset;
     sqlite3_stmt *loc_insert_stmt = NULL;
     sqlite3_stmt *loc_select_stmt = NULL;
     sqlite3_stmt *port_stmt = NULL;
@@ -226,8 +227,8 @@ static int store_ports_from_dat(sqlite3 *db,
     int seen = 0;
     int inserted = 0;
 
-    item_vec_init(&items);
-    read_dat_file_all_boats(dat_path, &items, 0);
+    dataset_init(&dataset);
+    read_dat_file_selected(dat_path, &dataset, GSP_DAT_SELECT_PORTS);
 
     rc = sqlite3_prepare_v2(db,
                             "INSERT INTO locations (easting, northing, lat, lon) VALUES (?, ?, ?, ?);",
@@ -245,12 +246,13 @@ static int store_ports_from_dat(sqlite3 *db,
     if (rc != SQLITE_OK) goto cleanup;
 
     sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
-    for (int i = 0; i < items.n; i++) {
-        if (items.a[i].Type != tPORT) continue;
+    for (int i = 0; i < dataset.n_ports; i++) {
+        const Port *port = &dataset.ports[i];
+        const Location *loc = &dataset.locations[port->location_id];
         seen++;
 
-        int lat_degmin = (int)items.a[i].LatLonDegMin[0];
-        int lon_degmin = (int)items.a[i].LatLonDegMin[1];
+        int lat_degmin = loc->easting;
+        int lon_degmin = loc->northing;
         int loc_id = insert_location_from_degmin(loc_insert_stmt, loc_select_stmt, lat_degmin, lon_degmin);
         if (loc_id <= 0) {
             rc = SQLITE_ERROR;
@@ -258,7 +260,7 @@ static int store_ports_from_dat(sqlite3 *db,
             goto cleanup;
         }
 
-        char *clean_name = strip_quotes_local(items.a[i].Name);
+        char *clean_name = strip_quotes_local(port->name);
         if (!clean_name) {
             rc = SQLITE_NOMEM;
             sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
@@ -286,7 +288,96 @@ cleanup:
     sqlite3_finalize(loc_insert_stmt);
     sqlite3_finalize(loc_select_stmt);
     sqlite3_finalize(port_stmt);
-    item_vec_free(&items);
+    dataset_free(&dataset);
+
+    if (out_seen) *out_seen = seen;
+    if (out_inserted) *out_inserted = inserted;
+    return rc;
+}
+
+static int store_boats_from_dat(sqlite3 *db,
+                                const char *dat_path,
+                                int *out_seen,
+                                int *out_inserted) {
+    DataSet dataset;
+    sqlite3_stmt *loc_insert_stmt = NULL;
+    sqlite3_stmt *loc_select_stmt = NULL;
+    sqlite3_stmt *boat_stmt = NULL;
+    int rc = SQLITE_OK;
+    int seen = 0;
+    int inserted = 0;
+
+    dataset_init(&dataset);
+    read_dat_file_selected(dat_path, &dataset, GSP_DAT_SELECT_BOATS);
+
+    rc = sqlite3_prepare_v2(db,
+                            "INSERT INTO locations (easting, northing, lat, lon) VALUES (?, ?, ?, ?);",
+                            -1, &loc_insert_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+
+    rc = sqlite3_prepare_v2(db,
+                            "SELECT id FROM locations WHERE easting = ? AND northing = ?;",
+                            -1, &loc_select_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+
+    rc = sqlite3_prepare_v2(db,
+                            "INSERT INTO boats (start_location_id, end_location_id, capacity, name) "
+                            "VALUES (?, ?, ?, ?);",
+                            -1, &boat_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+
+    sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+    for (int i = 0; i < dataset.n_boats; i++) {
+        const Boat *boat = &dataset.boats[i];
+        const Location *start_loc = &dataset.locations[boat->start_location_id];
+        const Location *end_loc = &dataset.locations[boat->end_location_id];
+        seen++;
+
+        int start_loc_id = insert_location_from_degmin(loc_insert_stmt, loc_select_stmt,
+                                                       start_loc->easting,
+                                                       start_loc->northing);
+        int end_loc_id = insert_location_from_degmin(loc_insert_stmt, loc_select_stmt,
+                                                     end_loc->easting,
+                                                     end_loc->northing);
+        if (start_loc_id <= 0 || end_loc_id <= 0) {
+            rc = SQLITE_ERROR;
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            goto cleanup;
+        }
+
+        char *clean_name = strip_quotes_local(boat->name);
+        if (!clean_name) {
+            rc = SQLITE_NOMEM;
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            goto cleanup;
+        }
+
+        sqlite3_bind_int(boat_stmt, 1, start_loc_id);
+        sqlite3_bind_int(boat_stmt, 2, end_loc_id);
+        sqlite3_bind_int(boat_stmt, 3, boat->capacity);
+        sqlite3_bind_text(boat_stmt, 4, clean_name, -1, SQLITE_TRANSIENT);
+
+        if (sqlite3_step(boat_stmt) != SQLITE_DONE) {
+            free(clean_name);
+            sqlite3_reset(boat_stmt);
+            sqlite3_clear_bindings(boat_stmt);
+            rc = SQLITE_ERROR;
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            goto cleanup;
+        }
+
+        inserted++;
+        sqlite3_reset(boat_stmt);
+        sqlite3_clear_bindings(boat_stmt);
+        free(clean_name);
+    }
+    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+
+cleanup:
+    sqlite3_finalize(loc_insert_stmt);
+    sqlite3_finalize(loc_select_stmt);
+    sqlite3_finalize(boat_stmt);
+    dataset_free(&dataset);
 
     if (out_seen) *out_seen = seen;
     if (out_inserted) *out_inserted = inserted;
@@ -395,25 +486,26 @@ cleanup:
 }
 
 static int read_waypoint_seeds_from_dat(const char *dat_path, GeoPointVec *out) {
-    ItemVec items;
-    item_vec_init(&items);
+    DataSet dataset;
+    dataset_init(&dataset);
     point_vec_init(out);
 
-    read_dat_file_all_boats(dat_path, &items, 0);
+    read_dat_file_selected(dat_path, &dataset, GSP_DAT_SELECT_WAYPS);
 
     double tol2 = 1e-10;
-    for (int i = 0; i < items.n; i++) {
-        if (items.a[i].Type != tWAYP) continue;
-        double lat = degmin_to_deg((int)items.a[i].LatLonDegMin[0]);
-        double lon = degmin_to_deg_lon((int)items.a[i].LatLonDegMin[1]);
+    for (int i = 0; i < dataset.n_waypoints; i++) {
+        const Waypoint *waypoint = &dataset.waypoints[i];
+        const Location *loc = &dataset.locations[waypoint->location_id];
+        double lat = degmin_to_deg(loc->easting);
+        double lon = degmin_to_deg_lon(loc->northing);
         if (!append_unique_point(out, lat, lon, tol2)) {
-            item_vec_free(&items);
+            dataset_free(&dataset);
             point_vec_free(out);
             return 0;
         }
     }
 
-    item_vec_free(&items);
+    dataset_free(&dataset);
     return 1;
 }
 
@@ -423,7 +515,15 @@ static int load_ports_info_from_db(sqlite3 *db, PortInfoVec *out) {
         "SELECT p.id, COALESCE(p.name,''), l.lat, l.lon "
         "FROM ports p "
         "JOIN locations l ON l.id = p.location_id "
-        "ORDER BY p.id;";
+        "UNION ALL "
+        "SELECT 1000000 + b.id, printf('%s [start]', COALESCE(b.name,'')), ls.lat, ls.lon "
+        "FROM boats b "
+        "JOIN locations ls ON ls.id = b.start_location_id "
+        "UNION ALL "
+        "SELECT 2000000 + b.id, printf('%s [end]', COALESCE(b.name,'')), le.lat, le.lon "
+        "FROM boats b "
+        "JOIN locations le ON le.id = b.end_location_id "
+        "ORDER BY 1;";
 
     port_info_vec_init(out);
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
@@ -735,12 +835,6 @@ static int create_full_schema(sqlite3 *db) {
         "  start_location_id INTEGER REFERENCES locations(id),"
         "  end_location_id INTEGER REFERENCES locations(id),"
         "  capacity INTEGER,"
-        "  c1 INTEGER,"
-        "  c2 INTEGER,"
-        "  c3 INTEGER,"
-        "  c4 INTEGER,"
-        "  c5 INTEGER,"
-        "  c6 INTEGER,"
         "  name TEXT"
         ");"
         "CREATE TABLE IF NOT EXISTS stations ("
@@ -748,9 +842,6 @@ static int create_full_schema(sqlite3 *db) {
         "  ext_id INTEGER,"
         "  start_location_id INTEGER,"
         "  end_location_id INTEGER,"
-        "  c1 INTEGER,"
-        "  c2 INTEGER,"
-        "  c3 INTEGER,"
         "  amount INTEGER,"
         "  depth_thrown INTEGER,"
         "  depth_haul INTEGER,"
@@ -874,13 +965,16 @@ static int store_waypoints(sqlite3 *db, const GeoPointVec *ring, int granularity
 
 static void write_metadata(sqlite3 *db,
                            const WaypointGenerationOptions *opts,
-                           const char *island_bin_path,
+                           const char *coastline_file_path,
                            const char *dat_path,
                            const char *port_file,
+                           const char *boat_file,
                            int loaded_seed_count,
                            int inserted_seed_count,
                            int ports_seen,
                            int ports_inserted,
+                           int boats_seen,
+                           int boats_inserted,
                            int port_access_waypoints_added,
                            double buffer_distance,
                            double simplify_tolerance,
@@ -895,9 +989,10 @@ static void write_metadata(sqlite3 *db,
         const char *value;
     } pairs[] = {
         {"country_stage", "complete"},
-        {"country_island_bin", island_bin_path ? island_bin_path : ""},
+        {"country_coastline_file", coastline_file_path ? coastline_file_path : ""},
         {"country_dat_file", dat_path ? dat_path : ""},
         {"country_port_file", port_file ? port_file : ""},
+        {"country_boat_file", boat_file ? boat_file : ""},
         {"country_seed_mode", opts->seed_mode == GSP_SEED_MODE_PRESERVE_ALL ? "preserve_all" : (opts->seed_mode == GSP_SEED_MODE_HINTS_ONLY ? "hints_only" : "none")}
     };
 
@@ -944,6 +1039,16 @@ static void write_metadata(sqlite3 *db,
     sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
 
+    snprintf(value, sizeof(value), "%d", boats_seen);
+    sqlite3_bind_text(stmt, 1, "country_boats_seen", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
+
+    snprintf(value, sizeof(value), "%d", boats_inserted);
+    sqlite3_bind_text(stmt, 1, "country_boats_inserted", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
+
     snprintf(value, sizeof(value), "%d", port_access_waypoints_added);
     sqlite3_bind_text(stmt, 1, "country_port_access_waypoints_added", -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
@@ -969,9 +1074,10 @@ static void write_metadata(sqlite3 *db,
 
 int main(int argc, char **argv) {
     const char *db_path = NULL;
-    const char *island_bin_path = NULL;
+    const char *coastline_file_path = NULL;
     const char *waypoint_file = NULL;
     const char *port_file = NULL;
+    const char *boat_file = NULL;
     WaypointGenerationOptions opts;          /* medium ring */
     WaypointGenerationOptions small_opts;    /* small/coarse ring */
     CoastlinePoints coastline = {0};
@@ -983,6 +1089,8 @@ int main(int argc, char **argv) {
     int inserted_seed_count = 0;
     int ports_seen = 0;
     int ports_inserted = 0;
+    int boats_seen = 0;
+    int boats_inserted = 0;
     int port_access_added = 0;
     int rc = 1;
     sqlite3 *db = NULL;
@@ -993,9 +1101,9 @@ int main(int argc, char **argv) {
     double simplify_tolerance = 0.0;
 
     /* Medium ring defaults */
-    opts.min_points = 30;
-    opts.max_points = 40;
-    opts.target_points = 35;
+    opts.min_points = 40;
+    opts.max_points = 200;
+    opts.target_points = 50;
     opts.use_dat_waypoints = 0;
     opts.seed_mode = GSP_SEED_MODE_NONE;
 
@@ -1005,14 +1113,16 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--db") == 0 && i + 1 < argc) {
             db_path = argv[++i];
-        } else if (strcmp(argv[i], "--island-bin") == 0 && i + 1 < argc) {
-            island_bin_path = argv[++i];
+        } else if (strcmp(argv[i], "--coastline-file") == 0 && i + 1 < argc) {
+            coastline_file_path = argv[++i];
         } else if (strcmp(argv[i], "--waypoint-file") == 0 && i + 1 < argc) {
             waypoint_file = argv[++i];
         } else if (strcmp(argv[i], "--dat") == 0 && i + 1 < argc) {
             waypoint_file = argv[++i];
         } else if (strcmp(argv[i], "--port-file") == 0 && i + 1 < argc) {
             port_file = argv[++i];
+        } else if ((strcmp(argv[i], "--boat-file") == 0 || strcmp(argv[i], "--boatfile") == 0) && i + 1 < argc) {
+            boat_file = argv[++i];
         } else if (strcmp(argv[i], "--preserve-all-seeds") == 0) {
             opts.seed_mode = GSP_SEED_MODE_PRESERVE_ALL;
         } else if (strcmp(argv[i], "--seed-hints-only") == 0) {
@@ -1031,7 +1141,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (!db_path || !island_bin_path) {
+    if (!db_path || !coastline_file_path) {
         die_usage(argv[0]);
         return 1;
     }
@@ -1059,12 +1169,12 @@ int main(int argc, char **argv) {
 
     printf("=== GSP Country Bootstrap ===\n");
     printf("Database: %s\n", db_path);
-    printf("Coastline source: %s\n", island_bin_path);
+    printf("Coastline source: %s\n", coastline_file_path);
     printf("Small ring target: %d  |  Medium ring: [%d, %d] preferred=%d\n",
            small_target, opts.min_points, opts.max_points, opts.target_points);
 
-    if (!load_repaired_coastline_from_bin(island_bin_path, &coastline)) {
-        fprintf(stderr, "Failed to load repaired coastline from %s\n", island_bin_path);
+    if (!load_repaired_coastline_from_bin(coastline_file_path, &coastline)) {
+        fprintf(stderr, "Failed to load repaired coastline from %s\n", coastline_file_path);
         goto cleanup;
     }
     printf("Loaded repaired coastline with %d points\n", coastline.n);
@@ -1183,8 +1293,20 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* --- Import boats --- */
+    if (boat_file) {
+        if (store_boats_from_dat(db, boat_file, &boats_seen, &boats_inserted) != SQLITE_OK) {
+            fprintf(stderr, "Failed to import boats from %s: %s\n", boat_file, sqlite3_errmsg(db));
+            goto cleanup;
+        }
+        if (boats_seen == 0) {
+            fprintf(stderr, "No BOAT rows found in boat file: %s\n", boat_file);
+            goto cleanup;
+        }
+    }
+
     /* --- Augment medium ring for port access (non-fatal per port) --- */
-    if (ports_seen > 0 && fine_candidates.n > 0) {
+    if ((ports_seen > 0 || boats_seen > 0) && fine_candidates.n > 0) {
         augment_ring_for_port_access(db, geos_ctx, original_polygon, original_boundary,
                                      &fine_candidates, &medium_ring, &port_access_added);
     }
@@ -1201,8 +1323,9 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
-    write_metadata(db, &opts, island_bin_path, waypoint_file, port_file,
+    write_metadata(db, &opts, coastline_file_path, waypoint_file, port_file, boat_file,
                    loaded_seed_count, inserted_seed_count, ports_seen, ports_inserted,
+                   boats_seen, boats_inserted,
                    port_access_added, buffer_distance, simplify_tolerance, medium_ring.n);
 
     printf("Stored waypoints in %s\n", db_path);
@@ -1217,6 +1340,9 @@ int main(int argc, char **argv) {
     if (port_file) {
         printf("  ports: seen=%d inserted=%d  access_augmented=%d\n",
                ports_seen, ports_inserted, port_access_added);
+    }
+    if (boat_file) {
+        printf("  boats: seen=%d inserted=%d\n", boats_seen, boats_inserted);
     }
 
 

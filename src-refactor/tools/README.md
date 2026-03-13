@@ -1,57 +1,80 @@
 # GSP Tools
 
-Utility tools for the GSP Solver project.
+Utility tools for the refactored workflow.
 
-## export_survey_json
+## gsp_country
 
-Export survey_2023 data from the database to JSON format compatible with the plotting scripts.
+Bootstrap `gsp_data.db` with coastline, inferred waypoints, ports, and boats.
+Implementation source: `tools/infer_waypoints_from_coastline.c`.
 
 ### Usage
 
 ```bash
-export_survey_json <database.db> <output_prefix> [boat_id]
+gsp_country --db dat/gsp_data.db --coastline-file dat/island.bin [options]
 ```
 
-**Arguments:**
-- `database.db` - Path to the SQLite database containing survey_2023 data
-- `output_prefix` - Output file prefix (e.g., `sol/survey`)
-- `boat_id` - (Optional) Specific boat ID to export, or 0/omit to export all boats
+### Common options
 
-**Output:**
-- When boat_id is specified: `<output_prefix>_boat<id>.json`
-- When boat_id is 0 or omitted: `<output_prefix>_boat1.json`, `<output_prefix>_boat2.json`, etc.
+- `--waypoint-file dat/waypoints.dat`
+- `--port-file dat/ports.dat`
+- `--boat-file dat/boats.dat`
+- `--preserve-all-seeds`
+- `--seed-hints-only`
+- `--min-points N --max-points N --target-points N`
+
+### Static preview
+
+```bash
+Rscript R/plot_country.R dat/gsp_data.db dat/coastline_waypoints_ports.png
+```
+
+### Interactive waypoint picking
+
+```bash
+Rscript R/click_country_points.R
+```
+
+## gsp_stations
+
+Import stations into the existing database using the new `DataSet` parser path.
+Implementation source: `common/station_import.c`.
+
+### Usage
+
+```bash
+gsp_stations dat/stations.dat dat/gsp_data.db
+```
+
+This stage assumes `gsp_country` has already populated the database with coastline, waypoints, ports, and boats.
+
+## gsp_stations_with_distance
+
+Legacy combined importer/distance tool kept as backup during the split away from `preprocessing.c`.
+Implementation source: `common/preprocessing.c`.
+
+## historical_survey
+
+Export the historical survey already stored in `gsp_data.db` to JSON for plotting and inspection.
+Implementation source: `tools/export_survey_json.c`.
+
+### Usage
+
+```bash
+historical_survey <database.db> <output_prefix> [boat_id]
+```
 
 ### Examples
 
 ```bash
-# Export all boats from survey_2023
-./export_survey_json dat/gsp_data.db sol/survey
-
-# Export only boat 2
-./export_survey_json dat/gsp_data.db sol/survey 2
+./historical_survey dat/gsp_data.db sol/survey
+./historical_survey dat/gsp_data.db sol/survey 2
 ```
 
-### Output Format
-
-The JSON output is compatible with `py/plot_solution.py` and includes:
-
-- **metadata**: Boat ID, name, home port location, timestamp
-- **problem**: Number of nodes, stations, capacity
-- **solution**: Tour sequence, total distance in nautical miles
-- **solver_stats**: Export method and status
-
-### Makefile Integration
+## Workflow
 
 ```bash
-# From src-refactor/ directory
-make export_survey       # Exports all boats to sol/survey_boat*.json
+make country
+make stations
+make distance
+make survey
 ```
-
-## Notes
-
-- Only **selected** ports and stations from survey_2023 are exported
-- Waypoints are **not** included in the survey route (they're routing helpers only)
-- Distance calculations use the precomputed distance matrix with Dijkstra waypoint routing
-- Each boat's route includes its home port location for accurate plotting
-- Multi-boat exports allow visualization of fleet-wide survey coverage
-

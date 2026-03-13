@@ -1,6 +1,6 @@
 /*
  * Export survey data to JSON format compatible with solution plotting
- * Usage: export_survey_json <database.db> <output_prefix> [boat_id]
+ * Usage: historical_survey <database.db> <output_prefix> [boat_id]
  */
 
 #include <stdio.h>

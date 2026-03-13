@@ -1,12 +1,19 @@
 #ifndef GSP_CONSTANTS_H
 #define GSP_CONSTANTS_H
 
+/* Node types used in survey/export routing tables. */
 enum {
     NODE_TYPE_BOAT = 0,
-	NODE_TYPE_STATION = 1,
+    NODE_TYPE_STATION = 1,
     NODE_TYPE_PORT = 2,
     NODE_TYPE_WAYPOINT = 3
 };
+
+/* DAT record tags. */
+#define GSP_DAT_TAG_BOAT "BOAT"
+#define GSP_DAT_TAG_STAT "STAT"
+#define GSP_DAT_TAG_WAYP "WAYP"
+#define GSP_DAT_TAG_PORT "PORT"
 
 /* Waypoint granularity levels stored in the waypoints.granularity INTEGER column.
  *   0 = small  – coarse / low-resolution ring (fewer points, used for broad routing)

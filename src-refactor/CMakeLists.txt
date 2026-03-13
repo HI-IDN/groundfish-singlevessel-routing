@@ -47,11 +47,25 @@ include_directories(
 
 add_subdirectory(common)
 
-# Preprocessing target delegates to common/run_preprocessing
-add_custom_target(preprocess
-    COMMAND ${CMAKE_MAKE_PROGRAM} run_preprocessing
+# Historical survey station import target
+add_custom_target(stations
+    COMMAND ${CMAKE_MAKE_PROGRAM} run_stations
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
-    COMMENT "Step 1: Data Preparation - Parse .dat and build database"
+    COMMENT "Step 2: Import historical survey stations"
+)
+
+# Distance recomputation target
+add_custom_target(distance
+    COMMAND ${CMAKE_MAKE_PROGRAM} run_distance
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
+    COMMENT "Step 3: Recompute historical survey distances"
+)
+
+# Compatibility target for combined step
+add_custom_target(stations_with_distance
+    COMMAND ${CMAKE_MAKE_PROGRAM} run_stations_with_distance
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
+    COMMENT "Import historical survey stations and compute distances"
 )
 
 # ============================================================
@@ -115,17 +129,17 @@ add_custom_target(run_init_opt
 # Tools
 # ============================================================
 
-# Export survey_2023 to JSON for plotting
-add_executable(export_survey_json
+# Export historical survey to JSON for plotting
+add_executable(historical_survey
     tools/export_survey_json.c
     common/feasibility.c
 )
 
-target_link_libraries(export_survey_json
+target_link_libraries(historical_survey
     ${SQLITE3_LIBRARIES}
 )
 
-target_include_directories(export_survey_json PRIVATE
+target_include_directories(historical_survey PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${SQLITE3_INCLUDE_DIRS}
 )
@@ -152,6 +166,6 @@ target_include_directories(gsp_country PRIVATE
 # Install
 # ============================================================
 
-install(TARGETS gsp export_survey_json gsp_country
+install(TARGETS gsp historical_survey gsp_country gsp_stations
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )

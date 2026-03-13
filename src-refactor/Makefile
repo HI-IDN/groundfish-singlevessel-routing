@@ -5,48 +5,49 @@ BUILD_DIR = ../build
 
 COUNTRY_DB ?= ../dat/gsp_data.db
 COUNTRY_ISLAND ?= ../dat/island.bin
-COUNTRY_DAT ?= ../dat/data2023spring.dat
-COUNTRY_PORT_FILE ?= ../dat/data2023spring.dat
-COUNTRY_MIN ?= 40
-COUNTRY_MAX ?= 200
-COUNTRY_TARGET ?= 50
+COUNTRY_DAT ?= ../dat/waypoints.dat
+COUNTRY_PORT_FILE ?= ../dat/ports.dat
+COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 
-.PHONY: all clean config build preprocessing init init_nn init_ge init_ci init_opt export_survey country help
+.PHONY: all clean config build country stations distance stations-with-distance preprocessing survey export_survey init init_nn init_ge init_ci init_opt help
 
-# Default target
 all: build
 
-# Configure CMake (only if not already configured)
 config:
 	@mkdir -p $(BUILD_DIR)
 	@cd $(BUILD_DIR) && cmake -DCMAKE_BUILD_TYPE=Release ../src-refactor
 
-# Build everything
 build: config
 	@cd $(BUILD_DIR) && $(MAKE)
 
-# Alias for build
 init: build
 
-# Data preprocessing
-preprocessing: config
-	@cd $(BUILD_DIR) && $(MAKE) preprocess
-
-# Country bootstrap: infer coastline waypoints (~50 target) and import ports from a port file
 country: config
 	@cd $(BUILD_DIR) && $(MAKE) gsp_country
 	@cd $(BUILD_DIR) && ./gsp_country \
 		--db $(COUNTRY_DB) \
-		--island-bin $(COUNTRY_ISLAND) \
+		--coastline-file $(COUNTRY_ISLAND) \
 		--waypoint-file $(COUNTRY_DAT) \
 		--seed-hints-only \
 		--port-file $(COUNTRY_PORT_FILE) \
-		--min-points $(COUNTRY_MIN) --max-points $(COUNTRY_MAX) --target-points $(COUNTRY_TARGET)
+		--boat-file $(COUNTRY_BOAT_FILE)
 	@echo ""
 	@echo "Plot command:"
 	@echo "  Rscript R/plot_country.R dat/gsp_data.db"
 
-# Run Phase 0 strategies
+stations: config
+	@cd $(BUILD_DIR) && $(MAKE) stations
+
+distance: config
+	@cd $(BUILD_DIR) && $(MAKE) distance
+
+preprocessing: country stations distance survey
+
+survey: build
+	@echo "[Exporting historical survey to JSON]"
+	@cd $(BUILD_DIR) && ./historical_survey ../dat/gsp_data.db ../dat/survey2023spring.dat
+	@echo "Historical survey exported to sol/survey/boat*.json"
+
 init_nn: build
 	@cd $(BUILD_DIR) && $(MAKE) run_init_nn
 
@@ -59,23 +60,14 @@ init_ci: build
 init_opt: build
 	@cd $(BUILD_DIR) && $(MAKE) run_init_opt
 
-# Export survey to JSON for plotting
-export_survey: build
-	@echo "[Exporting survey to JSON]"
-	@cd $(BUILD_DIR) && ./export_survey_json ../dat/gsp_data.db ../sol/survey
-	@echo "✓ Survey routes exported to sol/survey/boat*.json"
-
-# Clean build directory
 clean:
 	@echo "Cleaning build directory..."
 	@rm -rf $(BUILD_DIR)
-	@echo "✓ Build directory removed"
+	@echo "Build directory removed"
 
-# Reconfigure (clean + config)
 reconfigure: clean config
-	@echo "✓ Reconfigured"
+	@echo "Reconfigured"
 
-# Help message
 help:
 	@echo ""
 	@echo "GSP Solver - Lightweight Makefile"
@@ -83,30 +75,17 @@ help:
 	@echo ""
 	@echo "Build directory: ../build (root level)"
 	@echo ""
-	@echo "Quick Start:"
-	@echo "  make                    Build gsp_init solver"
-	@echo "  make country            Build and run coastline+waypoint+port bootstrap (~50 waypoints)"
-	@echo "  make preprocessing      Parse .dat and build database"
-	@echo "  make export_survey      Export survey routes to JSON"
-	@echo "  make init_nn            Run Nearest Neighbor (NN)"
+	@echo "Preprocessing Workflow:"
+	@echo "  make country"
+	@echo "  make stations"
+	@echo "  make distance"
+	@echo "  make historical-survey"
 	@echo ""
-	@echo "All Targets:"
-	@echo "  make build              Build all targets"
-	@echo "  make config             Configure CMake (if needed)"
-	@echo "  make preprocessing      Step 1: Parse data"
-	@echo "  make country            Step 1a: Country bootstrap (coastline + waypoints + ports)"
-	@echo "  make export_survey      Export all boat routes to JSON"
-	@echo "  make init / make        Step 2: Build Phase 0 solver"
-	@echo "  make init_nn            Run NN strategy (IMPLEMENTED)"
-	@echo "  make init_ge            Run GE strategy (not yet implemented)"
-	@echo "  make init_ci            Run CI strategy (not yet implemented)"
-	@echo "  make init_opt           Run OPT strategy (not yet implemented)"
-	@echo "  make clean              Remove build directory"
-	@echo "  make reconfigure        Clean and reconfigure CMake"
-	@echo ""
-	@echo "Or use CMake directly:"
-	@echo "  cd ../build"
-	@echo "  cmake -DCMAKE_BUILD_TYPE=Release ../src-refactor"
-	@echo "  make"
-	@echo "  make run_init_nn"
-	@echo ""
+	@echo "Other targets:"
+	@echo "  make build"
+	@echo "  make init_nn"
+	@echo "  make init_ge"
+	@echo "  make init_ci"
+	@echo "  make init_opt"
+	@echo "  make clean"
+	@echo "  make reconfigure"
