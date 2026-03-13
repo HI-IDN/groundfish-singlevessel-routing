@@ -54,6 +54,8 @@ total_distance <- survey$solution$total_distance_nm
 feasible <- survey$solution$feasible
 segment_catch <- survey$solution$segment_catch_amount
 segment_distance <- survey$solution$segment_distance_nm
+segment_length <- survey$solution$tour_length
+segment_station_ids <- survey$solution$tour_segments_station_ids
 
 cat(sprintf("Boat: %s (ID: %d)\n", boat_name, boat_id))
 cat(sprintf("Home port: %.6f°, %.6f°\n", home_port$lat, home_port$lon))
@@ -62,6 +64,32 @@ cat(sprintf("Stations: %d\n", num_stations))
 cat(sprintf("Segments: %d\n", segment_count))
 cat(sprintf("Total distance: %.0f nm\n", total_distance))
 cat(sprintf("Feasible: %s\n\n", ifelse(feasible, "YES", "NO")))
+
+segment_station_count <- vapply(segment_station_ids, length, integer(1))
+segment_summary <- tibble(
+  Segment = seq_along(segment_length),
+  Length = as.integer(segment_length),
+  Stations = as.integer(segment_station_count),
+  Catch = as.integer(segment_catch),
+  `Distance (nm)` = as.numeric(segment_distance)
+)
+
+cat("## Segment Summary\n\n")
+cat("| Segment | Length | Stations | Catch | Distance (nm) |\n")
+cat("|---:|---:|---:|---:|---:|\n")
+for (i in seq_len(nrow(segment_summary))) {
+  cat(sprintf("| %d | %d | %d | %d | %.2f |\n",
+              segment_summary$Segment[i],
+              segment_summary$Length[i],
+              segment_summary$Stations[i],
+              segment_summary$Catch[i],
+              segment_summary$`Distance (nm)`[i]))
+}
+cat(sprintf("| **Total** | **%d** | **%d** | **%d** | **%.2f** |\n\n",
+            sum(segment_summary$Length),
+            sum(segment_summary$Stations),
+            sum(segment_summary$Catch),
+            total_distance))
 
 # Check for capacity violations
 if (!feasible) {

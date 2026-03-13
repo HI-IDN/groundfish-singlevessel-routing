@@ -46,7 +46,7 @@ between two nodes (`min_dist_node_pair`).
 
 ---
 
-### `gi` — Greedy Insertion (path-based)
+### `ge` — Greedy Edge (path-based)
 
 Builds a station ordering by cheapest path insertion anchored to the boat
 start and end locations, then applies capacity-aware segmentation.
@@ -64,7 +64,7 @@ to nearest port before adding a station that would exceed capacity) and
 post-station trigger (divert immediately after a station fills the vessel, if
 stations remain).
 
-**Output:** `sol/gi/init.json`
+**Output:** `sol/ge/init.json`
 
 ---
 

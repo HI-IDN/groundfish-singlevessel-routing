@@ -102,32 +102,40 @@ target_link_libraries(gsp
 set(CONFIG_YAML ${CMAKE_CURRENT_SOURCE_DIR}/../config/gsp_solver.yaml)
 set(DATABASE ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp_data.db)
 set(SOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../sol)
+set(SOL_NN_DIR ${SOL_DIR}/nn)
+set(SOL_GE_DIR ${SOL_DIR}/ge)
+set(SOL_CI_DIR ${SOL_DIR}/ci)
+set(SOL_OPT_DIR ${SOL_DIR}/opt)
 
 file(MAKE_DIRECTORY ${SOL_DIR})
+file(MAKE_DIRECTORY ${SOL_NN_DIR})
+file(MAKE_DIRECTORY ${SOL_GE_DIR})
+file(MAKE_DIRECTORY ${SOL_CI_DIR})
+file(MAKE_DIRECTORY ${SOL_OPT_DIR})
 
 add_custom_target(run_init_nn
-    COMMAND gsp --mode init --strategy nn --database ${DATABASE} --output ${SOL_DIR}/init_nn.json --config ${CONFIG_YAML}
+    COMMAND gsp --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/init.json --config ${CONFIG_YAML}
     DEPENDS gsp
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Phase 0: NN (Nearest Neighbor)"
 )
 
 add_custom_target(run_init_ge
-    COMMAND gsp --mode init --strategy ge --database ${DATABASE} --output ${SOL_DIR}/init_ge.json --config ${CONFIG_YAML}
+    COMMAND gsp --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/init.json --config ${CONFIG_YAML}
     DEPENDS gsp
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Phase 0: GE (Greedy Edge) - NOT YET IMPLEMENTED"
+    COMMENT "Phase 0: GE (Greedy Edge)"
 )
 
 add_custom_target(run_init_ci
-    COMMAND gsp --mode init --strategy ci --database ${DATABASE} --output ${SOL_DIR}/init_ci.json --config ${CONFIG_YAML}
+    COMMAND gsp --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/init.json --config ${CONFIG_YAML}
     DEPENDS gsp
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Phase 0: CI (Cheapest Insertion) - NOT YET IMPLEMENTED"
 )
 
 add_custom_target(run_init_opt
-    COMMAND gsp --mode init --strategy opt --database ${DATABASE} --output ${SOL_DIR}/init_opt.json --config ${CONFIG_YAML} --time-limit 600
+    COMMAND gsp --mode init --strategy opt --database ${DATABASE} --output ${SOL_OPT_DIR}/init.json --config ${CONFIG_YAML} --time-limit 600
     DEPENDS gsp
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Phase 0: OPT (Optimal NP-MIP) - NOT YET IMPLEMENTED"

@@ -576,8 +576,8 @@ int mode_init(int argc, char **argv) {
         return 1;
     }
 
-    if (strcmp(strategy, "nn") != 0 && strcmp(strategy, "gi") != 0 && strcmp(strategy, "ci") != 0) {
-        fprintf(stderr, "ERROR: Only 'nn', 'gi', and 'ci' strategies are currently implemented\n");
+    if (strcmp(strategy, "nn") != 0 && strcmp(strategy, "ge") != 0 && strcmp(strategy, "ci") != 0) {
+        fprintf(stderr, "ERROR: Only 'nn', 'ge', and 'ci' strategies are currently implemented\n");
         return 1;
     }
 
@@ -656,7 +656,7 @@ int mode_init(int argc, char **argv) {
             sqlite3_close(db);
             return 1;
         }
-    } else if (strcmp(strategy, "gi") == 0) {
+    } else if (strcmp(strategy, "ge") == 0) {
         method_name = "greedy_insertion";
         if (gi_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
             fprintf(stderr, "ERROR: Failed to solve GI\n");
