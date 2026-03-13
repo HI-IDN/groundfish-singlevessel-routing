@@ -2,7 +2,6 @@
 #
 # Single-file R script:
 # - reads coastline / waypoints / ports / boats from SQLite
-# - saves a PNG
 # - opens an interactive Shiny + Plotly map
 # - clicking on the map appends:
 #       WAYP <EASTING> <NORTHING>
@@ -14,8 +13,6 @@
 # SETTINGS
 # ----------------------------
 db_path <- "dat/gsp_data.db"
-png_path <- "dat/coastline_waypoints_ports.png"
-target_epsg <- 3057      # Iceland ISN93 / Lambert 1993
 app_height <- "850px"
 grid_nx <- 140           # clickable grid density in x
 grid_ny <- 140           # clickable grid density in y
@@ -63,34 +60,45 @@ close_ring <- function(df) {
   dplyr::bind_rows(df, df[1, , drop = FALSE])
 }
 
-lonlat_to_grid <- function(lon, lat, epsg = target_epsg) {
-  pt <- sf::st_as_sf(
-    data.frame(lon = lon, lat = lat),
-    coords = c("lon", "lat"),
-    crs = 4326
-  )
-  pt2 <- sf::st_transform(pt, epsg)
-  xy <- sf::st_coordinates(pt2)
+make_coastline_polygon <- function(coastline_df) {
+  ring <- close_ring(coastline_df)
+  coords <- as.matrix(ring[, c("lon", "lat")])
+  sf::st_sfc(sf::st_polygon(list(coords)), crs = 4326)
+}
+
+decimal_deg_to_degmin_int <- function(deg) {
+  abs_deg <- abs(deg)
+  whole_deg <- floor(abs_deg)
+  minutes <- (abs_deg - whole_deg) * 60.0
+  as.integer(round((whole_deg * 100.0 + minutes) * 100.0))
+}
+
+decimal_lon_to_degmin_storage <- function(lon_deg) {
+  decimal_deg_to_degmin_int(abs(lon_deg))
+}
+
+lonlat_to_grid <- function(lon, lat) {
   list(
-    easting = round(xy[1, 1]),
-    northing = round(xy[1, 2])
+    easting = decimal_deg_to_degmin_int(lat),
+    northing = decimal_lon_to_degmin_storage(lon)
   )
 }
 
-make_click_grid <- function(lon_range, lat_range, nx = grid_nx, ny = grid_ny, epsg = target_epsg) {
+make_click_grid <- function(lon_range, lat_range, nx = grid_nx, ny = grid_ny) {
   grid <- expand.grid(
     lon = seq(lon_range[1], lon_range[2], length.out = nx),
     lat = seq(lat_range[1], lat_range[2], length.out = ny)
   )
-
-  pts <- sf::st_as_sf(grid, coords = c("lon", "lat"), crs = 4326)
-  pts2 <- sf::st_transform(pts, epsg)
-  xy <- sf::st_coordinates(pts2)
-
-  grid$easting <- round(xy[, 1])
-  grid$northing <- round(xy[, 2])
+  grid$easting <- vapply(grid$lat, decimal_deg_to_degmin_int, integer(1))
+  grid$northing <- vapply(grid$lon, decimal_lon_to_degmin_storage, integer(1))
   grid$wayp <- sprintf("WAYP %d %d", grid$easting, grid$northing)
   grid
+}
+
+filter_click_grid_to_water <- function(grid_df, coastline_polygon) {
+  pts <- sf::st_as_sf(grid_df, coords = c("lon", "lat"), crs = 4326)
+  on_land <- as.vector(sf::st_within(pts, coastline_polygon, sparse = FALSE))
+  dplyr::filter(grid_df, !on_land)
 }
 
 # Fixed aspect ratio based on latitude
@@ -122,12 +130,20 @@ gsp_common_theme <- function(legend_position = "right", legend_direction = "vert
 # Base coastline plot
 base_coastline_plot <- function(coastline) {
   ggplot2::ggplot() +
+    ggplot2::geom_polygon(
+      data = close_ring(coastline),
+      ggplot2::aes(x = lon, y = lat),
+      fill = "white",
+      color = NA,
+      inherit.aes = FALSE
+    ) +
     ggplot2::geom_path(
       data = coastline,
       ggplot2::aes(x = lon, y = lat),
       linewidth = 0.5,
       color = "grey35",
-      fill = "white"
+      alpha = 1.0,
+      inherit.aes = FALSE
     )
 }
 
@@ -312,9 +328,23 @@ subtitle_text <- paste(
 )
 
 # ----------------------------
-# STATIC PLOT
+# PLOT DATA
 # ----------------------------
+lon_range <- range(coastline$lon, na.rm = TRUE)
+lat_range <- range(coastline$lat, na.rm = TRUE)
+coastline_polygon <- make_coastline_polygon(coastline)
+click_grid <- make_click_grid(lon_range, lat_range)
+click_grid <- filter_click_grid_to_water(click_grid, coastline_polygon)
+
 p <- base_coastline_plot(coastline) +
+  ggplot2::geom_point(
+    data = click_grid,
+    ggplot2::aes(x = lon, y = lat),
+    size = 0.35,
+    alpha = 0.35,
+    color = "#808080",
+    inherit.aes = FALSE
+  ) +
   ggplot2::geom_path(
     data = waypoints_ring,
     ggplot2::aes(x = lon, y = lat, color = gran_fct, group = gran_fct),
@@ -381,30 +411,12 @@ p <- p + gsp_common_theme(
   legend_direction = "vertical"
 )
 
-ggplot2::ggsave(
-  filename = png_path,
-  plot = p,
-  width = 12,
-  height = 10,
-  dpi = 300,
-  bg = "white"
-)
-
-message(sprintf("Saved PNG to: %s", normalizePath(png_path, mustWork = FALSE)))
-
-# ----------------------------
-# CLICK GRID
-# ----------------------------
-lon_range <- range(coastline$lon, na.rm = TRUE)
-lat_range <- range(coastline$lat, na.rm = TRUE)
-click_grid <- make_click_grid(lon_range, lat_range)
-
 # ----------------------------
 # INTERACTIVE PLOT
 # ----------------------------
 p_interactive <- plotly::ggplotly(p, tooltip = "text", source = "map")
 
-# Nearly invisible clickable grid on top
+# Visible clickable helper points over water only
 p_interactive <- plotly::add_markers(
   p_interactive,
   data = click_grid,
@@ -412,14 +424,15 @@ p_interactive <- plotly::add_markers(
   y = ~lat,
   customdata = ~wayp,
   text = ~wayp,
-  hoverinfo = "skip",
+  hovertemplate = "%{text}<extra></extra>",
   inherit = FALSE,
-  name = "click-grid",
+  name = "helper points",
   marker = list(
-    size = 10,
-    opacity = 0.08,
-    color = "black"
-  )
+    size = 7,
+    opacity = 0.45,
+    color = "#666666"
+  ),
+  showlegend = FALSE
 )
 
 p_interactive <- plotly::event_register(p_interactive, "plotly_click")
@@ -465,7 +478,7 @@ server <- function(input, output, session) {
     if (!is.null(click$customdata) && length(click$customdata) > 0) {
       wayp_line <- as.character(click$customdata[[1]])
     } else if (!is.null(click$x) && !is.null(click$y)) {
-      xy <- lonlat_to_grid(click$x, click$y, epsg = target_epsg)
+      xy <- lonlat_to_grid(click$x, click$y)
       wayp_line <- sprintf("WAYP %d %d", xy$easting, xy$northing)
     }
 
