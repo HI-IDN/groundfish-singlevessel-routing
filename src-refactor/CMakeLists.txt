@@ -68,6 +68,14 @@ add_custom_target(stations_with_distance
     COMMENT "Import stations and compute distances"
 )
 
+add_custom_target(survey
+    COMMAND ${CMAKE_MAKE_PROGRAM} run_survey_import
+    COMMAND historical_survey ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp_data.db ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey
+    DEPENDS historical_survey
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
+    COMMENT "Step 4: Import historical survey assignments and export JSON"
+)
+
 # ============================================================
 # 2. Unified GSP Solver (both init and sweep modes)
 # ============================================================
@@ -166,6 +174,6 @@ target_include_directories(gsp_country PRIVATE
 # Install
 # ============================================================
 
-install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances
+install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances gsp_historical_survey
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )

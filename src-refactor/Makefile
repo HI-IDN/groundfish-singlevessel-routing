@@ -46,9 +46,7 @@ distances: distance
 preprocessing: country stations distance survey
 
 survey: build
-	@echo "[Exporting historical survey to JSON]"
-	@cd $(BUILD_DIR) && ./historical_survey ../dat/gsp_data.db ../dat/survey2023spring.dat
-	@echo "Historical survey exported to sol/survey/boat*.json"
+	@cd $(BUILD_DIR) && $(MAKE) survey
 
 init_nn: build
 	@cd $(BUILD_DIR) && $(MAKE) run_init_nn

@@ -30,8 +30,8 @@ set(COMMON_SOURCES
     coastline_db.c
 )
 
-# Legacy combined preprocessing utility kept as backup
-add_executable(gsp_stations_with_distance
+# Legacy combined preprocessing utility kept as backup, but not built by default
+add_executable(gsp_stations_with_distance EXCLUDE_FROM_ALL
     preprocessing.c
     ${COMMON_SOURCES}
 )
@@ -70,9 +70,21 @@ target_link_libraries(gsp_distances
     m
 )
 
+# Historical survey import from ordered survey DAT
+add_executable(gsp_historical_survey
+    historical_survey_import.c
+    dat_parser.c
+)
+
+target_link_libraries(gsp_historical_survey
+    ${SQLITE3_LIBRARIES}
+    m
+)
+
 
 # Data files
 set(STATIONS_DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/stations.dat)
+set(HISTORICAL_SURVEY_DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/survey2023spring.dat)
 set(DB_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/gsp_data.db)
 
 # Custom target: import stations
@@ -98,6 +110,18 @@ add_custom_target(run_distance
     DEPENDS gsp_distances
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Recomputing distance matrix from existing database"
+)
+
+add_custom_target(run_survey_import
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND ${CMAKE_COMMAND} -E echo "=== Importing Historical Survey ==="
+    COMMAND ${CMAKE_COMMAND} -E echo "  Input: ${HISTORICAL_SURVEY_DAT_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E echo "  Database: ${DB_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND gsp_historical_survey ${HISTORICAL_SURVEY_DAT_FILE} ${DB_FILE}
+    DEPENDS gsp_historical_survey
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Importing historical survey assignments"
 )
 
 # Compatibility target: keep combined step available
