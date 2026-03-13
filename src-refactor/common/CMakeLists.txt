@@ -55,6 +55,21 @@ target_link_libraries(gsp_stations
     m
 )
 
+# Distance rebuild from existing DB
+add_executable(gsp_distances
+    distance_builder.c
+    distance.c
+    coastline_db.c
+    logging.c
+    sql_utils.c
+)
+
+target_link_libraries(gsp_distances
+    ${SQLITE3_LIBRARIES}
+    ${GEOS_LIBRARIES}
+    m
+)
+
 
 # Data files
 set(STATIONS_DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/stations.dat)
@@ -79,8 +94,8 @@ add_custom_target(run_distance
     COMMAND ${CMAKE_COMMAND} -E echo "=== Recomputing Distances ==="
     COMMAND ${CMAKE_COMMAND} -E echo "  Database: ${DB_FILE}"
     COMMAND ${CMAKE_COMMAND} -E echo ""
-    COMMAND gsp_stations_with_distance --debug-distance --db ${DB_FILE}
-    DEPENDS gsp_stations_with_distance
+    COMMAND gsp_distances --db ${DB_FILE}
+    DEPENDS gsp_distances
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Recomputing distance matrix from existing database"
 )
@@ -89,7 +104,7 @@ add_custom_target(run_distance
 add_custom_target(run_stations_with_distance
     COMMAND ${CMAKE_MAKE_PROGRAM} run_stations
     COMMAND ${CMAKE_MAKE_PROGRAM} run_distance
-    DEPENDS gsp_stations_with_distance
+    DEPENDS gsp_stations gsp_distances
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Importing stations and recomputing distances"
 )

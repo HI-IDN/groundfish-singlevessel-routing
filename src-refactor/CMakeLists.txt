@@ -58,14 +58,14 @@ add_custom_target(stations
 add_custom_target(distance
     COMMAND ${CMAKE_MAKE_PROGRAM} run_distance
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
-    COMMENT "Step 3: Recompute historical survey distances"
+    COMMENT "Step 3: Recompute all location-pair distances"
 )
 
 # Compatibility target for combined step
 add_custom_target(stations_with_distance
     COMMAND ${CMAKE_MAKE_PROGRAM} run_stations_with_distance
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
-    COMMENT "Import historical survey stations and compute distances"
+    COMMENT "Import stations and compute distances"
 )
 
 # ============================================================
@@ -166,6 +166,6 @@ target_include_directories(gsp_country PRIVATE
 # Install
 # ============================================================
 
-install(TARGETS gsp historical_survey gsp_country gsp_stations
+install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )

@@ -13,7 +13,7 @@ The current user-facing workflow is:
 
 This keeps the stages separate:
 - `country` builds the coastline, waypoints, ports, and boats base database
-- `stations` imports the historical survey stations from the legacy survey DAT file
+- `stations` imports stations from `dat/stations.dat`
 - `distance` recomputes the distance matrix from the existing database
 - `survey` exports the historical survey already stored in the database to JSON
 
@@ -41,6 +41,9 @@ Current Build Targets
 
 - `gsp_stations`
   Station importer using the new `DataSet` parser path.
+
+- `gsp_distances`
+  Distance builder. Uses waypoint nodes for Dijkstra routing, but stores only non-waypoint endpoint pairs.
 
 - `gsp_stations_with_distance`
   Legacy combined importer/distance tool kept as backup while the split is completed.
@@ -79,7 +82,7 @@ Interactive waypoint helper:
 Rscript R/click_country_points.R
 ```
 
-### Step 2: Historical survey stations
+### Step 2: Stations
 
 ```bash
 make stations
@@ -100,6 +103,7 @@ make distance
 ```
 
 This recomputes the distance matrix from the existing database after station import.
+The routing graph still includes waypoints, but the `distances` table stores only pairs where neither endpoint is a waypoint.
 
 ### Step 4: Historical survey export
 
@@ -126,5 +130,6 @@ Notes
 
 - `gsp_stations_with_distance` still exists as a backup path for the old combined implementation in `preprocessing.c`.
 - `gsp_stations` is the new station-import stage for `dat/stations.dat` and does not use `ItemVec`.
+- `gsp_distances` is the new distance stage; it keeps waypoint nodes only as routing helpers.
 - The historical survey step for `dat/survey2023spring.dat` still needs its own dedicated import/export path.
 - The public workflow names are now based on the actual stages above.

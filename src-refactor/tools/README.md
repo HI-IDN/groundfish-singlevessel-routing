@@ -47,6 +47,19 @@ gsp_stations dat/stations.dat dat/gsp_data.db
 
 This stage assumes `gsp_country` has already populated the database with coastline, waypoints, ports, and boats.
 
+## gsp_distances
+
+Recompute distances from the existing database.
+Implementation source: `common/distance_builder.c`.
+
+### Usage
+
+```bash
+gsp_distances --db dat/gsp_data.db
+```
+
+This stage uses waypoint nodes for routing, but writes only rows whose endpoints are non-waypoint locations.
+
 ## gsp_stations_with_distance
 
 Legacy combined importer/distance tool kept as backup during the split away from `preprocessing.c`.

@@ -9,7 +9,7 @@ COUNTRY_DAT ?= ../dat/waypoints.dat
 COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 
-.PHONY: all clean config build country stations distance stations-with-distance preprocessing survey export_survey init init_nn init_ge init_ci init_opt help
+.PHONY: all clean config build country stations distance distances stations-with-distance preprocessing survey export_survey init init_nn init_ge init_ci init_opt help
 
 all: build
 
@@ -40,6 +40,8 @@ stations: config
 
 distance: config
 	@cd $(BUILD_DIR) && $(MAKE) distance
+
+distances: distance
 
 preprocessing: country stations distance survey
 
@@ -79,6 +81,7 @@ help:
 	@echo "  make country"
 	@echo "  make stations"
 	@echo "  make distance"
+	@echo "  make distances"
 	@echo "  make historical-survey"
 	@echo ""
 	@echo "Other targets:"
