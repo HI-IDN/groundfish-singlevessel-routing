@@ -9,7 +9,7 @@ COUNTRY_DAT ?= ../dat/waypoints.dat
 COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 
-.PHONY: all clean config build country stations distance distances stations-with-distance preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt help
+.PHONY: all clean config build country stations distance distances stations-with-distance preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt plot-routes help
 
 all: build
 
@@ -64,6 +64,17 @@ noport-opt: build
 init_opt: build
 	@cd $(BUILD_DIR) && $(MAKE) run_init_opt
 
+plot-routes:
+	@bash -lc 'set -euo pipefail; cd ..; \
+	for f in $$(find sol -name "*.json"); do \
+		png="$${f%.json}.png"; \
+		if [ -f "$$png" ] && [ "$$png" -nt "$$f" ]; then \
+			echo "Skipping $$f (png is up to date)"; \
+		else \
+			Rscript R/plot_survey_route.R "$$f"; \
+		fi; \
+	done'
+
 clean:
 	@echo "Cleaning build directory..."
 	@rm -rf $(BUILD_DIR)
@@ -93,5 +104,6 @@ help:
 	@echo "  make init_ci"
 	@echo "  make noport-opt"
 	@echo "  make init_opt"
+	@echo "  make plot-routes"
 	@echo "  make clean"
 	@echo "  make reconfigure"
