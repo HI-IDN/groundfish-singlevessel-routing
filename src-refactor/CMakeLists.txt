@@ -111,6 +111,16 @@ target_link_libraries(gsp
     m
 )
 
+add_executable(gsp_init_opt
+    init/opt_init_from_noport.c
+    common/feasibility.c
+)
+
+target_link_libraries(gsp_init_opt
+    ${SQLITE3_LIBRARIES}
+    m
+)
+
 # ============================================================
 # Run targets for Phase 0 strategies
 # ============================================================
@@ -187,8 +197,8 @@ else()
 endif()
 
 add_custom_target(run_init_opt
-    COMMAND ${CMAKE_COMMAND} -E echo "init_opt is not implemented yet; run run_noport_opt first, then add capacity-feasible segmentation"
-    COMMAND ${CMAKE_COMMAND} -E false
+    COMMAND $<TARGET_FILE:gsp_init_opt> --database ${DATABASE} --config ${CONFIG_YAML} --input ${SOL_OPT_DIR}/noport.json --output ${SOL_OPT_DIR}/init.json
+    DEPENDS gsp_init_opt
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Phase 0: OPT initialization from no-port ordering"
 )
@@ -243,3 +253,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
     )
 endif()
+
+install(TARGETS gsp_init_opt
+    RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
+)
