@@ -47,7 +47,8 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
         return -1;
     }
 
-    int current_node_idx = -1;  // -1 = boat (use boat_start_loc_id)
+    int current_anchor_idx = -1;  // -1 = boat; otherwise station/port object index for legacy NN ordering
+    int current_loc_id = boat_start_loc_id;  // actual current emitted location for route construction
     int current_load = 0;
     double current_segment_dist = 0.0;
     int segment_start_idx = 0;
@@ -61,67 +62,51 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
         int best_station_idx = -1;
         int best_entry = -1, best_exit = -1, best_dir = 0;
 
-        int from_loc_id = (current_node_idx < 0)
-            ? boat_start_loc_id
-            : inst->nodes[current_node_idx].end_loc_id;
-
         // Phase 1: Find nearest unvisited station that fits capacity
         for (int i = 0; i < inst->num_stations; i++) {
+            double cand_dist;
             if (visited[i]) continue;
             int station_amount = inst->nodes[i].amount;
             if (current_load > 0 && current_load + station_amount > boat_capacity) continue;
 
-            int cand_entry = -1, cand_exit = -1, cand_dir = 0;
-            double cand_dist = 0.0;
-            if (!choose_station_orientation_with_dir(inst, from_loc_id, i,
-                                                     &cand_entry, &cand_exit,
-                                                     &cand_dist, &cand_dir)) {
-                continue;
-            }
+            cand_dist = (current_anchor_idx < 0)
+                ? min_dist_from_loc_to_node(inst, boat_start_loc_id, i)
+                : min_dist_node_pair(inst, current_anchor_idx, i);
             if (cand_dist > 0.0 && cand_dist < best_dist) {
                 best_dist = cand_dist;
                 best_station_idx = i;
-                best_entry = cand_entry;
-                best_exit = cand_exit;
-                best_dir = cand_dir;
             }
         }
 
         // Phase 2: If no candidate found and load is empty, retry without capacity filter
         if (best_station_idx < 0 && current_load <= 0) {
             for (int i = 0; i < inst->num_stations; i++) {
+                double cand_dist;
                 if (visited[i]) continue;
-                int cand_entry = -1, cand_exit = -1, cand_dir = 0;
-                double cand_dist = 0.0;
-                if (!choose_station_orientation_with_dir(inst, from_loc_id, i,
-                                                         &cand_entry, &cand_exit,
-                                                         &cand_dist, &cand_dir)) {
-                    continue;
-                }
+                cand_dist = (current_anchor_idx < 0)
+                    ? min_dist_from_loc_to_node(inst, boat_start_loc_id, i)
+                    : min_dist_node_pair(inst, current_anchor_idx, i);
                 if (cand_dist > 0.0 && cand_dist < best_dist) {
                     best_dist = cand_dist;
                     best_station_idx = i;
-                    best_entry = cand_entry;
-                    best_exit = cand_exit;
-                    best_dir = cand_dir;
                 }
             }
         }
 
         // Phase 3: If still no station, insert nearest port and reset
         if (best_station_idx < 0) {
-            if (current_node_idx < 0) {
+            if (current_anchor_idx < 0) {
                 printf("[NN] No feasible station from boat start\n");
                 break;
             }
-            int nearest_port = find_nearest_port(inst, inst->nodes[current_node_idx].end_loc_id);
+            int nearest_port = find_nearest_port_from_node_pair(inst, current_anchor_idx);
             if (nearest_port < 0) {
                 printf("[NN] No port available (load=%d)\n", current_load);
                 break;
             }
             int new_loc, new_seg_start;
             if (!insert_port_segment(inst, nearest_port,
-                    inst->nodes[current_node_idx].end_loc_id,
+                    current_loc_id,
                     &tour_nodes, &tour_cap, &tour_len,
                     &segment_starts, &seg_starts_cap,
                     &segment_ends,   &seg_ends_cap,
@@ -135,16 +120,26 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
                 free(visit_station_segment); free(visit_station_direction);
                 return -1;
             }
-            current_node_idx = nearest_port;
+            current_anchor_idx = nearest_port;
+            current_loc_id = new_loc;
             current_load = 0;
             segment_start_idx = new_seg_start;
             continue;
         }
 
-        // Phase 4: Add selected station to tour using orientation selected above.
+        // Phase 4: Emit selected station using the best concrete orientation from the actual current location.
         int station_amount = inst->nodes[best_station_idx].amount;
-        int stat_entry = best_entry;
-        int stat_exit = best_exit;
+        int stat_entry = -1, stat_exit = -1, stat_dir = 0;
+        double stat_added_dist = 0.0;
+
+        if (!choose_station_orientation_with_dir(inst, current_loc_id, best_station_idx,
+                                                 &stat_entry, &stat_exit,
+                                                 &stat_added_dist, &stat_dir)) {
+            free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
+            free(segment_catches); free(segment_dists); free(visit_station_ids);
+            free(visit_station_segment); free(visit_station_direction);
+            return -1;
+        }
 
         if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + ((stat_exit != stat_entry) ? 2 : 1)) ||
             !grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1) ||
@@ -156,31 +151,29 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
             return -1;
         }
 
-        if (best_dist > 0.0) current_segment_dist += best_dist;
+        if (stat_added_dist > 0.0) current_segment_dist += stat_added_dist;
         tour_nodes[tour_len++] = stat_entry;
         if (stat_exit != stat_entry) {
             tour_nodes[tour_len++] = stat_exit;
         }
 
-        // best_dir currently tracked for deterministic orientation bookkeeping (+1/-1).
-        (void)best_dir;
-
         current_load += station_amount;
         visited[best_station_idx] = 1;
         visit_station_ids[visit_station_count] = inst->nodes[best_station_idx].table_id;
         visit_station_segment[visit_station_count] = segment_count;
-        visit_station_direction[visit_station_count] = best_dir;
+        visit_station_direction[visit_station_count] = stat_dir;
         visit_station_count++;
-        current_node_idx = best_station_idx;
+        current_anchor_idx = best_station_idx;
+        current_loc_id = stat_exit;
         remaining_stations--;
 
         // Phase 5: After adding station, if load at capacity and more remain, insert port
         if (current_load >= boat_capacity && remaining_stations > 0) {
-            int nearest_port = find_nearest_port(inst, inst->nodes[current_node_idx].end_loc_id);
+            int nearest_port = find_nearest_port_from_node_pair(inst, current_anchor_idx);
             if (nearest_port >= 0) {
                 int new_loc, new_seg_start;
                 if (!insert_port_segment(inst, nearest_port,
-                        inst->nodes[current_node_idx].end_loc_id,
+                        current_loc_id,
                         &tour_nodes, &tour_cap, &tour_len,
                         &segment_starts, &seg_starts_cap,
                         &segment_ends,   &seg_ends_cap,
@@ -194,7 +187,8 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
                     free(visit_station_segment); free(visit_station_direction);
                     return -1;
                 }
-                current_node_idx = nearest_port;
+                current_anchor_idx = nearest_port;
+                current_loc_id = new_loc;
                 current_load = 0;
                 segment_start_idx = new_seg_start;
             }
@@ -220,12 +214,8 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
     // Calculate total distance including return to boat end
     double total_dist = 0.0;
     for (int i = 0; i < segment_count; i++) total_dist += segment_dists[i];
-    int last_node_idx = (current_node_idx >= 0) ? current_node_idx : -1;
-    if (last_node_idx >= 0) {
-        double d_return = get_distance(inst, inst->nodes[last_node_idx].end_loc_id, boat_end_loc_id);
-        if (d_return > 0.0) total_dist += d_return;
-    } else {
-        double d_return = get_distance(inst, boat_start_loc_id, boat_end_loc_id);
+    {
+        double d_return = get_distance(inst, current_loc_id, boat_end_loc_id);
         if (d_return > 0.0) total_dist += d_return;
     }
 

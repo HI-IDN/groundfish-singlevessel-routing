@@ -73,6 +73,21 @@ static inline double min_dist_node_pair(const nn_instance_t *inst, int a_idx, in
     return best;
 }
 
+static inline int find_nearest_port_from_node_pair(const nn_instance_t *inst, int from_node_idx)
+{
+    double min_dist = 1e100;
+    int nearest = -1;
+    if (!inst || from_node_idx < 0 || from_node_idx >= inst->num_stations + inst->num_ports) return -1;
+    for (int i = inst->num_stations; i < inst->num_stations + inst->num_ports; i++) {
+        double d = min_dist_node_pair(inst, from_node_idx, i);
+        if (d > 0.0 && d < min_dist) {
+            min_dist = d;
+            nearest = i;
+        }
+    }
+    return nearest;
+}
+
 /* ── segmentation helpers ────────────────────────────────────── */
 
 /* Insert a port into the tour, close the current segment, and reset state.
