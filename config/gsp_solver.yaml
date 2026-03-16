@@ -15,7 +15,7 @@ init:
 
   opt:
     # NP-MIP solution mapped to a legal capacity feasible tour
-    time_limit_seconds: 7200             # 2 hours
+    time_limit_seconds: 14400             # 4 hours
 
   nn:
     # Nearest Neighbor - greedy heuristic, no time limit needed
