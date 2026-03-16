@@ -157,7 +157,7 @@ add_custom_target(run_init_ci
     COMMAND gsp --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/init.json --config ${CONFIG_YAML}
     DEPENDS gsp
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Phase 0: CI (Cheapest Insertion) - NOT YET IMPLEMENTED"
+    COMMENT "Phase 0: CI (Cheapest Insertion)"
 )
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)

@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # GSP Survey Route Plotter
 # Visualizes survey routes exported from export_survey_json tool
-# Usage: Rscript plot_survey_route.R <path/to/boat*.json>
+# Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|presolve]
 
 # Load required packages
 required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite")
@@ -22,11 +22,12 @@ cat("=== GSP Survey Route Plotter ===\n\n")
 # Parse command-line arguments
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) == 0) {
-  warning("Usage: Rscript plot_survey_route.R <path/to/boat*.json>\n", call. = FALSE)
-  args <- c("sol/opt/noport.json")  # Default for testing
+  warning("Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|presolve]\n", call. = FALSE)
+  args <- c("sol/opt/noport.json", "final")  # Default for testing
 }
 
 survey_file <- args[1]
+selected_variant <- if (length(args) >= 2) args[2] else "final"
 
 # Check if survey file exists
 if (!file.exists(survey_file)) {
@@ -56,8 +57,28 @@ ensure_segment_list <- function(x) {
   list(x)
 }
 
-survey$solution$tour_segments_location_ids <- ensure_segment_list(survey$solution$tour_segments_location_ids)
-survey$solution$tour_segments_station_ids <- ensure_segment_list(survey$solution$tour_segments_station_ids)
+resolve_solution_block <- function(survey, variant_name) {
+  variant_name <- tolower(variant_name)
+  if (variant_name %in% c("final", "main", "solution")) {
+    return(survey$solution)
+  }
+  if (variant_name %in% c("presolve", "pre")) {
+    if (!is.null(survey$presolve)) {
+      return(survey$presolve)
+    }
+    if (!is.null(survey$solution_variants$before_capacity_fix)) {
+      return(survey$solution_variants$before_capacity_fix)
+    }
+    stop("Requested variant 'presolve' is not available in this JSON.", call. = FALSE)
+  }
+  stop(sprintf("Unknown solution variant: %s", variant_name), call. = FALSE)
+}
+
+solution <- resolve_solution_block(survey, selected_variant)
+solution$tour_segments_location_ids <- ensure_segment_list(solution$tour_segments_location_ids)
+solution$tour_segments_station_ids <- ensure_segment_list(solution$tour_segments_station_ids)
+
+cat(sprintf("Variant: %s\n", selected_variant))
 
 # Extract metadata
 boat_id <- survey$metadata$boat_id
@@ -65,13 +86,13 @@ boat_name <- survey$metadata$boat_name
 home_port <- survey$metadata$home_port
 capacity <- survey$problem$capacity
 num_stations <- survey$problem$num_stations
-segment_count <- survey$solution$segment_count
-total_distance <- survey$solution$total_distance_nm
-feasible <- survey$solution$feasible
-segment_catch <- survey$solution$segment_catch_amount
-segment_distance <- survey$solution$segment_distance_nm
-segment_length <- survey$solution$tour_length
-segment_station_ids <- survey$solution$tour_segments_station_ids
+segment_count <- solution$segment_count
+total_distance <- solution$total_distance_nm
+feasible <- solution$feasible
+segment_catch <- solution$segment_catch_amount
+segment_distance <- solution$segment_distance_nm
+segment_length <- solution$tour_length
+segment_station_ids <- solution$tour_segments_station_ids
 
 cat(sprintf("Boat: %s (ID: %d)\n", boat_name, boat_id))
 cat(sprintf("Home port: %.6f°, %.6f°\n", home_port$lat, home_port$lon))
@@ -134,8 +155,8 @@ locations <- read_db_table(db_path, "SELECT id, lat, lon FROM locations")
 
 # Build lookup sets from JSON annotations
 boat_loc_ids     <- unlist(survey$metadata$boat_location_ids)
-dock_loc_ids     <- unlist(survey$solution$dock_location_ids)
-waypoint_loc_ids <- unlist(survey$solution$unique_waypoint_location_ids)
+dock_loc_ids     <- unlist(solution$dock_location_ids)
+waypoint_loc_ids <- unlist(solution$unique_waypoint_location_ids)
 
 classify_point <- function(loc_id) {
   if (loc_id %in% boat_loc_ids)     return("BOAT")
@@ -146,7 +167,7 @@ classify_point <- function(loc_id) {
 
 # Build route path from tour_segments_location_ids
 cat("Building route path from segments...\n")
-tour_segments <- survey$solution$tour_segments_location_ids
+tour_segments <- solution$tour_segments_location_ids
 route_path <- tibble()
 segment_id <- 1
 
@@ -264,7 +285,7 @@ p <- p +
   coord_fixed_for_lat(route_path$lat, fallback_lat = 65.0) +
   labs(
     title = sprintf("Survey Route: %s", boat_name),
-    subtitle = subtitle_text,
+    subtitle = sprintf("%s | %s", tools::toTitleCase(gsub("_", " ", selected_variant)), subtitle_text),
     x = NULL,
     y = NULL
   )

@@ -295,6 +295,12 @@ static int init_solution_has_valid_boundaries(const nn_instance_t *inst, const n
     return 1;
 }
 
+static int init_solution_is_capacity_feasible(const nn_solution_t *sol, double capacity)
+{
+    if (!sol) return 0;
+    return segments_within_capacity(sol->segment_catches, sol->segment_count, capacity);
+}
+
 static int parse_waypoint_path_json_local(const char *json_text, int **out_ids) {
     int *ids = NULL;
     int count = 0;
@@ -406,7 +412,50 @@ static int waypoint_cache_insert_pair(sqlite3_stmt *stmt, int from_loc_id, int t
     return 1;
 }
 
-static int waypoint_cache_preload(sqlite3 *db, const nn_instance_t *inst, const nn_solution_t *sol,
+static int waypoint_cache_collect_solution_legs(sqlite3_stmt *insert_stmt,
+                                                const nn_solution_t *sol,
+                                                int boat_start_loc_id,
+                                                int boat_end_loc_id,
+                                                int *preload_leg_pairs) {
+    if (!insert_stmt || !sol || !preload_leg_pairs) return 0;
+
+    for (int s = 0; s < sol->segment_count; s++) {
+        int start = sol->segment_starts[s];
+        int end = sol->segment_ends[s];
+        int base_cap = (end - start + 1) + 2;
+        int *base = (int*)malloc((size_t)base_cap * sizeof(int));
+        int base_n = 0;
+
+        if (!base) return 0;
+
+        base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
+        for (int i = start; i <= end; i++) {
+            base[base_n++] = sol->tour[i];
+        }
+        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
+            base[base_n++] = boat_end_loc_id;
+        }
+
+        for (int i = 0; i < base_n - 1; i++) {
+            int from_loc = base[i];
+            int to_loc = base[i + 1];
+            if (!waypoint_cache_insert_pair(insert_stmt, from_loc, to_loc) ||
+                !waypoint_cache_insert_pair(insert_stmt, to_loc, from_loc)) {
+                free(base);
+                return 0;
+            }
+        }
+
+        *preload_leg_pairs += (base_n > 0) ? (base_n - 1) : 0;
+        free(base);
+    }
+
+    return 1;
+}
+
+static int waypoint_cache_preload(sqlite3 *db, const nn_instance_t *inst,
+                                  const nn_solution_t *sol,
+                                  const nn_solution_t *extra_sol,
                                   int boat_start_loc_id, int boat_end_loc_id,
                                   waypoint_cache_t *cache) {
     sqlite3_stmt *insert_stmt = NULL;
@@ -432,39 +481,19 @@ static int waypoint_cache_preload(sqlite3 *db, const nn_instance_t *inst, const 
         -1, &insert_stmt, NULL);
     if (rc != SQLITE_OK) goto cleanup;
 
-    for (int s = 0; s < sol->segment_count; s++) {
-        int start = sol->segment_starts[s];
-        int end = sol->segment_ends[s];
-        int base_cap = (end - start + 1) + 2;
-        int *base = (int*)malloc((size_t)base_cap * sizeof(int));
-        int base_n = 0;
-
-        if (!base) {
+    if (!waypoint_cache_collect_solution_legs(insert_stmt, sol,
+                                              boat_start_loc_id, boat_end_loc_id,
+                                              &cache->preload_leg_pairs)) {
+        rc = SQLITE_NOMEM;
+        goto cleanup;
+    }
+    if (extra_sol && extra_sol->segment_count > 0) {
+        if (!waypoint_cache_collect_solution_legs(insert_stmt, extra_sol,
+                                                  boat_start_loc_id, boat_end_loc_id,
+                                                  &cache->preload_leg_pairs)) {
             rc = SQLITE_NOMEM;
             goto cleanup;
         }
-
-        base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
-        for (int i = start; i <= end; i++) {
-            base[base_n++] = sol->tour[i];
-        }
-        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
-            base[base_n++] = boat_end_loc_id;
-        }
-
-        for (int i = 0; i < base_n - 1; i++) {
-            int from_loc = base[i];
-            int to_loc = base[i + 1];
-            if (!waypoint_cache_insert_pair(insert_stmt, from_loc, to_loc) ||
-                !waypoint_cache_insert_pair(insert_stmt, to_loc, from_loc)) {
-                free(base);
-                rc = SQLITE_ERROR;
-                goto cleanup;
-            }
-        }
-
-        cache->preload_leg_pairs += (base_n > 0) ? (base_n - 1) : 0;
-        free(base);
     }
 
     rc = sqlite3_prepare_v2(db,
@@ -538,82 +567,31 @@ static const waypoint_cache_entry_t *lookup_waypoint_path_local(waypoint_cache_t
     return NULL;
 }
 
-/* Write NN solution to JSON in survey format */
-static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
-                       const nn_solution_t *sol, int boat_id,
-                       const char *boat_name,
-                       const char *strategy_name,
-                       const char *method_name,
-                       int boat_start_loc_id, int boat_end_loc_id,
-                       double boat_capacity,
-                       double target_capacity,
-                       int target_catch_slack_kg,
-                       double boat_start_lat, double boat_start_lon,
-                       int is_feasible,
-                       struct timespec mode_start_time,
-                       double preprocessing_seconds,
-                       double solve_runtime_seconds,
-                       double check_runtime_seconds,
-                       double *output_runtime_seconds) {
-    waypoint_cache_t cache;
-    unsigned char *seen_waypoint_location_ids = NULL;
-    struct timespec t_output_start, t_output_preload_end, t_output_expand_end, t_output_end;
-    int leg_query_count = 0;
-    int total_waypoint_ids = 0;
-
-    FILE *fp = fopen(output_path, "w");
-    if (!fp) {
-        perror("Cannot open output file");
-        if (output_runtime_seconds) *output_runtime_seconds = 0.0;
-        return;
-    }
-    memset(&cache, 0, sizeof(cache));
-    clock_gettime(CLOCK_MONOTONIC, &t_output_start);
-    if (!waypoint_cache_preload(db, inst, sol, boat_start_loc_id, boat_end_loc_id, &cache)) {
-        fprintf(stderr, "ERROR: Failed to preload waypoint paths: %s\n", sqlite3_errmsg(db));
-        fclose(fp);
-        if (output_runtime_seconds) *output_runtime_seconds = 0.0;
-        return;
-    }
-    seen_waypoint_location_ids = (unsigned char*)calloc((size_t)inst->max_loc_id, sizeof(unsigned char));
-    if (!seen_waypoint_location_ids) {
-        fprintf(stderr, "ERROR: Failed to allocate waypoint seen-set\n");
-        fclose(fp);
-        waypoint_cache_destroy(&cache);
-        if (output_runtime_seconds) *output_runtime_seconds = 0.0;
-        return;
-    }
-
-    clock_gettime(CLOCK_MONOTONIC, &t_output_preload_end);
-    printf("\n[OUTPUT] Writing JSON and expanding waypoint paths...\n");
-    printf("[OUTPUT] Preloaded %d route legs into %d cached path rows in %.3f s\n",
-           cache.preload_leg_pairs, cache.count,
-           elapsed_seconds(t_output_start, t_output_preload_end));
-
-    fprintf(fp, "{\n");
-    fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"init_nn_1.0\",\n");
-    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"init_%s\",\n", strategy_name ? strategy_name : "unknown");
-    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
-    fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
-    fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
-    fprintf(fp, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
-    fprintf(fp, "    \"boat_location_ids\": [%d, %d]\n", boat_start_loc_id, boat_end_loc_id);
-    fprintf(fp, "  },\n");
-
-    fprintf(fp, "  \"problem\": {\n");
-    fprintf(fp, "    \"num_nodes\": %d,\n", sol->tour_length);
-    fprintf(fp, "    \"num_stations\": %d,\n", inst->num_stations);
-    fprintf(fp, "    \"capacity\": %.0f,\n", boat_capacity);
-    fprintf(fp, "    \"target_capacity\": %.0f,\n", target_capacity);
-    fprintf(fp, "    \"target_catch_slack_kg\": %d\n", target_catch_slack_kg);
-    fprintf(fp, "  },\n");
-
+static void write_solution_section(FILE *fp, const char *label,
+                                   const nn_instance_t *inst, const nn_solution_t *sol,
+                                   int boat_start_loc_id, int boat_end_loc_id,
+                                   int is_feasible,
+                                   waypoint_cache_t *cache,
+                                   int *leg_query_count,
+                                   int *total_waypoint_ids,
+                                   const char *variant_name)
+{
     int *unique_waypoint_location_ids = NULL;
     int uniq_wp_n = 0, uniq_wp_cap = 0;
     int *dock_location_ids = NULL;
     int dock_n = 0, dock_cap = 0;
+    unsigned char *seen_waypoint_location_ids = NULL;
+
+    if (!fp || !inst || !sol || !cache) return;
+
+    seen_waypoint_location_ids = (unsigned char*)calloc((size_t)inst->max_loc_id, sizeof(unsigned char));
+    if (!seen_waypoint_location_ids) {
+        fprintf(stderr, "ERROR: Failed to allocate waypoint seen-set\n");
+        return;
+    }
+
+    fprintf(fp, "  \"%s\": {\n", label);
+
     (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_start_loc_id);
     for (int i = 0; i < sol->tour_length; i++) {
         int loc_id = sol->tour[i];
@@ -630,34 +608,25 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id);
     }
 
-    fprintf(fp, "  \"solution\": {\n");
-
-    /* Output segments: tour_segments_location_ids includes all visited locations with waypoint expansion */
+    fprintf(fp, "    \"variant\": \"%s\",\n", variant_name ? variant_name : label);
     fprintf(fp, "    \"tour_segments_location_ids\": [\n");
     for (int s = 0; s < sol->segment_count; s++) {
         fprintf(fp, "      [");
         int start = sol->segment_starts[s];
         int end = sol->segment_ends[s];
-
         int base_cap = (end - start + 1) + 2;
         int *base = (int*)malloc((size_t)base_cap * sizeof(int));
         int base_n = 0;
         if (!base) {
-            fclose(fp);
-            waypoint_cache_destroy(&cache);
             free(seen_waypoint_location_ids);
             free(unique_waypoint_location_ids);
             free(dock_location_ids);
-            if (output_runtime_seconds) *output_runtime_seconds = 0.0;
+            fprintf(stderr, "ERROR: Failed to allocate temporary segment buffer\n");
             return;
         }
 
-        /* Start boundary: boat start for first segment, prior segment end for others. */
         base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
-        for (int i = start; i <= end; i++) {
-            base[base_n++] = sol->tour[i];
-        }
-        /* End boundary: boat end only for final segment; intermediate segments already end at a port. */
+        for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
         if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
             base[base_n++] = boat_end_loc_id;
         }
@@ -669,10 +638,10 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                 int is_reverse = 0;
                 int from_loc = base[i];
                 int to_loc = base[i + 1];
-                entry = lookup_waypoint_path_local(&cache, from_loc, to_loc, &is_reverse);
-                leg_query_count++;
+                entry = lookup_waypoint_path_local(cache, from_loc, to_loc, &is_reverse);
+                if (leg_query_count) (*leg_query_count)++;
                 if (entry && entry->waypoint_count > 0) {
-                    total_waypoint_ids += entry->waypoint_count;
+                    if (total_waypoint_ids) (*total_waypoint_ids) += entry->waypoint_count;
                     if (is_reverse) {
                         for (int k = entry->waypoint_count - 1; k >= 0; k--) {
                             int waypoint_id = entry->waypoint_ids[k];
@@ -703,10 +672,6 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
     }
     fprintf(fp, "    ],\n");
-    clock_gettime(CLOCK_MONOTONIC, &t_output_expand_end);
-    printf("[OUTPUT] Waypoint expansion: %d legs, %d waypoint IDs, direct=%d reverse=%d miss=%d, %.3f s\n",
-           leg_query_count, total_waypoint_ids, cache.direct_hits, cache.reverse_hits, cache.misses,
-           elapsed_seconds(t_output_preload_end, t_output_expand_end));
 
     fprintf(fp, "    \"dock_location_ids\": [");
     for (int i = 0; i < dock_n; i++) {
@@ -722,17 +687,18 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     }
     fprintf(fp, "],\n");
 
-    /* Output segments: station IDs only (never ports/boats) */
     fprintf(fp, "    \"tour_segments_station_ids\": [\n");
     for (int s = 0; s < sol->segment_count; s++) {
         fprintf(fp, "      [");
-        int first = 1;
-        for (int i = 0; i < sol->visit_station_count; i++) {
-            if (sol->visit_station_segment[i] == s) {
-                if (!first) fprintf(fp, ", ");
-                fprintf(fp, "%d", sol->visit_station_ids[i] *
-                                  ((sol->visit_station_direction && sol->visit_station_direction[i] < 0) ? -1 : 1));
-                first = 0;
+        {
+            int first = 1;
+            for (int i = 0; i < sol->visit_station_count; i++) {
+                if (sol->visit_station_segment[i] == s) {
+                    if (!first) fprintf(fp, ", ");
+                    fprintf(fp, "%d", sol->visit_station_ids[i] *
+                                      ((sol->visit_station_direction && sol->visit_station_direction[i] < 0) ? -1 : 1));
+                    first = 0;
+                }
             }
         }
         fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
@@ -769,7 +735,96 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
 
     fprintf(fp, "    \"total_distance_nm\": %.2f,\n", sol->total_distance);
     fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
+    fprintf(fp, "  }");
+
+    free(seen_waypoint_location_ids);
+    free(unique_waypoint_location_ids);
+    free(dock_location_ids);
+}
+
+/* Write NN solution to JSON in survey format */
+static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
+                       const nn_solution_t *sol, int boat_id,
+                       const nn_solution_t *pre_capacity_sol,
+                       const char *boat_name,
+                       const char *strategy_name,
+                       const char *method_name,
+                       int boat_start_loc_id, int boat_end_loc_id,
+                       double boat_capacity,
+                       double target_capacity,
+                       int target_catch_slack_kg,
+                       double boat_start_lat, double boat_start_lon,
+                       int is_feasible,
+                       struct timespec mode_start_time,
+                       double preprocessing_seconds,
+                       double solve_runtime_seconds,
+                       double check_runtime_seconds,
+                       double *output_runtime_seconds) {
+    waypoint_cache_t cache;
+    struct timespec t_output_start, t_output_preload_end, t_output_expand_end, t_output_end;
+    int leg_query_count = 0;
+    int total_waypoint_ids = 0;
+
+    FILE *fp = fopen(output_path, "w");
+    if (!fp) {
+        perror("Cannot open output file");
+        if (output_runtime_seconds) *output_runtime_seconds = 0.0;
+        return;
+    }
+    memset(&cache, 0, sizeof(cache));
+    clock_gettime(CLOCK_MONOTONIC, &t_output_start);
+    if (!waypoint_cache_preload(db, inst, sol, pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, &cache)) {
+        fprintf(stderr, "ERROR: Failed to preload waypoint paths: %s\n", sqlite3_errmsg(db));
+        fclose(fp);
+        if (output_runtime_seconds) *output_runtime_seconds = 0.0;
+        return;
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &t_output_preload_end);
+    printf("\n[OUTPUT] Writing JSON and expanding waypoint paths...\n");
+    printf("[OUTPUT] Preloaded %d route legs into %d cached path rows in %.3f s\n",
+           cache.preload_leg_pairs, cache.count,
+           elapsed_seconds(t_output_start, t_output_preload_end));
+
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"metadata\": {\n");
+    fprintf(fp, "    \"solver_version\": \"init_nn_1.0\",\n");
+    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
+    fprintf(fp, "    \"mode\": \"init_%s\",\n", strategy_name ? strategy_name : "unknown");
+    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
+    fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
+    fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
+    fprintf(fp, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
+    fprintf(fp, "    \"boat_location_ids\": [%d, %d]\n", boat_start_loc_id, boat_end_loc_id);
     fprintf(fp, "  },\n");
+
+    fprintf(fp, "  \"problem\": {\n");
+    fprintf(fp, "    \"num_nodes\": %d,\n", sol->tour_length);
+    fprintf(fp, "    \"num_stations\": %d,\n", inst->num_stations);
+    fprintf(fp, "    \"capacity\": %.0f,\n", boat_capacity);
+    fprintf(fp, "    \"target_capacity\": %.0f,\n", target_capacity);
+    fprintf(fp, "    \"target_catch_slack_kg\": %d\n", target_catch_slack_kg);
+    fprintf(fp, "  },\n");
+    write_solution_section(fp, "solution", inst, sol, boat_start_loc_id, boat_end_loc_id,
+                           is_feasible, &cache, &leg_query_count, &total_waypoint_ids,
+                           "final");
+    fprintf(fp, ",\n");
+
+    if (pre_capacity_sol && strcmp(strategy_name ? strategy_name : "", "ci") == 0) {
+        int before_feasible = init_solution_is_capacity_feasible(pre_capacity_sol, boat_capacity) &&
+                              stations_are_unique_and_complete(pre_capacity_sol->visit_station_ids,
+                                                               pre_capacity_sol->visit_station_count,
+                                                               inst->num_stations);
+        write_solution_section(fp, "presolve", inst, pre_capacity_sol,
+                               boat_start_loc_id, boat_end_loc_id,
+                               before_feasible, &cache, &leg_query_count, &total_waypoint_ids,
+                               "presolve");
+        fprintf(fp, ",\n");
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t_output_expand_end);
+    printf("[OUTPUT] Waypoint expansion: %d legs, %d waypoint IDs, direct=%d reverse=%d miss=%d, %.3f s\n",
+           leg_query_count, total_waypoint_ids, cache.direct_hits, cache.reverse_hits, cache.misses,
+           elapsed_seconds(t_output_preload_end, t_output_expand_end));
 
     {
         struct timespec t_stats_now;
@@ -797,9 +852,6 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     clock_gettime(CLOCK_MONOTONIC, &t_output_end);
     fclose(fp);
     waypoint_cache_destroy(&cache);
-    free(seen_waypoint_location_ids);
-    free(unique_waypoint_location_ids);
-    free(dock_location_ids);
     if (output_runtime_seconds) *output_runtime_seconds = elapsed_seconds(t_output_start, t_output_end);
     printf("[OUTPUT] Solution written to %s (total output %.3f s)\n",
            output_path, elapsed_seconds(t_output_start, t_output_end));
@@ -985,6 +1037,7 @@ int mode_init(int argc, char **argv) {
 
     /* Solve selected init heuristic */
     nn_solution_t sol = {0};
+    nn_solution_t pre_capacity_sol = {0};
     const char *method_name = NULL;
     struct timespec t_solve_start;
     clock_gettime(CLOCK_MONOTONIC, &t_solve_start);
@@ -1004,7 +1057,7 @@ int mode_init(int argc, char **argv) {
         }
     } else {
         method_name = "cheapest_insertion";
-        if (ci_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity) != 0) {
+        if (ci_solve(&inst, &sol, &pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity) != 0) {
             fprintf(stderr, "ERROR: Failed to solve CI\n");
             sqlite3_close(db);
             return 1;
@@ -1036,7 +1089,9 @@ int mode_init(int argc, char **argv) {
 
     {
         double output_runtime_seconds = 0.0;
-        write_json(db, output, &inst, &sol, boat_id, boat_name, strategy, method_name,
+        write_json(db, output, &inst, &sol, boat_id,
+                   (strcmp(strategy, "ci") == 0) ? &pre_capacity_sol : NULL,
+                   boat_name, strategy, method_name,
                    boat_start_loc_id, boat_end_loc_id, boat_capacity, target_capacity, target_catch_slack_kg,
                    boat_start_lat, boat_start_lon, is_feasible,
                    t_mode_start,
@@ -1058,6 +1113,14 @@ int mode_init(int argc, char **argv) {
     free(sol.visit_station_ids);
     free(sol.visit_station_segment);
     free(sol.visit_station_direction);
+    free(pre_capacity_sol.tour);
+    free(pre_capacity_sol.segment_starts);
+    free(pre_capacity_sol.segment_ends);
+    free(pre_capacity_sol.segment_catches);
+    free(pre_capacity_sol.segment_dists);
+    free(pre_capacity_sol.visit_station_ids);
+    free(pre_capacity_sol.visit_station_segment);
+    free(pre_capacity_sol.visit_station_direction);
     free(inst.nodes);
     for (int i = 0; i < inst.max_loc_id; i++) {
         free(inst.distances[i]);
