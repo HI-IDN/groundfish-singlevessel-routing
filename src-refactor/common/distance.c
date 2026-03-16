@@ -170,7 +170,7 @@ typedef struct
     double* LatLonRad[42];
 } PARAMS;
 
-/* Calculate great-circle distance */
+/* Calculate great-circle distance in nautical miles, matching the original src/ code. */
 static double arc_distance(double lat1, double lon1, double lat2, double lon2)
 {
     double dLat = lat2 - lat1;
@@ -178,7 +178,7 @@ static double arc_distance(double lat1, double lon1, double lat2, double lon2)
     double a = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLon / 2) *
         sin(dLon / 2);
     double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return 6371.0 * c; /* Earth radius in km */
+    return 3437.905 * c; /* Earth radius in nautical miles, as in src/main.c */
 }
 
 /* GEOS context and coastline geometry (initialized once) */
