@@ -62,3 +62,4 @@ sol.old/
 *.swp
 Thumbs.db
 .DS_Store
+*.png
