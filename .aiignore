@@ -1,0 +1,64 @@
+# Keep generated/build artifacts out of AI context.
+
+# VCS / IDE
+.git/
+.idea/
+.vscode/
+
+# Local caches
+.mplconfig/
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# CMake / build trees
+build/
+build-*/
+build-msvc/
+build-stage/
+build-check/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Generated binaries and libraries
+bin/
+lib/
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+
+# Logs
+log/
+*.log
+
+# Generated databases and large derived data
+dat/gsp_data.db
+dat/*.sqlite
+sol/*.sqlite
+
+# Generated solution outputs
+sol/nn/
+sol/ge/
+sol/ci/
+sol/opt/
+sol/survey/
+sol.old/
+
+# Misc generated files
+*.tmp
+*.bak
+*~
+*.swp
+Thumbs.db
+.DS_Store
