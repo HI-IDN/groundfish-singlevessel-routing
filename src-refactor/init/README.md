@@ -18,6 +18,7 @@ reaches capacity.
 ```
 
 The boat ID is read from `config/gsp_solver.yaml` (`boat.id`).
+The effective init capacity is `boat.capacity - init.target_catch_slack_kg`.
 
 ---
 
@@ -109,7 +110,9 @@ All strategies produce the same JSON schema (example from `sol/nn/init.json`):
   "problem": {
     "num_nodes": 1171,
     "num_stations": 580,
-    "capacity": 45000
+    "capacity": 45000,
+    "target_capacity": 44000,
+    "target_catch_slack_kg": 1000
   },
   "solution": {
     "tour_segments_location_ids": [
@@ -120,7 +123,7 @@ All strategies produce the same JSON schema (example from `sol/nn/init.json`):
     "dock_location_ids": [2, 464, 1176, 75, 197, ...],
     "unique_waypoint_location_ids": [1204, 1206, 1203, ...],
     "tour_segments_station_ids": [
-      [500, 501, 499, ...],
+      [500, -501, 499, ...],
       [118, 119, 120, ...],
       ...
     ],
@@ -164,7 +167,11 @@ All strategies produce the same JSON schema (example from `sol/nn/init.json`):
 
 A solution is marked `feasible: true` if:
 - Every station appears exactly once across all `tour_segments_station_ids`
-- Every `segment_catch_amount[i] <= capacity`
+- Every `segment_catch_amount[i] <= target_capacity`
+
+Additional semantics:
+- `target_capacity = capacity - target_catch_slack_kg`
+- Negative values in `tour_segments_station_ids` mean the station is traversed in reverse, from end to start
 
 ---
 

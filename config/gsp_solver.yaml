@@ -7,6 +7,7 @@ boat:
 
 # Phase 0: Initialization Strategies
 init:
+  target_catch_slack_kg: 1000            # Reserve slack so target capacity stays below raw boat capacity
   strategies:
     - opt                                # OPT: Optimal NP-MIP (expensive)
     - nn                                 # NN: Nearest Neighbor (fast)

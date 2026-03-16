@@ -33,16 +33,17 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
     double *segment_dists = (double*)malloc((size_t)seg_dists_cap * sizeof(double));
     int segment_count = 0;
 
-    int visit_ids_cap = 256, visit_seg_cap = 256;
+    int visit_ids_cap = 256, visit_seg_cap = 256, visit_dir_cap = 256;
     int *visit_station_ids = (int*)malloc((size_t)visit_ids_cap * sizeof(int));
     int *visit_station_segment = (int*)malloc((size_t)visit_seg_cap * sizeof(int));
+    int *visit_station_direction = (int*)malloc((size_t)visit_seg_cap * sizeof(int));
     int visit_station_count = 0;
 
     if (!visited || !tour_nodes || !segment_starts || !segment_ends || !segment_catches ||
-        !segment_dists || !visit_station_ids || !visit_station_segment) {
+        !segment_dists || !visit_station_ids || !visit_station_segment || !visit_station_direction) {
         free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
         free(segment_catches); free(segment_dists); free(visit_station_ids);
-        free(visit_station_segment);
+        free(visit_station_segment); free(visit_station_direction);
         return -1;
     }
 
@@ -131,7 +132,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
                     &new_loc, &new_seg_start)) {
                 free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
                 free(segment_catches); free(segment_dists); free(visit_station_ids);
-                free(visit_station_segment);
+                free(visit_station_segment); free(visit_station_direction);
                 return -1;
             }
             current_node_idx = nearest_port;
@@ -147,10 +148,11 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
 
         if (!grow_int_array(&tour_nodes, &tour_cap, tour_len + ((stat_exit != stat_entry) ? 2 : 1)) ||
             !grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1) ||
-            !grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1)) {
+            !grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1) ||
+            !grow_int_array(&visit_station_direction, &visit_dir_cap, visit_station_count + 1)) {
             free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
             free(segment_catches); free(segment_dists); free(visit_station_ids);
-            free(visit_station_segment);
+            free(visit_station_segment); free(visit_station_direction);
             return -1;
         }
 
@@ -167,6 +169,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
         visited[best_station_idx] = 1;
         visit_station_ids[visit_station_count] = inst->nodes[best_station_idx].table_id;
         visit_station_segment[visit_station_count] = segment_count;
+        visit_station_direction[visit_station_count] = best_dir;
         visit_station_count++;
         current_node_idx = best_station_idx;
         remaining_stations--;
@@ -188,7 +191,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
                         &new_loc, &new_seg_start)) {
                     free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
                     free(segment_catches); free(segment_dists); free(visit_station_ids);
-                    free(visit_station_segment);
+                    free(visit_station_segment); free(visit_station_direction);
                     return -1;
                 }
                 current_node_idx = nearest_port;
@@ -209,7 +212,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
                 tour_len, current_load, current_segment_dist)) {
             free(visited); free(tour_nodes); free(segment_starts); free(segment_ends);
             free(segment_catches); free(segment_dists); free(visit_station_ids);
-            free(visit_station_segment);
+            free(visit_station_segment); free(visit_station_direction);
             return -1;
         }
     }
@@ -231,6 +234,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
     sol->visit_station_ids = visit_station_ids;
     sol->visit_station_count = visit_station_count;
     sol->visit_station_segment = visit_station_segment;
+    sol->visit_station_direction = visit_station_direction;
     sol->segment_count = segment_count;
     sol->segment_starts = segment_starts;
     sol->segment_ends = segment_ends;
@@ -241,7 +245,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
     sol->total_catch = 0;
     for (int i = 0; i < segment_count; i++) sol->total_catch += segment_catches[i];
 
-    printf("[NN] Done: segments=%d stations=%d total_dist=%.2f total_catch=%d\n",
+    printf("[NN] End: segments=%d stations=%d total_dist=%.2f total_catch=%d\n",
            sol->segment_count, sol->visit_station_count, sol->total_distance, sol->total_catch);
 
     free(visited);

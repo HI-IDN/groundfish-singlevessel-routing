@@ -28,6 +28,7 @@ typedef struct {
     int *visit_station_ids;
     int visit_station_count;
     int *visit_station_segment;
+    int *visit_station_direction;
 
     int segment_count;
     int *segment_starts;
