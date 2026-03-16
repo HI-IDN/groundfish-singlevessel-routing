@@ -29,6 +29,28 @@ int stations_have_no_duplicates(const int *station_ids, int n_station_ids)
     return ok;
 }
 
+int stations_are_unique_and_complete(const int *station_ids, int n_station_ids, int expected_station_count)
+{
+    if (expected_station_count < 0) return 0;
+    if (expected_station_count == 0) return n_station_ids == 0;
+    if (!station_ids || n_station_ids != expected_station_count) return 0;
+
+    unsigned char *seen = (unsigned char*)calloc((size_t)(expected_station_count + 1), sizeof(unsigned char));
+    if (!seen) return 0;
+
+    for (int i = 0; i < n_station_ids; i++) {
+        int id = station_ids[i];
+        if (id <= 0 || id > expected_station_count || seen[id]) {
+            free(seen);
+            return 0;
+        }
+        seen[id] = 1;
+    }
+
+    free(seen);
+    return 1;
+}
+
 int segments_within_capacity(const int *segment_catches, int n_segments, double capacity)
 {
     if (!segment_catches || n_segments <= 0) return 1;
