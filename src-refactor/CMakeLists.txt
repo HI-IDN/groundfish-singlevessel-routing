@@ -172,7 +172,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     )
 
     add_custom_target(run_noport_opt
-        COMMAND ${CMAKE_COMMAND} -E env PATH=${GUROBI_BIN_DIR}:$ENV{PATH} $<TARGET_FILE:gsp_noport_opt> --database ${DATABASE} --config ${CONFIG_YAML} --output ${SOL_OPT_DIR}/noport.json
+        COMMAND $<TARGET_FILE:gsp_noport_opt> --database ${DATABASE} --config ${CONFIG_YAML} --output ${SOL_OPT_DIR}/noport.json
         DEPENDS gsp_noport_opt
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Preprocessing: no-port optimal station ordering"

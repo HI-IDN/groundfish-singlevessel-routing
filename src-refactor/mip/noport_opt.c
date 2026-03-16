@@ -436,6 +436,7 @@ static int write_noport_json(sqlite3 *db,
 
     if (!stations_have_no_duplicates(positive_station_ids, solution->order_length)) is_feasible = 0;
     if (solution->order_length != app->n_stations) is_feasible = 0;
+    if (!segments_within_capacity(&total_catch, 1, app->boat.capacity)) is_feasible = 0;
 
     fprintf(fp, "{\n");
     fprintf(fp, "  \"metadata\": {\n");
@@ -590,7 +591,7 @@ int main(int argc, char **argv) {
 
     mip_params.time_limit_seconds = time_limit_seconds;
     mip_params.thread_count = 0;
-    mip_params.verbose = 0;
+    mip_params.verbose = 1;
     mip_params.mip_gap = 0.0;
 
     preprocess_end = clock();

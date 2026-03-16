@@ -23,7 +23,7 @@ cat("=== GSP Survey Route Plotter ===\n\n")
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) == 0) {
   warning("Usage: Rscript plot_survey_route.R <path/to/boat*.json>\n", call. = FALSE)
-  args <- c("sol/survey/boat1.json")  # Default for testing
+  args <- c("sol/opt/noport.json")  # Default for testing
 }
 
 survey_file <- args[1]
@@ -42,6 +42,22 @@ survey <- tryCatch({
 }, error = function(e) {
   stop(sprintf("Failed to parse JSON: %s", e$message), call. = FALSE)
 })
+
+ensure_segment_list <- function(x) {
+  if (is.null(x)) {
+    return(list())
+  }
+  if (is.list(x) && !is.data.frame(x)) {
+    return(x)
+  }
+  if (is.data.frame(x)) {
+    return(split(x, seq_len(nrow(x))))
+  }
+  list(x)
+}
+
+survey$solution$tour_segments_location_ids <- ensure_segment_list(survey$solution$tour_segments_location_ids)
+survey$solution$tour_segments_station_ids <- ensure_segment_list(survey$solution$tour_segments_station_ids)
 
 # Extract metadata
 boat_id <- survey$metadata$boat_id

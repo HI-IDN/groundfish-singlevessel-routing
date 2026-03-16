@@ -15,6 +15,32 @@ typedef struct {
     int numvars;
 } callback_data_t;
 
+static const char *gurobi_status_name(int status) {
+    switch (status) {
+        case GRB_OPTIMAL: return "OPTIMAL";
+        case GRB_SUBOPTIMAL: return "SUBOPTIMAL";
+        case GRB_TIME_LIMIT: return "TIME_LIMIT";
+        case GRB_INTERRUPTED: return "INTERRUPTED";
+        case GRB_NODE_LIMIT: return "NODE_LIMIT";
+        case GRB_ITERATION_LIMIT: return "ITERATION_LIMIT";
+        case GRB_WORK_LIMIT: return "WORK_LIMIT";
+        case GRB_INFEASIBLE: return "INFEASIBLE";
+        case GRB_INF_OR_UNBD: return "INF_OR_UNBD";
+        case GRB_UNBOUNDED: return "UNBOUNDED";
+        default: return "OTHER";
+    }
+}
+
+static int status_allows_incumbent(int status) {
+    return status == GRB_OPTIMAL ||
+           status == GRB_SUBOPTIMAL ||
+           status == GRB_TIME_LIMIT ||
+           status == GRB_INTERRUPTED ||
+           status == GRB_NODE_LIMIT ||
+           status == GRB_ITERATION_LIMIT ||
+           status == GRB_WORK_LIMIT;
+}
+
 static void *xmalloc_local(size_t nbytes) {
     void *ptr = malloc(nbytes);
     if (!ptr) {
@@ -228,6 +254,10 @@ static int solve_tsp_distance(GRBenv *env,
     int error = 0;
     int *ind = NULL;
     double *val = NULL;
+    int solcount = 0;
+    int status = 0;
+    double runtime = 0.0;
+    double gap = 0.0;
 
     error = GRBnewmodel(env, &model, "noport", 0, NULL, NULL, NULL, NULL, NULL);
     if (error) goto quit;
@@ -299,26 +329,26 @@ static int solve_tsp_distance(GRBenv *env,
         if (error) goto quit;
     }
 
-    if (out_status) GRBgetintattr(model, GRB_INT_ATTR_STATUS, out_status);
-    if (out_runtime) GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME, out_runtime);
-    if (out_gap) {
-        double gap = 0.0;
-        if (GRBgetdblattr(model, GRB_DBL_ATTR_MIPGAP, &gap) == 0) *out_gap = gap;
-        else *out_gap = 0.0;
+    GRBgetintattr(model, GRB_INT_ATTR_STATUS, &status);
+    GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount);
+    GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME, &runtime);
+    if (GRBgetdblattr(model, GRB_DBL_ATTR_MIPGAP, &gap) != 0) gap = 0.0;
+
+    if (out_status) *out_status = status;
+    if (out_runtime) *out_runtime = runtime;
+    if (out_gap) *out_gap = gap;
+
+    if (params && params->verbose) {
+        fprintf(stderr,
+                "No-port TSP status=%s(%d) solcount=%d runtime=%.2f s gap=%.6f\n",
+                gurobi_status_name(status), status, solcount, runtime, gap);
     }
 
-    if (out_status && (*out_status == GRB_OPTIMAL || *out_status == GRB_TIME_LIMIT || *out_status == GRB_SUBOPTIMAL)) {
+    if (status_allows_incumbent(status) && solcount > 0) {
         error = GRBgetdblattr(model, GRB_DBL_ATTR_OBJVAL, out_obj);
         if (error) goto quit;
         if (out_tour && out_len) {
             double *sol = NULL;
-            int solcount = 0;
-            error = GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount);
-            if (error) goto quit;
-            if (solcount <= 0) {
-                error = 1;
-                goto quit;
-            }
             sol = (double*)xmalloc_local((size_t)n * (size_t)n * sizeof(double));
             error = GRBgetdblattrarray(model, GRB_DBL_ATTR_X, 0, n * n, sol);
             if (error) {
@@ -331,12 +361,19 @@ static int solve_tsp_distance(GRBenv *env,
             free(sol);
         }
     } else {
+        if (params && params->verbose) {
+            fprintf(stderr, "No incumbent solution available for export\n");
+        }
         error = 1;
     }
 
 quit:
     free(ind);
     free(val);
+    if (error && env) {
+        const char *msg = GRBgeterrormsg(env);
+        if (msg && *msg) fprintf(stderr, "Gurobi error: %s\n", msg);
+    }
     if (model) GRBfreemodel(model);
     return error;
 }
@@ -425,6 +462,15 @@ int solve_mip_noport(const mip_noport_instance_t *instance,
     }
 
 quit:
+    if (params && params->verbose) {
+        fprintf(stderr,
+                "No-port solve summary: status=%s(%d) runtime=%.2f s gap=%.6f order_length=%d\n",
+                gurobi_status_name(solution->status),
+                solution->status,
+                solution->runtime_seconds,
+                solution->gap,
+                solution->order_length);
+    }
     if (error && solution) {
         free_mip_noport_solution(solution);
         if (solution) {
