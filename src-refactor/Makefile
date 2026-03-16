@@ -59,7 +59,7 @@ init_ci: build
 
 noport-opt: build
 	@mkdir -p ../sol/opt
-	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" $(MAKE) run_noport_opt 2>&1 | tee ../sol/opt/noport_opt.log'
+	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" $(MAKE) run_noport_opt 2>&1 | tee ../sol/opt/noport.log'
 
 init_opt: build
 	@cd $(BUILD_DIR) && $(MAKE) run_init_opt
