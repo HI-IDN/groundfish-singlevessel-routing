@@ -574,7 +574,8 @@ static void write_solution_section(FILE *fp, const char *label,
                                    waypoint_cache_t *cache,
                                    int *leg_query_count,
                                    int *total_waypoint_ids,
-                                   const char *variant_name)
+                                   const char *variant_name,
+                                   int segment_distances_include_return)
 {
     int *unique_waypoint_location_ids = NULL;
     int uniq_wp_n = 0, uniq_wp_cap = 0;
@@ -724,7 +725,8 @@ static void write_solution_section(FILE *fp, const char *label,
     fprintf(fp, "    \"segment_distance_nm\": [");
     for (int s = 0; s < sol->segment_count; s++) {
         double seg_nm = sol->segment_dists[s];
-        if (s == sol->segment_count - 1 && sol->tour_length > 0) {
+        if (!segment_distances_include_return &&
+            s == sol->segment_count - 1 && sol->tour_length > 0) {
             double final_leg = inst->distances[sol->tour[sol->tour_length - 1]][boat_end_loc_id];
             if (final_leg > 0.0) seg_nm += final_leg;
         }
@@ -807,10 +809,13 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "  },\n");
     write_solution_section(fp, "solution", inst, sol, boat_start_loc_id, boat_end_loc_id,
                            is_feasible, &cache, &leg_query_count, &total_waypoint_ids,
-                           "final");
+                           "final", 0);
     fprintf(fp, ",\n");
 
-    if (pre_capacity_sol && strcmp(strategy_name ? strategy_name : "", "ci") == 0) {
+    if (pre_capacity_sol &&
+        pre_capacity_sol->visit_station_count > 0 &&
+        (strcmp(strategy_name ? strategy_name : "", "ci") == 0 ||
+         strcmp(strategy_name ? strategy_name : "", "ge") == 0)) {
         int before_feasible = init_solution_is_capacity_feasible(pre_capacity_sol, boat_capacity) &&
                               stations_are_unique_and_complete(pre_capacity_sol->visit_station_ids,
                                                                pre_capacity_sol->visit_station_count,
@@ -818,7 +823,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         write_solution_section(fp, "presolve", inst, pre_capacity_sol,
                                boat_start_loc_id, boat_end_loc_id,
                                before_feasible, &cache, &leg_query_count, &total_waypoint_ids,
-                               "presolve");
+                               "presolve", 1);
         fprintf(fp, ",\n");
     }
     clock_gettime(CLOCK_MONOTONIC, &t_output_expand_end);
@@ -1049,9 +1054,9 @@ int mode_init(int argc, char **argv) {
             return 1;
         }
     } else if (strcmp(strategy, "ge") == 0) {
-        method_name = "greedy_insertion";
-        if (gi_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity) != 0) {
-            fprintf(stderr, "ERROR: Failed to solve GI\n");
+        method_name = "greedy_edge";
+        if (gi_solve(&inst, &sol, &pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity) != 0) {
+            fprintf(stderr, "ERROR: Failed to solve GE\n");
             sqlite3_close(db);
             return 1;
         }
@@ -1090,7 +1095,7 @@ int mode_init(int argc, char **argv) {
     {
         double output_runtime_seconds = 0.0;
         write_json(db, output, &inst, &sol, boat_id,
-                   (strcmp(strategy, "ci") == 0) ? &pre_capacity_sol : NULL,
+                   ((strcmp(strategy, "ci") == 0) || (strcmp(strategy, "ge") == 0)) ? &pre_capacity_sol : NULL,
                    boat_name, strategy, method_name,
                    boat_start_loc_id, boat_end_loc_id, boat_capacity, target_capacity, target_catch_slack_kg,
                    boat_start_lat, boat_start_lon, is_feasible,

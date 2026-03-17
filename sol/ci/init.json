@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "init_nn_1.0",
-    "timestamp": "1773704850",
+    "timestamp": "1773705656",
     "mode": "init_ci",
     "strategy": "ci",
     "boat_id": 2,
@@ -70,16 +70,16 @@
     "tour_length": [1160],
     "segment_count": 1,
     "segment_catch_amount": [528065],
-    "segment_distance_nm": [7213.75],
+    "segment_distance_nm": [7094.48],
     "total_distance_nm": 7094.48,
     "feasible": false
   },
   "solver_stats": {
     "status": "init_complete",
-    "preprocessing_seconds": 0.849242,
-    "method_runtime_seconds": 3.271661,
-    "postprocessing_seconds": 0.953904,
-    "total_runtime_seconds": 5.261372,
+    "preprocessing_seconds": 0.505722,
+    "method_runtime_seconds": 1.836365,
+    "postprocessing_seconds": 0.399740,
+    "total_runtime_seconds": 2.758939,
     "method": "cheapest_insertion"
   }
 }
