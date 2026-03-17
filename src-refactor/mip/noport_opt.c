@@ -229,25 +229,6 @@ static int load_distances(sqlite3 *db, app_instance_t *app) {
     return 0;
 }
 
-static const Port *find_anchor_port(const app_instance_t *app) {
-    const Port *best = NULL;
-    double best_dist = 1e100;
-
-    for (int i = 0; i < app->n_ports; i++) {
-        int port_loc_id = app->ports[i].location_id;
-        double dist = -1.0;
-        if (app->boat.start_location_id >= 0 && app->boat.start_location_id < app->max_location_id &&
-            port_loc_id >= 0 && port_loc_id < app->max_location_id) {
-            dist = app->distances[app->boat.start_location_id][port_loc_id];
-        }
-        if (dist >= 0.0 && dist < best_dist) {
-            best_dist = dist;
-            best = &app->ports[i];
-        }
-    }
-    return best;
-}
-
 static int append_int(int **arr, int *count, int *cap, int value) {
     int *tmp;
     int new_cap;
@@ -357,7 +338,6 @@ static double distance_nm(const app_instance_t *app, int from_loc_id, int to_loc
 }
 
 static int build_route_locations(const app_instance_t *app,
-                                 const Port *anchor_port,
                                  const mip_noport_solution_t *solution,
                                  int **route_out,
                                  int *route_len_out,
@@ -368,7 +348,6 @@ static int build_route_locations(const app_instance_t *app,
     int total_catch = 0;
 
     if (!append_loc_if_changed(&route, &route_len, &route_cap, app->boat.start_location_id)) goto fail;
-    if (!append_loc_if_changed(&route, &route_len, &route_cap, anchor_port->location_id)) goto fail;
 
     for (int i = 0; i < solution->order_length; i++) {
         int signed_station_id = solution->signed_station_ids[i];
@@ -384,7 +363,6 @@ static int build_route_locations(const app_instance_t *app,
         total_catch += station->amount;
     }
 
-    if (!append_loc_if_changed(&route, &route_len, &route_cap, anchor_port->location_id)) goto fail;
     if (!append_loc_if_changed(&route, &route_len, &route_cap, app->boat.end_location_id)) goto fail;
 
     *route_out = route;
@@ -400,7 +378,6 @@ fail:
 static int write_noport_json(sqlite3 *db,
                              const char *output_path,
                              const app_instance_t *app,
-                             const Port *anchor_port,
                              const mip_noport_solution_t *solution,
                              double preprocessing_seconds,
                              double fixed_total_distance) {
@@ -414,7 +391,7 @@ static int write_noport_json(sqlite3 *db,
     int is_feasible = 1;
     int *positive_station_ids = NULL;
 
-    if (!build_route_locations(app, anchor_port, solution, &route, &route_len, &total_catch)) return 1;
+    if (!build_route_locations(app, solution, &route, &route_len, &total_catch)) return 1;
 
     fp = fopen(output_path, "w");
     if (!fp) {
@@ -447,9 +424,7 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "    \"boat_id\": %d,\n", app->boat.boat_id);
     fprintf(fp, "    \"boat_name\": \"%s\",\n", app->boat.name ? app->boat.name : "Unknown");
     fprintf(fp, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", app->boat_start_lat, app->boat_start_lon);
-    fprintf(fp, "    \"boat_location_ids\": [%d, %d],\n", app->boat.start_location_id, app->boat.end_location_id);
-    fprintf(fp, "    \"anchor_port_id\": %d,\n", anchor_port->port_id);
-    fprintf(fp, "    \"anchor_port_name\": \"%s\"\n", anchor_port->name ? anchor_port->name : "Unknown");
+    fprintf(fp, "    \"boat_location_ids\": [%d, %d]\n", app->boat.start_location_id, app->boat.end_location_id);
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"problem\": {\n");
@@ -477,8 +452,8 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "]\n");
     fprintf(fp, "    ],\n");
 
-    fprintf(fp, "    \"dock_location_ids\": [%d, %d, %d],\n",
-            app->boat.start_location_id, anchor_port->location_id, app->boat.end_location_id);
+    fprintf(fp, "    \"dock_location_ids\": [%d, %d],\n",
+            app->boat.start_location_id, app->boat.end_location_id);
 
     fprintf(fp, "    \"unique_waypoint_location_ids\": [");
     for (int i = 0; i < unique_wp_count; i++) {
@@ -532,7 +507,6 @@ int main(int argc, char **argv) {
     mip_noport_instance_t mip_instance;
     mip_noport_params_t mip_params;
     mip_noport_solution_t mip_solution;
-    const Port *anchor_port = NULL;
     int boat_id = 2;
     double time_limit_seconds = 7200.0;
     double fixed_total_distance = 0.0;
@@ -565,7 +539,6 @@ int main(int argc, char **argv) {
     }
 
     if (load_boat(db, boat_id, &app) != 0 ||
-        load_ports(db, &app) != 0 ||
         load_stations(db, &app) != 0 ||
         load_distances(db, &app) != 0) {
         fprintf(stderr, "Failed to load no-port OPT instance from database\n");
@@ -574,23 +547,14 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    anchor_port = find_anchor_port(&app);
-    if (!anchor_port) {
-        fprintf(stderr, "Failed to choose anchor port for boat %d\n", boat_id);
-        sqlite3_close(db);
-        free_app_instance(&app);
-        return 1;
-    }
-
     mip_instance.boat = &app.boat;
-    mip_instance.anchor_port = anchor_port;
     mip_instance.stations = app.stations;
     mip_instance.n_stations = app.n_stations;
     mip_instance.distances = app.distances;
     mip_instance.max_location_id = app.max_location_id;
 
     mip_params.time_limit_seconds = time_limit_seconds;
-    mip_params.thread_count = 0;
+    mip_params.thread_count = 4;
     mip_params.verbose = 1;
     mip_params.mip_gap = 0.0;
 
@@ -599,10 +563,6 @@ int main(int argc, char **argv) {
     printf("No-port OPT instance\n");
     printf("  boat: %s (id=%d)\n", app.boat.name ? app.boat.name : "Unknown", app.boat.boat_id);
     printf("  stations: %d\n", app.n_stations);
-    printf("  anchor port: %s (id=%d, location=%d)\n",
-           anchor_port->name ? anchor_port->name : "Unknown",
-           anchor_port->port_id,
-           anchor_port->location_id);
     printf("  time limit: %.0f s\n", time_limit_seconds);
 
     if (solve_mip_noport(&mip_instance, &mip_params, &mip_solution) != 0) {
@@ -613,20 +573,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    {
-        double start_leg = distance_nm(&app, app.boat.start_location_id, anchor_port->location_id);
-        double end_leg = distance_nm(&app, anchor_port->location_id, app.boat.end_location_id);
-        if (start_leg < 0.0 || end_leg < 0.0) {
-            fprintf(stderr, "Missing fixed boat-port leg in distance matrix\n");
-            sqlite3_close(db);
-            free_app_instance(&app);
-            free_mip_noport_solution(&mip_solution);
-            return 1;
-        }
-        fixed_total_distance = start_leg + mip_solution.total_distance_nm + end_leg;
-    }
+    fixed_total_distance = mip_solution.total_distance_nm;
 
-    if (write_noport_json(db, output_path, &app, anchor_port, &mip_solution,
+    if (write_noport_json(db, output_path, &app, &mip_solution,
                           elapsed_seconds(preprocess_start, preprocess_end),
                           fixed_total_distance) != 0) {
         fprintf(stderr, "Failed to write %s\n", output_path);
@@ -637,7 +586,6 @@ int main(int argc, char **argv) {
     }
 
     printf("[OK] Wrote %s\n", output_path);
-    printf("  anchor port: %s\n", anchor_port->name ? anchor_port->name : "Unknown");
     printf("  tsp loop distance: %.2f nm\n", mip_solution.total_distance_nm);
     printf("  full route distance: %.2f nm\n", fixed_total_distance);
     printf("  stations visited: %d\n", mip_solution.order_length);

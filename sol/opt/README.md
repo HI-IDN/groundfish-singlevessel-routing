@@ -1,19 +1,24 @@
-# OPT Initialization (Optimal No‑Port TSP)
+# OPT Initialization
 
-The OPT initialization constructs the station ordering by first solving the optimal no‑port directed
-Traveling Salesman Problem (NP‑MIP) over all stations. This produces a globally optimal port‑free
-tour that minimizes total travel distance under the directed, waypoint‑aware distance model. Once
-this optimal ordering is obtained, ports are inserted as needed to satisfy vessel capacity, creating
-a capacity‑feasible segmented tour.
+The OPT initialization mirrors the old `src` no-port model. It first solves a directed no-port TSP
+over the boat and all stations only. Ports are not part of the optimization model at this stage.
+The boat contributes one start endpoint and one end endpoint, and each station contributes its two
+directional endpoints. The model then chooses a single Hamiltonian cycle on these doubled nodes with
+lazy subtour elimination, and that cycle is oriented back into a signed station order.
 
-Because this initialization begins from a fully optimized TSP solution, it typically yields very
-high‑quality and well‑structured initial orderings, providing a strong baseline for subsequent
-refinement by the matheuristic. However, achieving this quality requires solving a computationally
-intensive NP‑MIP, and thus OPT incurs a significantly higher preprocessing cost than greedy
-heuristics such as NN, CI, or GE.
+High level:
 
-Despite the added computational effort, OPT consistently produces the strongest initial routes among
-the evaluated strategies and often leads to the best final solutions after boundary‑sweep
-refinement.
+- The no-port MIP optimizes only the port-free station ordering.
+- The boat is the anchor of the no-port model, not a nearest or fixed port.
+- The boat closure arcs are zero-cost in both directions.
+- Ports are inserted only later, when the no-port ordering is converted into a capacity-feasible
+  route.
+
+This separation is intentional. The no-port MIP is meant to answer only: *"what is the best station
+ordering if capacity resets are ignored?"* It is not the full capacity-feasible routing model.
+
+Because this is still a full directed TSP with lazy subtour elimination, OPT is much more expensive
+than NN, GE, or CI. In return, it provides the strongest station-order baseline for later capacity
+repair and matheuristic refinement.
 
 ![OPT Initialization](init.png)

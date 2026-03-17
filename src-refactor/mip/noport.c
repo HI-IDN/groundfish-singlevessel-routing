@@ -391,7 +391,7 @@ int solve_mip_noport(const mip_noport_instance_t *instance,
     int n;
     int error = 0;
 
-    if (!instance || !instance->boat || !instance->anchor_port || !solution) return 1;
+    if (!instance || !instance->boat || !solution) return 1;
 
     memset(solution, 0, sizeof(*solution));
 
@@ -401,8 +401,8 @@ int solve_mip_noport(const mip_noport_instance_t *instance,
     entry = (int*)xmalloc_local((size_t)seg_size * sizeof(int));
     exit = (int*)xmalloc_local((size_t)seg_size * sizeof(int));
 
-    entry[0] = instance->anchor_port->location_id;
-    exit[0] = instance->anchor_port->location_id;
+    entry[0] = instance->boat->start_location_id;
+    exit[0] = instance->boat->end_location_id;
     for (int i = 0; i < instance->n_stations; i++) {
         entry[i + 1] = instance->stations[i].start_location_id;
         exit[i + 1] = instance->stations[i].end_location_id;
@@ -422,7 +422,7 @@ int solve_mip_noport(const mip_noport_instance_t *instance,
     }
 
     dist[1 * n + 0] = 0.0;
-    dist[0 * n + 1] = 1e9;
+    dist[0 * n + 1] = 0.0;
 
     error = GRBloadenv(&env, NULL);
     if (error) goto quit;

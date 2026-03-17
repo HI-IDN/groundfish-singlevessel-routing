@@ -13,7 +13,6 @@ typedef struct {
 
 typedef struct {
     const Boat *boat;
-    const Port *anchor_port;
     const Station *stations;
     int n_stations;
     double **distances;
