@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "init_nn_1.0",
-    "timestamp": "1773705652",
+    "timestamp": "1773753479",
     "mode": "init_ge",
     "strategy": "ge",
     "boat_id": 2,
@@ -76,10 +76,10 @@
   },
   "solver_stats": {
     "status": "init_complete",
-    "preprocessing_seconds": 0.454321,
-    "method_runtime_seconds": 0.059701,
-    "postprocessing_seconds": 0.521907,
-    "total_runtime_seconds": 1.056193,
+    "preprocessing_seconds": 1.250111,
+    "method_runtime_seconds": 0.170590,
+    "postprocessing_seconds": 1.137931,
+    "total_runtime_seconds": 2.607273,
     "method": "greedy_edge"
   }
 }

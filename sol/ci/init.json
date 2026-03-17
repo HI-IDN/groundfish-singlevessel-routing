@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "init_nn_1.0",
-    "timestamp": "1773705656",
+    "timestamp": "1773753489",
     "mode": "init_ci",
     "strategy": "ci",
     "boat_id": 2,
@@ -76,10 +76,10 @@
   },
   "solver_stats": {
     "status": "init_complete",
-    "preprocessing_seconds": 0.505722,
-    "method_runtime_seconds": 1.836365,
-    "postprocessing_seconds": 0.399740,
-    "total_runtime_seconds": 2.758939,
+    "preprocessing_seconds": 0.925356,
+    "method_runtime_seconds": 3.489370,
+    "postprocessing_seconds": 1.260688,
+    "total_runtime_seconds": 5.786811,
     "method": "cheapest_insertion"
   }
 }
