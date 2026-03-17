@@ -23,6 +23,5 @@ Current examples in this folder include:
 - `station_import.c`
 - `distance_builder.c`
 - `historical_survey_import.c`
-- `survey_import.c`
 - `export_survey_json.c`
-- `infer_waypoints_from_coastline.c`
+- `country_bootstrap_main.c`

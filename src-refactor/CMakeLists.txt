@@ -228,7 +228,7 @@ target_include_directories(historical_survey PRIVATE
 )
 
 add_executable(gsp_country
-    tools/infer_waypoints_from_coastline.c
+    tools/country_bootstrap_main.c
     common/dat_parser.c
     common/coastline_db.c
 )
