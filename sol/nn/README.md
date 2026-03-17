@@ -21,7 +21,7 @@ The current NN output is:
 Produced by:
 
 ```bash
-make -C src-refactor init_nn
+make -C src init_nn
 ```
 
 -----

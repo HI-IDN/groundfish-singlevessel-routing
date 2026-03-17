@@ -28,7 +28,7 @@ bash scripts/run_phase0_init.sh
 ```
 
 **What it does**:
-1. Verifies solver binary exists at `src-refactor/build/gsp_solver`
+1. Verifies the solver has been built with `make -C src build`
 2. Verifies database exists at `dat/gsp_data.db`
 3. Runs 4 strategies in sequence:
    - `opt` - Optimal NP-MIP (~7-8 minutes, expensive but optimal)
@@ -153,7 +153,7 @@ l2seg  stride  best_distance_nm  final_num_segments  iterations_completed  impro
 
 Runs Phase 0 + Phase 1 sequentially with confirmation prompt.
 
-**Requires**: Build exists at `src-refactor/build/gsp_solver`
+**Requires**: Build exists from `make -C src build`
 
 ```bash
 bash scripts/batch_all.sh
@@ -212,10 +212,7 @@ tail -f log/gurobi.log
 
 **Error: "Solver not found"**
 ```bash
-cd src-refactor
-mkdir -p build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j$(nproc)
+make -C src build
 ```
 
 **Error: "Database not found"**
@@ -283,5 +280,5 @@ sweep:
 
 - Main README: `../README.md`
 - Configuration: `../config/gsp_solver.yaml`
-- Database schema: `../src-refactor/include/solution_db.h`
+- Database schema: `../src/include/solution_db.h`
 

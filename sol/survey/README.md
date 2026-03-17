@@ -16,7 +16,7 @@ The database used to resolve `boat_id`, `station_id`, and `port_id` is:
 The JSON files here are produced by:
 
 ```bash
-make -C src-refactor survey
+make -C src survey
 ```
 
 That workflow:

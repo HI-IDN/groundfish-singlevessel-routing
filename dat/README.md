@@ -1,7 +1,8 @@
 dat Directory
 =============
 
-This folder contains the input `.dat` files, the generated SQLite database, and preview plots used by the refactored workflow in `src-refactor/`.
+This folder contains the input `.dat` files, the generated SQLite database, and preview plots used
+by the workflow in `src/`.
 
 Files
 -----
@@ -29,7 +30,8 @@ Files
   Legacy combined survey DAT file kept for reference.
 
 - `coastline_waypoints_ports.png`
-  Preview image generated from `gsp_data.db`. This is the main static reference plot for coastline, inferred waypoints, ports, and boat start/end locations.
+  Preview image generated from `gsp_data.db`. This is the main static reference plot for coastline,
+  inferred waypoints, ports, and boat start/end locations.
 
 Main Workflow
 -------------
@@ -37,10 +39,11 @@ Main Workflow
 1. Build and run the country bootstrap:
 
 ```bash
-make -C src-refactor country
+make -C src country
 ```
 
 This populates `dat/gsp_data.db` using:
+
 - `dat/island.bin`
 - `dat/waypoints.dat`
 - `dat/ports.dat`
@@ -64,4 +67,5 @@ Notes
 - The DAT coordinate format is not projected meters. It uses degmin storage:
   `DDMM.mm * 100`
 - Longitude values in the DAT files are stored as positive west values.
-- The helper tool and parser now use that same encoding when generating `WAYP easting northing` lines.
+- The helper tool and parser now use that same encoding when generating `WAYP easting northing`
+  lines.

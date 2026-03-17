@@ -113,11 +113,9 @@ Rscript -e "library(tidyverse); library(DBI); library(RSQLite); library(jsonlite
 First, create the database from raw .dat file:
 
 ```bash
-cd /c/Users/hbi3/Documents/GSP/Code
-mkdir -p build && cd build
-cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ../src-refactor
-make preprocess
-cd ..
+make -C src country
+make -C src stations
+make -C src distance
 ```
 
 This creates `dat/gsp_data.db` and `dat/survey_overview.png`

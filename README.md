@@ -1,12 +1,18 @@
 Repository overview
 ===================
 
-This folder is the root for the build and test workflow described below. It contains the survey-routing matheuristic codebase and a small, pure-C toolchain for preprocessing, initialization, and sweep evaluation.
+This folder is the root for the build and test workflow described below. It contains the
+survey-routing matheuristic codebase and a small, pure-C toolchain for preprocessing,
+initialization, and sweep evaluation.
 
-This README documents the environment checks you should run first, how to build the minimal smoke-tests (SQLite + Gurobi), and how to proceed once the environment is confirmed. These checks ensure the system has the required C development libraries and solver available before you perform larger refactors.
+This README documents the environment checks you should run first, how to build the minimal
+smoke-tests (SQLite + Gurobi), and how to proceed once the environment is confirmed. These checks
+ensure the system has the required C development libraries and solver available before you perform
+larger refactors.
 
 Layout
 ------
+
 - `src/` - pure-C implementation and Makefile (build targets and tests live here).
 - `src-old/` - previous source tree (kept as reference).
 - `dat/` - raw .dat files (e.g. `singleboatdata2023spring.dat`).
@@ -17,32 +23,39 @@ Layout
 
 Prerequisites
 -------------
-You need a C toolchain (GCC/Clang), the SQLite development headers and library, and Gurobi (headers, libs and a valid license). These instructions assume Linux/macOS or Windows under MSYS2/WSL.
+You need a C toolchain (GCC/Clang), the SQLite development headers and library, and Gurobi (headers,
+libs and a valid license). These instructions assume Linux/macOS or Windows under MSYS2/WSL.
 
 1) C toolchain
+
 - Linux (Debian/Ubuntu): `sudo apt install build-essential`
 - macOS (Homebrew): `brew install gcc`
 - Windows (MSYS2/MinGW): use the MSYS2 package manager to install `mingw-w64-x86_64-gcc`.
 
 2) SQLite (development headers)
+
 - Linux (Debian/Ubuntu): `sudo apt install libsqlite3-dev`
 - macOS (Homebrew): `brew install sqlite`
 - Windows (MSYS2): `pacman -S mingw-w64-x86_64-sqlite3`
 
 3) Gurobi
+
 - Download and install Gurobi for your platform from https://www.gurobi.com/downloads/.
-- Ensure you have a functioning license (for example, a `gurobi.lic` file or `GRB_LICENSE_FILE` pointing to a license).
+- Ensure you have a functioning license (for example, a `gurobi.lic` file or `GRB_LICENSE_FILE`
+  pointing to a license).
 - Set `GUROBI_HOME` to the installation directory. Example you provided in MSYS:
   ```bash
   export GUROBI_HOME="/c/gurobi1301/win64"
   export PATH="$GUROBI_HOME/bin:$PATH"
   export LD_LIBRARY_PATH="$GUROBI_HOME/lib:${LD_LIBRARY_PATH:-}"
   ```
-- Ensure the compiler can find headers at `$GUROBI_HOME/include` and the linker at `$GUROBI_HOME/lib`.
+- Ensure the compiler can find headers at `$GUROBI_HOME/include` and the linker at
+  `$GUROBI_HOME/lib`.
 
 Smoke-tests (verify environment)
 --------------------------------
-Two tiny C programs and a shell runner validate SQLite and Gurobi are available and linkable from your C toolchain.
+Two tiny C programs and a shell runner validate SQLite and Gurobi are available and linkable from
+your C toolchain.
 
 Run the tests from this directory (the project root):
 
@@ -53,14 +66,19 @@ make -C tools test-env
 Expected output (both tests must PASS):
 
 - `SQLITE_TEST: PASS` — SQLite headers and library are usable.
-- `GUROBI_TEST: PASS - status=<status> elapsed=<s> s` — Gurobi headers and basic env allocation succeed.
+- `GUROBI_TEST: PASS - status=<status> elapsed=<s> s` — Gurobi headers and basic env allocation
+  succeed.
 
 If those tests pass, you can proceed to building and running the full pipeline.
 
 Troubleshooting
 ---------------
-- If the sqlite test fails: ensure `sqlite3.h` is installed and the `-lsqlite3` library is available. On Debian/Ubuntu install `libsqlite3-dev`.
-- If the Gurobi test fails: ensure `GUROBI_HOME` is set and points to your Gurobi installation (headers under `$GUROBI_HOME/include` and libs under `$GUROBI_HOME/lib`). Also verify your Gurobi license is valid.
+
+- If the sqlite test fails: ensure `sqlite3.h` is installed and the `-lsqlite3` library is
+  available. On Debian/Ubuntu install `libsqlite3-dev`.
+- If the Gurobi test fails: ensure `GUROBI_HOME` is set and points to your Gurobi installation (
+  headers under `$GUROBI_HOME/include` and libs under `$GUROBI_HOME/lib`). Also verify your Gurobi
+  license is valid.
 
 Building the GSP Solver
 -----------------------
@@ -68,26 +86,26 @@ Building the GSP Solver
 Once environment tests pass, build the solver:
 
 ```bash
-rm -rf build # clean up previous build 
-mkdir -p build && cd build 
-cmake -DCMAKE_BUILD_TYPE=Release ../src-refactor
-make 
-cd ..
+make -C src build
 ```
 
-The compiled binaries will be in `build/gsp_init` and `build/common/gsp_preprocess`.
+The compiled binaries will be placed under `build/`.
 
 Groundfish Survey Routing Solver: Complete Workflow
 ====================================================
 
-The GSP solver optimizes groundfish survey routes for Icelandic research vessels using a two-phase approach:
+The GSP solver optimizes groundfish survey routes for Icelandic research vessels using a two-phase
+approach:
 
-- **Phase 0 (INIT)**: Generate 4 initialization strategies (OPT, NN, GE, CI). Run once, solutions cached in database.
-- **Phase 1 (MH)**: Improve from cached init solutions using matheuristic sweep. Reusable for different L2SEG parameters.
+- **Phase 0 (INIT)**: Generate 4 initialization strategies (OPT, NN, GE, CI). Run once, solutions
+  cached in database.
+- **Phase 1 (MH)**: Improve from cached init solutions using matheuristic sweep. Reusable for
+  different L2SEG parameters.
 
 ### Problem Instance
 
 **Vessel**: Árni Friðriksson (boat_id=2)
+
 - **Capacity**: 45 tonnes maximum cargo
 - **Home Port**: Hafnarfjörður
 - **Survey Stations**: 580 total
@@ -97,22 +115,17 @@ The GSP solver optimizes groundfish survey routes for Icelandic research vessels
 
 ### Phase 0: Generate Initialization Solutions (Run Once)
 
-All 4 initialization strategies must be run once. Results are cached in the database and reused by Phase 1.
+All 4 initialization strategies must be run once. Results are cached in the database and reused by
+Phase 1.
 
 #### Single Strategy
 
 ```bash
-# OPT: Optimal NP-MIP solution (expensive ~10 minutes)
-./src-refactor/build/gsp_solver --mode init --strategy opt --time-limit 600 --boat-id 2
-
-# NN: Nearest-Neighbor heuristic (fast ~seconds)
-./src-refactor/build/gsp_solver --mode init --strategy nn --boat-id 2
-
-# GE: Greedy-Edge construction (fast ~seconds)
-./src-refactor/build/gsp_solver --mode init --strategy ge --boat-id 2
-
-# CI: Cheapest-Insertion heuristic (moderate ~1-2 minutes)
-./src-refactor/build/gsp_solver --mode init --strategy ci --boat-id 2
+make -C src noport-opt
+make -C src init_opt
+make -C src init_nn
+make -C src init_ge
+make -C src init_ci
 ```
 
 #### Batch: All 4 Strategies
@@ -122,6 +135,7 @@ bash scripts/run_phase0_init.sh
 ```
 
 **Expected Output (OPT strategy)**:
+
 ```
 ============================================================
 GSP Solver - Phase 0: Initialization
@@ -167,6 +181,7 @@ sqlite3 dat/gsp_data.db \
 ```
 
 Sample output:
+
 ```
 ci|8654.32|580|13|87.4
 ge|8698.15|580|13|15.3
@@ -176,21 +191,23 @@ opt|8742.15|580|13|425.3
 
 ### Phase 1: Matheuristic Sweep (Reusable)
 
-The MH sweep improves a cached Phase 0 solution through iterative segment refinement using capacity-aware MIP solves.
+The MH sweep improves a cached Phase 0 solution through iterative segment refinement using
+capacity-aware MIP solves.
 
 #### Single Sweep
 
 ```bash
-./src-refactor/build/gsp_solver --mode sweep \
-  --init-strategy opt \
-  --boat-id 2 \
-  --l2seg 120 \
-  --stride 60 \
-  --mip-time-limit 120 \
-  --max-iterations 100
+./build/gsp_gurobi --mode sweep \
+  --strategy opt \
+  --database dat/gsp_data.db \
+  --config config/gsp_solver.yaml \
+  --input sol/opt/init.json \
+  --output sol/opt/sweep.json \
+  --time-limit 120
 ```
 
 Parameters:
+
 - `--init-strategy opt` - Use OPT init (looks up boat_id + strategy in database)
 - `--l2seg 120` - Segment size (120 stations per segment)
 - `--stride 60` - Overlap stride (50% overlap = L2SEG/2)
@@ -206,6 +223,7 @@ bash scripts/run_phase1_sweep.sh
 Runs sweeps with L2SEG = 60, 120, 180, 240, 300 using cached OPT initialization.
 
 **Expected Output (Sweep Progress)**:
+
 ```
 ============================================================
 GSP Solver - Phase 1: Matheuristic Sweep
@@ -259,14 +277,14 @@ boat:
   # capacity, home_port loaded from database
 
 init:
-  strategies: [opt, nn, ge, ci]
+  strategies: [ opt, nn, ge, ci ]
   opt:
     time_limit_seconds: 7200          # 2 hours for OPT initialization
 
 sweep:
-  l2seg_values: [60, 120, 180, 240, 300, 360, 420, 480]  # L2SEG: segment length
+  l2seg_values: [ 60, 120, 180, 240, 300, 360, 420, 480 ]  # L2SEG: segment length
   l1seg: 0                            # L1SEG: time limit per segment (0 = no limit)
-  
+
   max_iterations: 100
   max_stall_iterations: 20
 ```
@@ -274,6 +292,7 @@ sweep:
 ### Querying Results
 
 **Compare all INIT strategies:**
+
 ```bash
 sqlite3 dat/gsp_data.db \
   "SELECT 
@@ -287,6 +306,7 @@ sqlite3 dat/gsp_data.db \
 ```
 
 **Best MH result for each L2SEG:**
+
 ```bash
 sqlite3 dat/gsp_data.db \
   "SELECT 
@@ -303,6 +323,7 @@ sqlite3 dat/gsp_data.db \
 ```
 
 **Track convergence:**
+
 ```bash
 sqlite3 dat/gsp_data.db \
   "SELECT 
@@ -319,16 +340,19 @@ sqlite3 dat/gsp_data.db \
 ### Shell Scripts
 
 **`scripts/run_phase0_init.sh`** - Run all 4 initialization strategies:
+
 ```bash
 bash scripts/run_phase0_init.sh
 ```
 
 **`scripts/run_phase1_sweep.sh`** - Run MH sweeps (L2SEG = 60, 120, 180, 240, 300):
+
 ```bash
 bash scripts/run_phase1_sweep.sh
 ```
 
 **`scripts/batch_all.sh`** - Complete pipeline (Phase 0 → Phase 1):
+
 ```bash
 bash scripts/batch_all.sh
 ```
@@ -338,6 +362,7 @@ bash scripts/batch_all.sh
 Typical runtimes on 8-core system (Árni Friðriksson, 580 stations, 45 tonne capacity):
 
 **Phase 0 (INIT):**
+
 - OPT: 400-500 seconds (~7-8 minutes)
 - NN: <1 second
 - GE: 5-10 seconds
@@ -345,6 +370,7 @@ Typical runtimes on 8-core system (Árni Friðriksson, 580 stations, 45 tonne ca
 - **Total Phase 0**: ~10 minutes
 
 **Phase 1 (MH, per L2SEG):**
+
 - L2SEG=60: 90-120 minutes (100 iterations)
 - L2SEG=120: 110-140 minutes (100 iterations)
 - L2SEG=180: 120-150 minutes (100 iterations)
@@ -371,15 +397,21 @@ Solution tracking uses 8 tables in `dat/gsp_data.db`:
 ### Troubleshooting
 
 **Problem: "init_run_id not found"**
+
 - Solution: Run Phase 0 first: `bash scripts/run_phase0_init.sh`
 
 **Problem: "No OPT solution available"**
-- Solution: OPT takes ~7 minutes. Use `--init-strategy nn` or `--init-strategy ge` for quick testing.
+
+- Solution: OPT takes ~7 minutes. Use `--init-strategy nn` or `--init-strategy ge` for quick
+  testing.
 
 **Problem: Phase 1 taking very long**
-- Solution: Reduce `--max-iterations` or decrease `--mip-time-limit` for faster (lower quality) results.
+
+- Solution: Reduce `--max-iterations` or decrease `--mip-time-limit` for faster (lower quality)
+  results.
 
 **Problem: "Gurobi license error"**
+
 - Solution: Verify `GUROBI_HOME` is set and license is valid: `gurobi_cl --license`
 
 ### References

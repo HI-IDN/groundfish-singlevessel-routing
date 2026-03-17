@@ -1,4 +1,4 @@
-# `src-refactor`
+# `src`
 
 Work-in-progress refactor of the Groundfish Survey Routing codebase.
 
