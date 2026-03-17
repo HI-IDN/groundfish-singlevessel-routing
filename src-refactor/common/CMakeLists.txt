@@ -30,21 +30,9 @@ set(COMMON_SOURCES
     coastline_db.c
 )
 
-# Legacy combined preprocessing utility kept as backup, but not built by default
-add_executable(gsp_stations_with_distance EXCLUDE_FROM_ALL
-    preprocessing.c
-    ${COMMON_SOURCES}
-)
-
-target_link_libraries(gsp_stations_with_distance
-    ${SQLITE3_LIBRARIES}
-    ${GEOS_LIBRARIES}
-    m
-)
-
 # Station import using DataSet
 add_executable(gsp_stations
-    station_import.c
+    ../tools/station_import.c
     dat_parser.c
     logging.c
     sql_utils.c
@@ -57,7 +45,7 @@ target_link_libraries(gsp_stations
 
 # Distance rebuild from existing DB
 add_executable(gsp_distances
-    distance_builder.c
+    ../tools/distance_builder.c
     distance.c
     coastline_db.c
     logging.c
@@ -72,7 +60,7 @@ target_link_libraries(gsp_distances
 
 # Historical survey import from ordered survey DAT
 add_executable(gsp_historical_survey
-    historical_survey_import.c
+    ../tools/historical_survey_import.c
     dat_parser.c
 )
 
@@ -123,13 +111,3 @@ add_custom_target(run_survey_import
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Importing historical survey assignments"
 )
-
-# Compatibility target: keep combined step available
-add_custom_target(run_stations_with_distance
-    COMMAND ${CMAKE_MAKE_PROGRAM} run_stations
-    COMMAND ${CMAKE_MAKE_PROGRAM} run_distance
-    DEPENDS gsp_stations gsp_distances
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Importing stations and recomputing distances"
-)
-

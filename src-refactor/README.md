@@ -1,155 +1,32 @@
-Groundfish Survey Routing - Refactored Workflow
-===============================================
+# `src-refactor`
 
-Overview
---------
+Work-in-progress refactor of the Groundfish Survey Routing codebase.
 
-The current user-facing workflow is:
+The intended split is:
 
-1. `make country`
-2. `make stations`
-3. `make distance`
-4. `make survey`
-5. `make noport-opt`
+- `init/`
+  Phase 0 construction logic and init-facing entrypoints.
+- `mip/`
+  Gurobi-backed model implementations only.
+- `sweep/`
+  Phase 1 matheuristic logic that calls the required MIP/TSP subsolvers.
+- `common/`
+  shared non-solver infrastructure: database loaders, feasibility checks, routing support, and reusable helpers.
+- `include/`
+  shared headers used across modules.
+- `tools/`
+  standalone utilities that are not part of the main `gsp` solve loop.
 
-This keeps the stages separate:
-- `country` builds the coastline, waypoints, ports, and boats base database
-- `stations` imports stations from `dat/stations.dat`
-- `distance` recomputes the distance matrix from the existing database
-- `survey` exports the historical survey already stored in the database to JSON
+Current status:
 
-Quick Start
------------
+- `init/` contains the implemented construction heuristics `nn`, `ge`, `ci`, plus the OPT init path built from a no-port ordering.
+- `mip/` contains the no-port model and placeholders for the other Gurobi models.
+- `sweep/` is being rebuilt around the paper’s boundary-sweep phase.
+- some JSON writing and waypoint-expansion code is still duplicated across modules and should be centralized later.
 
-From `src-refactor/`:
+Design intent:
 
-```bash
-make country
-make stations
-make distance
-make survey
-make noport-opt
-```
-
-Current Build Targets
----------------------
-
-- `gsp_country`
-  Coastline bootstrap tool. Reads:
-  - `dat/island.bin`
-  - `dat/waypoints.dat`
-  - `dat/ports.dat`
-  - `dat/boats.dat`
-
-- `gsp_stations`
-  Station importer using the new `DataSet` parser path.
-
-- `gsp_distances`
-  Distance builder. Uses waypoint nodes for Dijkstra routing, but stores only non-waypoint endpoint pairs.
-
-- `gsp_stations_with_distance`
-  Legacy combined importer/distance tool kept as backup while the split is completed.
-
-- `historical_survey`
-  Exports the historical survey from `gsp_data.db` to JSON files under `sol/`.
-
-- `gsp`
-  Solver executable for the init/sweep stages.
-
-- `gsp_noport_opt`
-  Preprocessing executable that solves the no-port paired-end TSP and writes `sol/opt/noport.json`.
-
-Workflow Details
-----------------
-
-### Step 1: Country bootstrap
-
-```bash
-make country
-```
-
-This:
-- loads the coastline from `dat/island.bin`
-- loads manual waypoint seeds from `dat/waypoints.dat`
-- imports ports from `dat/ports.dat`
-- imports boats from `dat/boats.dat`
-- writes the result to `dat/gsp_data.db`
-
-Static preview:
-
-```bash
-Rscript R/plot_country.R dat/gsp_data.db dat/coastline_waypoints_ports.png
-```
-
-Interactive waypoint helper:
-
-```bash
-Rscript R/click_country_points.R
-```
-
-### Step 2: Stations
-
-```bash
-make stations
-```
-
-This imports the stations file with `gsp_stations`:
-
-```text
-dat/stations.dat
-```
-
-The stage assumes `make country` has already populated the database with coastline, waypoints, ports, and boats.
-
-### Step 3: Distance matrix
-
-```bash
-make distance
-```
-
-This recomputes the distance matrix from the existing database after station import.
-The routing graph still includes waypoints, but the `distances` table stores only pairs where neither endpoint is a waypoint.
-
-### Step 4: Historical survey export
-
-```bash
-make survey
-```
-
-This exports the historical survey already present in `dat/gsp_data.db` to JSON files under `sol/`.
-
-### Step 5: No-port OPT preprocessing
-
-```bash
-make noport-opt
-```
-
-This solves the no-port directed paired-end TSP over all stations, anchored at the port nearest to the configured boat start location. The output is:
-
-```text
-sol/opt/noport.json
-```
-
-That file is a preprocessing artifact for the later `init_opt` stage. It is not yet the capacity-feasible final OPT initialization.
-
-Compatibility Aliases
----------------------
-
-- `make stations-with-distance`
-  Runs both `make stations` and `make distance`
-
-- `make preprocessing`
-  Alias for `make stations-with-distance`
-
-- `make export_survey`
-  Alias for `make survey`
-
-Notes
------
-
-- `gsp_stations_with_distance` still exists as a backup path for the old combined implementation in `preprocessing.c`.
-- `gsp_stations` is the new station-import stage for `dat/stations.dat` and does not use `ItemVec`.
-- `gsp_distances` is the new distance stage; it keeps waypoint nodes only as routing helpers.
-- The historical survey step for `dat/survey2023spring.dat` still needs its own dedicated import/export path.
-- `make noport-opt` is the current OPT preprocessing stage; `make init_opt` is still pending the capacity-feasible segmentation step that consumes `sol/opt/noport.json`.
-- The public workflow names are now based on the actual stages above.
+- initialization strategies live in `init/`
+- solver formulations live in `mip/`
+- sweep orchestration lives in `sweep/`
+- shared plumbing should move toward `common/` rather than being reimplemented per executable

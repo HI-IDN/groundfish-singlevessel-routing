@@ -1,4 +1,4 @@
-#include "include/mip_noport.h"
+#include "../mip/include/mip_noport.h"
 #include "../include/feasibility.h"
 
 #include <sqlite3.h>
@@ -135,33 +135,6 @@ static int load_boat(sqlite3 *db, int boat_id, app_instance_t *app) {
     app->boat.end_location_id = sqlite3_column_int(stmt, 4);
     app->boat_start_lat = sqlite3_column_double(stmt, 5);
     app->boat_start_lon = sqlite3_column_double(stmt, 6);
-    sqlite3_finalize(stmt);
-    return 0;
-}
-
-static int load_ports(sqlite3 *db, app_instance_t *app) {
-    sqlite3_stmt *stmt = NULL;
-    int count = 0;
-
-    if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM ports;", -1, &stmt, NULL) != SQLITE_OK) return 1;
-    if (sqlite3_step(stmt) == SQLITE_ROW) count = sqlite3_column_int(stmt, 0);
-    sqlite3_finalize(stmt);
-
-    if (count <= 0) return 1;
-    app->ports = (Port*)calloc((size_t)count, sizeof(Port));
-    if (!app->ports) return 1;
-    app->n_ports = count;
-
-    if (sqlite3_prepare_v2(db, "SELECT id, name, location_id FROM ports ORDER BY id;", -1, &stmt, NULL) != SQLITE_OK) return 1;
-    for (int i = 0; i < count; i++) {
-        if (sqlite3_step(stmt) != SQLITE_ROW) {
-            sqlite3_finalize(stmt);
-            return 1;
-        }
-        app->ports[i].port_id = sqlite3_column_int(stmt, 0);
-        app->ports[i].name = dupstr_local((const char*)sqlite3_column_text(stmt, 1));
-        app->ports[i].location_id = sqlite3_column_int(stmt, 2);
-    }
     sqlite3_finalize(stmt);
     return 0;
 }

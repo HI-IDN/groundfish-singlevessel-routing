@@ -77,13 +77,6 @@ add_custom_target(distance
     COMMENT "Step 3: Recompute all location-pair distances"
 )
 
-# Compatibility target for combined step
-add_custom_target(stations_with_distance
-    COMMAND ${CMAKE_MAKE_PROGRAM} run_stations_with_distance
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
-    COMMENT "Import stations and compute distances"
-)
-
 add_custom_target(survey
     COMMAND ${CMAKE_MAKE_PROGRAM} run_survey_import
     COMMAND historical_survey ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp_data.db ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey
@@ -110,6 +103,18 @@ target_link_libraries(gsp
     ${SQLITE3_LIBRARIES}
     m
 )
+
+if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
+    target_include_directories(gsp PRIVATE
+        ${GUROBI_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/mip/include
+    )
+    target_compile_definitions(gsp PRIVATE HAVE_GUROBI=1)
+    target_link_libraries(gsp
+        -L${GUROBI_LIBRARY_DIR}
+        gurobi130
+    )
+endif()
 
 add_executable(gsp_init_opt
     init/opt_init_from_noport.c
@@ -163,7 +168,7 @@ add_custom_target(run_init_ci
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     add_executable(gsp_noport_opt
         mip/noport.c
-        mip/noport_opt.c
+        init/noport_order_main.c
         common/feasibility.c
     )
 
