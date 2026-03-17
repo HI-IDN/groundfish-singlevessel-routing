@@ -105,12 +105,27 @@ target_link_libraries(gsp
 )
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
-    target_include_directories(gsp PRIVATE
+    add_executable(gsp_gurobi
+        gsp.c
+        init/gsp_init_mode.c
+        init/nearest_neighbor.c
+        init/greedy_insertion.c
+        init/cheapest_insertion.c
+        common/feasibility.c
+        sweep/gsp_sweep_mode.c
+    )
+
+    target_link_libraries(gsp_gurobi
+        ${SQLITE3_LIBRARIES}
+        m
+    )
+
+    target_include_directories(gsp_gurobi PRIVATE
         ${GUROBI_INCLUDE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/mip/include
     )
-    target_compile_definitions(gsp PRIVATE HAVE_GUROBI=1)
-    target_link_libraries(gsp
+    target_compile_definitions(gsp_gurobi PRIVATE HAVE_GUROBI=1)
+    target_link_libraries(gsp_gurobi
         -L${GUROBI_LIBRARY_DIR}
         gurobi130
     )
@@ -255,6 +270,9 @@ install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances gsp
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     install(TARGETS gsp_noport_opt
+        RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
+    )
+    install(TARGETS gsp_gurobi
         RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
     )
 endif()
