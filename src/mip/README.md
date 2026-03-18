@@ -19,8 +19,12 @@ Current status:
   model surface for exact segment solves
 - `capacity_aware.c`
   placeholder for the capacity-aware local model
+- `mip_common.c`
+  shared Gurobi/MIP helpers and parameter handling
+- `mip_paired_tour.c`
+  shared paired-end tour extraction and lazy-subtour callback helpers
 - `mip/include/`
-  model-specific headers
+  model-specific headers plus shared MIP utility headers
 
 What does not belong here:
 
@@ -29,4 +33,3 @@ What does not belong here:
 - init- or sweep-specific orchestration
 
 Those should live in `init/`, `sweep/`, or shared utilities in `common/`.
-
