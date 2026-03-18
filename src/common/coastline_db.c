@@ -119,7 +119,7 @@ static int sanitize_coastline_geometry(const float *data, int num_points, Coastl
 
     polygon = build_polygon_from_raw_points(ctx, data, num_points);
     if (!polygon) {
-        fprintf(stderr, "  ✗ Failed to build coastline polygon from island.bin data\n");
+        fprintf(stderr, "  ERROR Failed to build coastline polygon from coastline data\n");
         goto cleanup;
     }
 
@@ -138,11 +138,11 @@ static int sanitize_coastline_geometry(const float *data, int num_points, Coastl
 
         if (has_location) {
             fprintf(stderr,
-                    "  Warning: Coastline polygon invalid at (lat=%.6f, lon=%.6f): %s -> Fixing with buffer(0)...\n",
+                    "  WARN Coastline polygon invalid at (lat=%.6f, lon=%.6f): %s -> Fixing with buffer(0)...\n",
                     y, x, reason ? reason : "unknown reason");
         } else {
             fprintf(stderr,
-                    "  Warning: Coastline polygon invalid: %s -> Fixing with buffer(0)...\n",
+                    "  WARN Coastline polygon invalid: %s -> Fixing with buffer(0)...\n",
                     reason ? reason : "unknown reason");
         }
 
@@ -153,7 +153,7 @@ static int sanitize_coastline_geometry(const float *data, int num_points, Coastl
 
         fixed = GEOSBuffer_r(ctx, polygon, 0.0, 8);
         if (!fixed) {
-            fprintf(stderr, "  ✗ buffer(0) failed to repair coastline geometry\n");
+            fprintf(stderr, "  ERROR buffer(0) failed to repair coastline geometry\n");
             goto cleanup;
         }
 
@@ -163,19 +163,19 @@ static int sanitize_coastline_geometry(const float *data, int num_points, Coastl
 
         is_valid = GEOSisValidDetail_r(ctx, polygon, 0, &reason, &location);
         if (!is_valid) {
-            fprintf(stderr, "  ✗ Coastline geometry still invalid after repair: %s\n", reason ? reason : "unknown reason");
+            fprintf(stderr, "  ERROR Coastline geometry still invalid after repair: %s\n", reason ? reason : "unknown reason");
             if (reason) GEOSFree_r(ctx, reason);
             if (location) GEOSGeom_destroy_r(ctx, location);
             goto cleanup;
         }
 
-        fprintf(stderr, "  Warning: Coastline polygon repaired and valid after buffer(0).\n");
+        fprintf(stderr, "  OK Coastline polygon repaired and valid after buffer(0).\n");
         if (reason) GEOSFree_r(ctx, reason);
         if (location) GEOSGeom_destroy_r(ctx, location);
     }
 
     if (GEOSisEmpty_r(ctx, polygon)) {
-        fprintf(stderr, "  ✗ Coastline geometry repair collapsed to empty geometry\n");
+        fprintf(stderr, "  ERROR Coastline geometry repair collapsed to empty geometry\n");
         goto cleanup;
     }
 
@@ -187,19 +187,19 @@ static int sanitize_coastline_geometry(const float *data, int num_points, Coastl
         double area = 0.0;
         selected_polygon = pick_largest_polygon_component(ctx, polygon, &components, &area);
         if (!selected_polygon || area <= 0.0) {
-            fprintf(stderr, "  ✗ Coastline multipolygon repair produced no usable polygon component\n");
+            fprintf(stderr, "  ERROR Coastline multipolygon repair produced no usable polygon component\n");
             goto cleanup;
         }
         fprintf(stderr,
-                "  Warning: Coastline repair returned MultiPolygon (%d parts); using largest component (area=%.6f).\n",
+                "  WARN Coastline repair returned MultiPolygon (%d parts); using largest component (area=%.6f).\n",
                 components, area);
     } else if (type_id != GEOS_POLYGON) {
-        fprintf(stderr, "  ✗ Coastline geometry type unsupported after repair (type_id=%d)\n", type_id);
+        fprintf(stderr, "  ERROR Coastline geometry type unsupported after repair (type_id=%d)\n", type_id);
         goto cleanup;
     }
 
     if (!extract_exterior_ring_points(ctx, selected_polygon, out) || out->n < 3) {
-        fprintf(stderr, "  ✗ Failed to extract valid coastline ring points after repair\n");
+        fprintf(stderr, "  ERROR Failed to extract valid coastline ring points after repair\n");
         goto cleanup;
     }
 
@@ -243,7 +243,7 @@ static int load_repaired_coastline_from_text(const char *coastline_path, Coastli
     lat = (double*)malloc((size_t)cap * sizeof(double));
     lon = (double*)malloc((size_t)cap * sizeof(double));
     if (!lat || !lon) {
-        fprintf(stderr, "  ✗ Memory allocation failed\n");
+        fprintf(stderr, "  ERROR Memory allocation failed\n");
         goto cleanup;
     }
 
@@ -269,7 +269,7 @@ static int load_repaired_coastline_from_text(const char *coastline_path, Coastli
             lat = (double*)realloc(lat, (size_t)cap * sizeof(double));
             lon = (double*)realloc(lon, (size_t)cap * sizeof(double));
             if (!lat || !lon) {
-                fprintf(stderr, "  ✗ Memory allocation failed\n");
+                fprintf(stderr, "  ERROR Memory allocation failed\n");
                 goto cleanup;
             }
         }
@@ -279,13 +279,13 @@ static int load_repaired_coastline_from_text(const char *coastline_path, Coastli
     }
 
     if (n < 3) {
-        fprintf(stderr, "  ✗ Coastline text file must contain at least 3 points\n");
+        fprintf(stderr, "  ERROR Coastline text file must contain at least 3 points\n");
         goto cleanup;
     }
 
     raw = (float*)malloc((size_t)(2 * n) * sizeof(float));
     if (!raw) {
-        fprintf(stderr, "  ✗ Memory allocation failed\n");
+        fprintf(stderr, "  ERROR Memory allocation failed\n");
         goto cleanup;
     }
     for (int i = 0; i < n; i++) {
@@ -319,7 +319,7 @@ static int load_repaired_coastline_from_bin(const char *island_bin_path, Coastli
 
     fp = fopen(island_bin_path, "rb");
     if (!fp) {
-        fprintf(stderr, "  Warning: Could not open %s for coastline import\n", island_bin_path);
+        fprintf(stderr, "  WARN Could not open %s for coastline import\n", island_bin_path);
         return 0;
     }
 
@@ -328,24 +328,24 @@ static int load_repaired_coastline_from_bin(const char *island_bin_path, Coastli
     fseek(fp, 0, SEEK_SET);
 
     if (file_size <= 0 || (file_size % sizeof(float)) != 0) {
-        fprintf(stderr, "  ✗ Invalid island.bin file size\n");
+        fprintf(stderr, "  ERROR Invalid legacy binary coastline file size\n");
         goto cleanup;
     }
 
     num_floats = file_size / sizeof(float);
     if ((num_floats % 2) != 0) {
-        fprintf(stderr, "  ✗ island.bin must have even number of floats (lat/lon pairs)\n");
+        fprintf(stderr, "  ERROR Legacy binary coastline file must have even number of floats (lat/lon pairs)\n");
         goto cleanup;
     }
 
     data = (float*)malloc(file_size);
     if (!data) {
-        fprintf(stderr, "  ✗ Memory allocation failed\n");
+        fprintf(stderr, "  ERROR Memory allocation failed\n");
         goto cleanup;
     }
 
     if (fread(data, sizeof(float), num_floats, fp) != num_floats) {
-        fprintf(stderr, "  ✗ Failed to read island.bin\n");
+        fprintf(stderr, "  ERROR Failed to read legacy binary coastline file\n");
         goto cleanup;
     }
 
@@ -376,7 +376,7 @@ int replace_coastline_in_db(sqlite3 *db, const CoastlinePoints *coastline) {
 
     rc = sqlite3_prepare_v2(db, insert_sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "  ✗ Failed to prepare coastline insert: %s\n", sqlite3_errmsg(db));
+        fprintf(stderr, "  ERROR Failed to prepare coastline insert: %s\n", sqlite3_errmsg(db));
         return rc;
     }
 
@@ -388,7 +388,7 @@ int replace_coastline_in_db(sqlite3 *db, const CoastlinePoints *coastline) {
         sqlite3_bind_double(stmt, 2, coastline->lon[i]);
 
         if (sqlite3_step(stmt) != SQLITE_DONE) {
-            fprintf(stderr, "  ✗ Failed to insert coastline point %d\n", i);
+            fprintf(stderr, "  ERROR Failed to insert coastline point %d\n", i);
             sqlite3_finalize(stmt);
             sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
             return SQLITE_ERROR;

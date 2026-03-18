@@ -107,12 +107,12 @@ int compute_distance_matrix(int n_locs, double* latlon_rad[2], int* types,
         return -1;
     }
 
-    printf("  → Computing %d×%d distance matrix\n", n_locs, n_locs);
+    printf("  -> Computing %dx%d distance matrix\n", n_locs, n_locs);
 
     /* MAP structure should already be initialized by caller from imported coastline data. */
     if (MAP[0].N[0] <= 0 || !MAP[0].LatDeg[0] || !MAP[0].LonDeg[0])
     {
-        fprintf(stderr, "  ⚠ Warning: MAP not initialized - land-crossing detection disabled\n");
+        fprintf(stderr, "  WARN MAP not initialized - land-crossing detection disabled\n");
     }
 
     /* Allocate distance and feasibility matrices */
@@ -131,18 +131,18 @@ int compute_distance_matrix(int n_locs, double* latlon_rad[2], int* types,
     };
 
     /* Call distance_link */
-    printf("  → Calling distance_link (Dijkstra routing)...\n");
+    printf("  -> Calling distance_link (Dijkstra routing)...\n");
     int rc = distance_link(D, F, types, latlon_rad, start_end, n_locs);
 
     if (rc != 0)
     {
-        fprintf(stderr, "  ✗ distance_link failed (error %d)\n", rc);
+        fprintf(stderr, "  ERROR distance_link failed (error %d)\n", rc);
         free(D);
         free(F);
         return -1;
     }
 
-    printf("  ✓ Distance matrix computed successfully\n");
+    printf("  OK Distance matrix computed successfully\n");
 
     /* Caller owns outputs */
     *out_dist = D;
@@ -243,8 +243,8 @@ static void init_geos_coastline()
     if (!is_valid)
     {
         char* reason = GEOSisValidReason_r(geos_ctx, coastline_polygon);
-        fprintf(stderr, "  ⚠ Warning: Coastline polygon invalid: %s\n", reason);
-        fprintf(stderr, "  → Attempting to fix with buffer(0)...\n");
+        fprintf(stderr, "  WARN Coastline polygon invalid: %s\n", reason);
+        fprintf(stderr, "  -> Attempting to fix with buffer(0)...\n");
         GEOSFree_r(geos_ctx, reason);
 
         /* Buffer by 0 to fix invalid geometry */
@@ -254,7 +254,7 @@ static void init_geos_coastline()
             GEOSGeom_destroy_r(geos_ctx, coastline_polygon);
             coastline_polygon = fixed;
             is_valid = GEOSisValid_r(geos_ctx, coastline_polygon);
-            fprintf(stderr, "  → Fixed polygon is now valid: %d\n", is_valid);
+            fprintf(stderr, "  OK Fixed polygon is now valid: %d\n", is_valid);
         }
     }
 
@@ -271,7 +271,7 @@ static void init_geos_coastline()
     /* Register cleanup function to be called at program exit */
     atexit(cleanup_geos);
 
-    printf("  ✓ GEOS initialized with %d-point coastline polygon\n", n);
+    printf("  OK GEOS initialized with %d-point coastline polygon\n", n);
 }
 
 /* Cleanup GEOS resources */
@@ -477,7 +477,7 @@ static int create_feasibility_matrix(PARAMS params)
     double* LatDeg = MAP[iMAP].LatDeg[0];
     double* LonDeg = MAP[iMAP].LonDeg[0];
 
-    printf("  → Checking land crossings for %d locations...\n", m);
+    printf("  -> Checking land crossings for %d locations...\n", m);
     fflush(stdout);
 
     /* Set diagonal to 1 (feasible) - COLUMN-MAJOR indexing */
@@ -500,7 +500,7 @@ static int create_feasibility_matrix(PARAMS params)
     int pairs_checked = 0;
     int land_crossings = 0;
 
-    printf("  → Starting land-crossing checks (this may take several minutes)...\n");
+    printf("  -> Starting land-crossing checks (this may take several minutes)...\n");
     fflush(stdout);
 
     int total_pairs = m * (m - 1) / 2;
@@ -537,7 +537,7 @@ static int create_feasibility_matrix(PARAMS params)
     free(lat);
     free(lon);
 
-    printf("  ✓ Land-crossing check: %d crossings detected (%.1f%% of %d route pairs)\n",
+    printf("  OK Land-crossing check: %d crossings detected (%.1f%% of %d route pairs)\n",
            land_crossings, (100.0 * land_crossings) / pairs_checked, pairs_checked);
     fflush(stdout);
 
@@ -550,7 +550,7 @@ static void create_distance_matrix(PARAMS params)
     int i;
     int waypoint_count = 0;
 
-    printf("  → Computing haversine distances...\n");
+    printf("  -> Computing arc distances...\n");
 
     /* Allocate global matrices if not already done */
     if (global_matrix_size != params.Size) {
@@ -621,17 +621,17 @@ static void create_distance_matrix(PARAMS params)
         }
     }
 
-    printf("  → Haversine computed for %d feasible pairs (of %d total pairs)\n",
+    printf("  -> Arc distances computed for %d feasible pairs (of %d total pairs)\n",
            feasible_links, total_pairs);
 
-    printf("  → Infeasible links flagged for Dijkstra: %d (%.1f%% of checked pairs)\n",
+    printf("  -> Infeasible links flagged for Dijkstra: %d (%.1f%% of checked pairs)\n",
            infeasible_links,
            (100.0 * infeasible_links) / (params.Size * (params.Size - 1) / 2.0));
     fflush(stdout);
 
     if (infeasible_links == 0)
     {
-        printf("  ✓ No infeasible links; skipping Dijkstra.\n");
+        printf("  OK No infeasible links; skipping Dijkstra.\n");
         fflush(stdout);
         return;
     }
@@ -660,7 +660,7 @@ static void create_distance_matrix(PARAMS params)
         }
     }
 
-    printf("  → Computing Dijkstra waypoint routes (this may take a while)...\n");
+    printf("  -> Computing Dijkstra waypoint routes (this may take a while)...\n");
     fflush(stdout);
 
     /* Apply Dijkstra routing for infeasible links (slow - needs progress) */
@@ -754,14 +754,14 @@ static void create_distance_matrix(PARAMS params)
         }
     }
 
-    printf("  ✓ Distance matrix complete: %d waypoint routes via Dijkstra\n", dijkstra_routes);
-    printf("  → Dijkstra routed %d infeasible pairs through %d waypoint nodes\n",
+    printf("  OK Distance matrix complete: %d waypoint routes via Dijkstra\n", dijkstra_routes);
+    printf("  -> Dijkstra routed %d infeasible pairs through %d waypoint nodes\n",
            dijkstra_pairs_checked, waypoint_count);
-    printf("  → Dijkstra path check: %d routable\n",
+    printf("  -> Dijkstra path check: %d routable\n",
            dijkstra_success);
     if (dijkstra_failed > 0)
     {
-        printf("  ⚠ Dijkstra failed to route %d pairs; remain INFEASIBLE\n", dijkstra_failed);
+        printf("  WARN Dijkstra failed to route %d pairs; remain INFEASIBLE\n", dijkstra_failed);
     }
 }
 

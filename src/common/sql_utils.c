@@ -15,7 +15,7 @@ int sql_count_rows(sqlite3 *db, const char *query) {
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "    ✗ SQL prepare error: %s\n", sqlite3_errmsg(db));
+        fprintf(stderr, "    ERROR SQL prepare error: %s\n", sqlite3_errmsg(db));
         return -1;
     }
 
@@ -36,7 +36,7 @@ sqlite3_stmt *sql_prepare(sqlite3 *db, const char *query) {
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "    ✗ SQL prepare error: %s\n", sqlite3_errmsg(db));
+        fprintf(stderr, "    ERROR SQL prepare error: %s\n", sqlite3_errmsg(db));
         return NULL;
     }
     return stmt;
@@ -50,7 +50,7 @@ int sql_execute(sqlite3 *db, const char *query) {
     char *err_msg = NULL;
     int rc = sqlite3_exec(db, query, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "    ✗ SQL execution error: %s\n", err_msg);
+        fprintf(stderr, "    ERROR SQL execution error: %s\n", err_msg);
         sqlite3_free(err_msg);
     }
     return rc;
