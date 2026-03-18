@@ -22,8 +22,8 @@ typedef struct {
 } location_data;
 
 /**
- * Compute distance and feasibility matrices using Dijkstra waypoint routing
- * Accounts for land obstacles from island.bin
+ * Compute distance and feasibility matrices using Dijkstra waypoint routing.
+ * Accounts for land obstacles from imported coastline data.
  */
 int distance_link(double *DistrMtrx, int *FsbleMtrx, int *Type,
                  double *LatLon[2], double *StartEnd,
@@ -67,7 +67,7 @@ void build_waypoint_dist(const location_data *ex,
 
 /**
  * Compute distance matrix for locations using waypoint-aware Dijkstra routing
- * Note: MAP structure must be initialized first (via load_coastline_from_db or load_island_bin)
+ * Note: MAP structure must be initialized first from coastline data.
  *
  * @param n_locs          Number of locations (including waypoints)
  * @param latlon_rad      Array of lat/lon in radians [2][n_locs] (lat, lon)

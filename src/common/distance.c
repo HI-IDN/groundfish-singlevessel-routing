@@ -14,9 +14,6 @@
 #include <stdbool.h>
 
 
-/* Forward declaration - implementation in coastline_db.c */
-extern double* load_island_bin(const char* fname, int* out_n);
-
 static void die(const char* msg)
 {
     fprintf(stderr, "%s\n", msg);
@@ -112,7 +109,7 @@ int compute_distance_matrix(int n_locs, double* latlon_rad[2], int* types,
 
     printf("  → Computing %d×%d distance matrix\n", n_locs, n_locs);
 
-    /* MAP structure should already be initialized by caller (via load_coastline_from_db or load_island_bin) */
+    /* MAP structure should already be initialized by caller from imported coastline data. */
     if (MAP[0].N[0] <= 0 || !MAP[0].LatDeg[0] || !MAP[0].LonDeg[0])
     {
         fprintf(stderr, "  ⚠ Warning: MAP not initialized - land-crossing detection disabled\n");
@@ -170,15 +167,13 @@ typedef struct
     double* LatLonRad[42];
 } PARAMS;
 
-/* Calculate great-circle distance in nautical miles, matching the original src/ code. */
+/* Calculate great-circle distance in nautical miles. */
 static double arc_distance(double lat1, double lon1, double lat2, double lon2)
 {
-    double dLat = lat2 - lat1;
-    double dLon = lon2 - lon1;
-    double a = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLon / 2) *
-        sin(dLon / 2);
-    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return 3437.905 * c; /* Earth radius in nautical miles, as in src/main.c */
+    double angle = sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(lon1 - lon2);
+    if (angle > 1.0) angle = 1.0;
+    if (angle < -1.0) angle = -1.0;
+    return 3437.905 * acos(angle);
 }
 
 /* GEOS context and coastline geometry (initialized once) */
@@ -875,10 +870,10 @@ int distance_link(double* DistrMtrx, int* FsbleMtrx, int* Type,
         return -1;
     }
 
-    /* Note: MAP structure must be initialized by load_island_bin() before calling distance_link */
+    /* Note: MAP structure must be initialized from coastline data before calling distance_link. */
     if (MAP[0].n == 0 || MAP[0].LatDeg[0] == NULL)
     {
-        fprintf(stderr, "Error: MAP not initialized - call load_island_bin() first\n");
+        fprintf(stderr, "Error: MAP not initialized - load coastline data first\n");
         free(params.Graph);
         return -1;
     }

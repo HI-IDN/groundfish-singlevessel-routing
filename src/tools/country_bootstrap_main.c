@@ -61,7 +61,7 @@ static int insert_seed_into_ring(GEOSContextHandle_t ctx,
 
 static void die_usage(const char *argv0) {
     fprintf(stderr,
-            "Usage: %s --db <gsp_data.db> --coastline-file <island.bin> [options]\n"
+            "Usage: %s --db <gsp_data.db> --coastline-file <island.tsv> [options]\n"
             "\n"
             "Options:\n"
             "  --waypoint-file <datafile.dat> Optional DAT file for manual WAYP seeds\n"
@@ -1173,7 +1173,7 @@ int main(int argc, char **argv) {
     printf("Small ring target: %d  |  Medium ring: [%d, %d] preferred=%d\n",
            small_target, opts.min_points, opts.max_points, opts.target_points);
 
-    if (!load_repaired_coastline_from_bin(coastline_file_path, &coastline)) {
+    if (!load_repaired_coastline(coastline_file_path, &coastline)) {
         fprintf(stderr, "Failed to load repaired coastline from %s\n", coastline_file_path);
         goto cleanup;
     }

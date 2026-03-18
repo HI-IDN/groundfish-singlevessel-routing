@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Coastline Database Utilities
  * Import and load island polygon data from SQLite database or file
  */
@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <sqlite3.h>
 #include <geos_c.h>
 #include "../include/coastline_db.h"
@@ -212,7 +213,98 @@ cleanup:
     return rc;
 }
 
-int load_repaired_coastline_from_bin(const char *island_bin_path, CoastlinePoints *out) {
+static int has_text_extension(const char *path) {
+    const char *dot;
+    if (!path) return 0;
+    dot = strrchr(path, '.');
+    if (!dot) return 0;
+    return strcmp(dot, ".tsv") == 0 || strcmp(dot, ".csv") == 0 || strcmp(dot, ".txt") == 0;
+}
+
+static int load_repaired_coastline_from_text(const char *coastline_path, CoastlinePoints *out) {
+    FILE *fp = NULL;
+    char line[4096];
+    int cap = 1024;
+    int n = 0;
+    double *lat = NULL;
+    double *lon = NULL;
+    float *raw = NULL;
+    int rc = 0;
+
+    if (!coastline_path || !out) return 0;
+    memset(out, 0, sizeof(*out));
+
+    fp = fopen(coastline_path, "r");
+    if (!fp) {
+        fprintf(stderr, "  Warning: Could not open %s for coastline import\n", coastline_path);
+        return 0;
+    }
+
+    lat = (double*)malloc((size_t)cap * sizeof(double));
+    lon = (double*)malloc((size_t)cap * sizeof(double));
+    if (!lat || !lon) {
+        fprintf(stderr, "  ✗ Memory allocation failed\n");
+        goto cleanup;
+    }
+
+    while (fgets(line, sizeof(line), fp)) {
+        char *p = line;
+        char *endptr = NULL;
+        double lat_v;
+        double lon_v;
+
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\0' || *p == '\n' || *p == '\r' || *p == '#') continue;
+        if (!isdigit((unsigned char)*p) && *p != '-' && *p != '+' && *p != '.') continue;
+
+        lat_v = strtod(p, &endptr);
+        if (endptr == p) continue;
+        p = endptr;
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+        lon_v = strtod(p, &endptr);
+        if (endptr == p) continue;
+
+        if (n == cap) {
+            cap *= 2;
+            lat = (double*)realloc(lat, (size_t)cap * sizeof(double));
+            lon = (double*)realloc(lon, (size_t)cap * sizeof(double));
+            if (!lat || !lon) {
+                fprintf(stderr, "  ✗ Memory allocation failed\n");
+                goto cleanup;
+            }
+        }
+        lat[n] = lat_v;
+        lon[n] = lon_v;
+        n++;
+    }
+
+    if (n < 3) {
+        fprintf(stderr, "  ✗ Coastline text file must contain at least 3 points\n");
+        goto cleanup;
+    }
+
+    raw = (float*)malloc((size_t)(2 * n) * sizeof(float));
+    if (!raw) {
+        fprintf(stderr, "  ✗ Memory allocation failed\n");
+        goto cleanup;
+    }
+    for (int i = 0; i < n; i++) {
+        raw[i] = (float)lat[i];
+        raw[n + i] = (float)lon[i];
+    }
+
+    rc = sanitize_coastline_geometry(raw, n, out);
+
+cleanup:
+    if (fp) fclose(fp);
+    free(lat);
+    free(lon);
+    free(raw);
+    if (!rc) free_coastline_points(out);
+    return rc;
+}
+
+static int load_repaired_coastline_from_bin(const char *island_bin_path, CoastlinePoints *out) {
     FILE *fp = NULL;
     float *data = NULL;
     size_t file_size = 0;
@@ -266,6 +358,13 @@ cleanup:
     return rc;
 }
 
+int load_repaired_coastline(const char *coastline_path, CoastlinePoints *out) {
+    if (has_text_extension(coastline_path)) {
+        return load_repaired_coastline_from_text(coastline_path, out);
+    }
+    return load_repaired_coastline_from_bin(coastline_path, out);
+}
+
 int replace_coastline_in_db(sqlite3 *db, const CoastlinePoints *coastline) {
     const char *insert_sql = "INSERT INTO coastline (lat, lon) VALUES (?, ?);";
     sqlite3_stmt *stmt = NULL;
@@ -304,124 +403,6 @@ int replace_coastline_in_db(sqlite3 *db, const CoastlinePoints *coastline) {
     return SQLITE_OK;
 }
 
-/* Load island.bin file (land polygon data) - initializes global MAP structure */
-double *load_island_bin(const char *fname, int *out_n) {
-    int i;
-    FILE *fp;
-    float *land_data;
-    size_t fileSize, numElements;
-
-    if (!fname) {
-        fprintf(stderr, "Error: island.bin path is NULL\n");
-        return NULL;
-    }
-
-    fp = fopen(fname, "rb");
-    if (!fp) {
-        perror("fopen island.bin");
-        return NULL;
-    }
-
-    fseek(fp, 0, SEEK_END);
-    fileSize = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    if (fileSize <= 0 || (fileSize % 4) != 0) {
-        fprintf(stderr, "island.bin size invalid\n");
-        fclose(fp);
-        return NULL;
-    }
-
-    numElements = fileSize / sizeof(float);
-    if ((numElements % 2) != 0) {
-        fprintf(stderr, "island.bin float count must be even\n");
-        fclose(fp);
-        return NULL;
-    }
-
-    land_data = (float *)malloc(fileSize);
-    if (!land_data) {
-        perror("Memory allocation failed");
-        fclose(fp);
-        return NULL;
-    }
-
-    if (fread(land_data, sizeof(float), numElements, fp) != numElements) {
-        fprintf(stderr, "Failed to read island.bin\n");
-        free(land_data);
-        fclose(fp);
-        return NULL;
-    }
-    fclose(fp);
-
-    /* Initialize global MAP structure (required by distance_link) */
-    MAP[0].n = 1;
-    MAP[0].N[0] = numElements / 2;
-    MAP[0].LatDeg[0] = (double *) malloc(MAP[0].N[0] * sizeof(double));
-    MAP[0].LonDeg[0] = (double *) malloc(MAP[0].N[0] * sizeof(double));
-
-    if (!MAP[0].LatDeg[0] || !MAP[0].LonDeg[0]) {
-        fprintf(stderr, "Memory allocation failed for MAP\n");
-        free(land_data);
-        free(MAP[0].LatDeg[0]);
-        free(MAP[0].LonDeg[0]);
-        return NULL;
-    }
-
-    /* Convert float land data to double arrays */
-    for (i = 0; i < MAP[0].N[0]; i++) {
-        MAP[0].LatDeg[0][i] = (double)land_data[i];
-        MAP[0].LonDeg[0][i] = (double)land_data[MAP[0].N[0] + i];
-    }
-
-    /* Compute actual Iceland bounds from polygon data */
-    MAP[0].MINLAT = MAP[0].MAXLAT = MAP[0].LatDeg[0][0];
-    MAP[0].MINLON = MAP[0].MAXLON = MAP[0].LonDeg[0][0];
-
-    for (i = 1; i < MAP[0].N[0]; i++) {
-        double lat = MAP[0].LatDeg[0][i];
-        double lon = MAP[0].LonDeg[0][i];
-
-        if (lat < MAP[0].MINLAT) MAP[0].MINLAT = lat;
-        if (lat > MAP[0].MAXLAT) MAP[0].MAXLAT = lat;
-        if (lon < MAP[0].MINLON) MAP[0].MINLON = lon;
-        if (lon > MAP[0].MAXLON) MAP[0].MAXLON = lon;
-    }
-
-    printf("  Iceland bounding box: Lat [%.2f, %.2f], Lon [%.2f, %.2f]\n",
-           MAP[0].MINLAT, MAP[0].MAXLAT, MAP[0].MINLON, MAP[0].MAXLON);
-
-
-    /* Convert and return as double array */
-    double *land = (double*)malloc((size_t)numElements * sizeof(double));
-    if (!land) {
-        fprintf(stderr, "Memory allocation failed\n");
-        free(land_data);
-        return NULL;
-    }
-
-    for (long j = 0; j < (long)numElements; j++) {
-        land[j] = (double)land_data[j];
-    }
-    free(land_data);
-
-    *out_n = MAP[0].N[0];
-    return land;
-}
-
-/* Import island.bin polygon data into coastline table */
-int import_coastline_to_db(sqlite3 *db, const char *island_bin_path) {
-    CoastlinePoints sanitized = {0};
-    if (!load_repaired_coastline_from_bin(island_bin_path, &sanitized)) {
-        return SQLITE_ERROR;
-    }
-
-    /* Insert sanitized polygon into database. */
-    printf("  → Importing %d coastline points...\n", sanitized.n);
-    int rc = replace_coastline_in_db(db, &sanitized);
-    free_coastline_points(&sanitized);
-    return rc;
-}
 
 
 /* Load island polygon data from database (stub - needs MAP structure access) */

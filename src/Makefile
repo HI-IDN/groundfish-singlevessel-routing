@@ -4,7 +4,7 @@
 BUILD_DIR = ../build
 
 COUNTRY_DB ?= ../dat/gsp_data.db
-COUNTRY_ISLAND ?= ../dat/island.bin
+COUNTRY_ISLAND ?= ../dat/island.tsv
 COUNTRY_DAT ?= ../dat/waypoints.dat
 COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
