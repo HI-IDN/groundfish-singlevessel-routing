@@ -95,20 +95,14 @@ static int ensure_station_schema(sqlite3 *db) {
 static int ensure_country_prereqs(sqlite3 *db) {
     sqlite3_stmt *stmt = NULL;
     int coastline_count = 0;
-    int waypoint_count = 0;
 
     if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM coastline;", -1, &stmt, NULL) == SQLITE_OK) {
         if (sqlite3_step(stmt) == SQLITE_ROW) coastline_count = sqlite3_column_int(stmt, 0);
         sqlite3_finalize(stmt);
     }
-    stmt = NULL;
-    if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM waypoints;", -1, &stmt, NULL) == SQLITE_OK) {
-        if (sqlite3_step(stmt) == SQLITE_ROW) waypoint_count = sqlite3_column_int(stmt, 0);
-        sqlite3_finalize(stmt);
-    }
 
-    if (coastline_count == 0 || waypoint_count == 0) {
-        fprintf(stderr, "Country bootstrap must run first: missing coastline/waypoints in database\n");
+    if (coastline_count == 0) {
+        fprintf(stderr, "Country bootstrap must run first: missing coastline in database\n");
         return SQLITE_ERROR;
     }
     return SQLITE_OK;

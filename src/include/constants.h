@@ -65,15 +65,19 @@ enum {
  * The GEOS buffer is applied in geographic degrees, so we use the latitude approximation
  * 1 nm = 1/60 degree here.
  */
-#define COARSE_COASTLINE_OFFSET_NM 50.0
+#define COARSE_COASTLINE_OFFSET_NM 15.0
 #define COARSE_COASTLINE_OFFSET_DEG (COARSE_COASTLINE_OFFSET_NM / 60.0)
-#define COARSE_COASTLINE_MAX_POINTS 25
+#define COARSE_COASTLINE_MAX_POINTS 30
+#define COARSE_COASTLINE_SIMPLIFY_TOLERANCE_NM 2.0
+#define COARSE_COASTLINE_SIMPLIFY_TOLERANCE_DEG (COARSE_COASTLINE_SIMPLIFY_TOLERANCE_NM / 60.0)
 
 /* Buffered coastline support points:
- * 10 nautical mile is visibly offshore while still representing near-coast routing.
+ * 1 nautical mile is visibly offshore while still representing near-coast routing.
  */
-#define BUFFERED_COASTLINE_OFFSET_NM 10.0
+#define BUFFERED_COASTLINE_OFFSET_NM 1.0
 #define BUFFERED_COASTLINE_OFFSET_DEG (BUFFERED_COASTLINE_OFFSET_NM / 60.0)
-#define BUFFERED_COASTLINE_MAX_POINTS 100
+#define BUFFERED_COASTLINE_MAX_POINTS 300
+#define BUFFERED_COASTLINE_SIMPLIFY_TOLERANCE_NM 0.25
+#define BUFFERED_COASTLINE_SIMPLIFY_TOLERANCE_DEG (BUFFERED_COASTLINE_SIMPLIFY_TOLERANCE_NM / 60.0)
 
 #endif

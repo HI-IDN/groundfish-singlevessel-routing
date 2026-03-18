@@ -425,6 +425,45 @@ static int extract_ring_points_from_polygon(GEOSContextHandle_t ctx, const GEOSG
     return 1;
 }
 
+static GEOSGeometry *repair_polygon_geometry(GEOSContextHandle_t ctx,
+                                             GEOSGeometry *geom,
+                                             const char *label) {
+    if (!geom) return NULL;
+    if (GEOSisValid_r(ctx, geom)) return geom;
+
+    GEOSGeometry *repaired = GEOSBuffer_r(ctx, geom, 0.0, 8);
+    if (!repaired || !GEOSisValid_r(ctx, repaired)) {
+        if (repaired) GEOSGeom_destroy_r(ctx, repaired);
+        GEOSGeom_destroy_r(ctx, geom);
+        return NULL;
+    }
+
+    printf("  WARN %s invalid after geometry operation -> repaired with buffer(0)\n", label);
+    GEOSGeom_destroy_r(ctx, geom);
+    return repaired;
+}
+
+static int validate_offset_points_outside_coastline(GEOSContextHandle_t ctx,
+                                                    const GEOSGeometry *coastline_polygon,
+                                                    const GeoPointVec *ring) {
+    if (!ring || ring->n <= 0) return 0;
+    for (int i = 0; i < ring->n; i++) {
+        GEOSCoordSequence *seq = GEOSCoordSeq_create_r(ctx, 1, 2);
+        GEOSGeometry *pt = NULL;
+        if (!seq) return 0;
+        GEOSCoordSeq_setX_r(ctx, seq, 0, ring->points[i].lon);
+        GEOSCoordSeq_setY_r(ctx, seq, 0, ring->points[i].lat);
+        pt = GEOSGeom_createPoint_r(ctx, seq);
+        if (!pt) return 0;
+        if (!GEOSDisjoint_r(ctx, pt, coastline_polygon)) {
+            GEOSGeom_destroy_r(ctx, pt);
+            return 0;
+        }
+        GEOSGeom_destroy_r(ctx, pt);
+    }
+    return 1;
+}
+
 static int read_waypoint_seeds_from_dat(const char *dat_path, GeoPointVec *out) {
     DataSet dataset;
     dataset_init(&dataset);
@@ -456,24 +495,59 @@ static int read_waypoint_seeds_from_dat(const char *dat_path, GeoPointVec *out) 
  */
 static int build_offset_ring_from_coastline(GEOSContextHandle_t ctx,
                                             const GEOSGeometry *coastline_polygon,
+                                            const char *label,
                                             double offset_deg,
+                                            double simplify_tolerance_deg,
                                             int target_max_points,
                                             GeoPointVec *out) {
     /* 32 segments gives a smooth curve that hugs the coast closely */
     GEOSGeometry *buffered = GEOSBuffer_r(ctx, coastline_polygon, offset_deg, 32);
-    GeoPointVec raw = {0};
+    GEOSGeometry *simplified = NULL;
+    GeoPointVec repaired_ring = {0};
+    GeoPointVec simplified_ring = {0};
     if (!buffered) return 0;
 
-    if (!extract_ring_points_from_polygon(ctx, buffered, &raw)) {
+    buffered = repair_polygon_geometry(ctx, buffered, label);
+    if (!buffered) return 0;
+
+    if (!extract_ring_points_from_polygon(ctx, buffered, &repaired_ring)) {
         GEOSGeom_destroy_r(ctx, buffered);
         return 0;
     }
+    printf("  %s ring after repair: %d points\n", label, repaired_ring.n);
+
+    simplified = GEOSTopologyPreserveSimplify_r(ctx, buffered, simplify_tolerance_deg);
     GEOSGeom_destroy_r(ctx, buffered);
-    if (!downsample_points_stride(&raw, target_max_points, out)) {
-        point_vec_free(&raw);
+    if (!simplified) {
+        point_vec_free(&repaired_ring);
         return 0;
     }
-    point_vec_free(&raw);
+    simplified = repair_polygon_geometry(ctx, simplified, label);
+    if (!simplified) {
+        point_vec_free(&repaired_ring);
+        return 0;
+    }
+    if (!extract_ring_points_from_polygon(ctx, simplified, &simplified_ring)) {
+        GEOSGeom_destroy_r(ctx, simplified);
+        point_vec_free(&repaired_ring);
+        return 0;
+    }
+    printf("  %s ring after simplify: %d points\n", label, simplified_ring.n);
+    GEOSGeom_destroy_r(ctx, simplified);
+
+    if (!downsample_points_stride(&simplified_ring, target_max_points, out)) {
+        point_vec_free(&repaired_ring);
+        point_vec_free(&simplified_ring);
+        return 0;
+    }
+    if (!validate_offset_points_outside_coastline(ctx, coastline_polygon, out)) {
+        point_vec_free(out);
+        point_vec_free(&repaired_ring);
+        point_vec_free(&simplified_ring);
+        return 0;
+    }
+    point_vec_free(&repaired_ring);
+    point_vec_free(&simplified_ring);
     return 1;
 }
 
@@ -838,7 +912,9 @@ int country_bootstrap_run(int argc, char **argv) {
 
     /* --- Generate coarse offshore ring --- */
     if (!build_offset_ring_from_coastline(geos_ctx, original_polygon,
+                                          "Coarse coastline",
                                           COARSE_COASTLINE_OFFSET_DEG,
+                                          COARSE_COASTLINE_SIMPLIFY_TOLERANCE_DEG,
                                           COARSE_COASTLINE_MAX_POINTS,
                                           &coarse_ring)) {
         fprintf(stderr, "Failed to generate coarse coastline ring\n");
@@ -848,10 +924,13 @@ int country_bootstrap_run(int argc, char **argv) {
 
     /* --- Build buffered coastline support set --- */
     if (!build_offset_ring_from_coastline(geos_ctx, original_polygon,
+                                          "Buffered coastline",
                                           BUFFERED_COASTLINE_OFFSET_DEG,
+                                          BUFFERED_COASTLINE_SIMPLIFY_TOLERANCE_DEG,
                                           BUFFERED_COASTLINE_MAX_POINTS,
                                           &buffered_ring)) {
-        fprintf(stderr, "Warning: failed to build buffered coastline support set\n");
+        fprintf(stderr, "Failed to build buffered coastline support set\n");
+        goto cleanup;
     }
 
     /* --- Open DB --- */
