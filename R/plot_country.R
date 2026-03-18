@@ -40,7 +40,7 @@ ports <- read_db_table(
 )
 
 granularity_levels <- c("0", "1", "2")
-granularity_labels <- c("coarse ring", "buffered support", "manual WAYP")
+granularity_labels <- c("coarse ring", "buffered support", "manual")
 granularity_colours <- c(
   "0" = "#E69F00",
   "1" = "#0072B2",
@@ -134,8 +134,6 @@ p <- base_coastline_plot(coastline) +
 
 p <- apply_degree_axes(p)
 p <- p + gsp_common_theme(legend_position = "bottom", legend_direction = "horizontal")
-
-print(p)
 
 ggsave(
   filename = output_file,

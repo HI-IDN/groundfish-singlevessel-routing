@@ -296,8 +296,6 @@ p <- p + gsp_common_theme(legend_position = "bottom", legend_direction = "horizo
 # Override legend to use 2 columns
 p <- p + guides(color = guide_legend(ncol = 3, byrow = TRUE))
 
-plotly::ggplotly(p)
-
 # Save plot
 output_file <- gsub("\\.json$", ".png", survey_file)
 cat(sprintf("\nSaving plot to %s...\n", output_file))

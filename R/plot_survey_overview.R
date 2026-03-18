@@ -96,8 +96,6 @@ final_plot <- final_plot + gsp_common_theme(
   legend_direction = "horizontal"
 )
 
-print(final_plot)
-
 output_file <- "dat/survey_overview.png"
 cat(sprintf("\nSaving plot to %s...\n", output_file))
 
