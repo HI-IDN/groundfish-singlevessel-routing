@@ -43,7 +43,7 @@ log/
 *.log
 
 # Generated databases and large derived data
-dat/gsp_data.db
+dat/gsp.db
 dat/*.sqlite
 sol/*.sqlite
 

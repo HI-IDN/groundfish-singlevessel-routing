@@ -71,7 +71,7 @@ add_custom_target(prepare_routing_data
 
 add_custom_target(survey
     COMMAND ${CMAKE_MAKE_PROGRAM} run_survey_import
-    COMMAND historical_survey ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp_data.db ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey
+    COMMAND historical_survey ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp.db ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey
     DEPENDS historical_survey
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
     COMMENT "Step 4: Import historical survey assignments and export JSON"
@@ -144,7 +144,7 @@ target_link_libraries(gsp_init_opt
 # ============================================================
 
 set(CONFIG_YAML ${CMAKE_CURRENT_SOURCE_DIR}/../config/gsp_solver.yaml)
-set(DATABASE ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp_data.db)
+set(DATABASE ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp.db)
 set(SOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../sol)
 set(SOL_NN_DIR ${SOL_DIR}/nn)
 set(SOL_GE_DIR ${SOL_DIR}/ge)

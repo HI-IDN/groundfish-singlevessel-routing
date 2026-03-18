@@ -281,7 +281,7 @@ int main(int argc, char **argv) {
     }
 
     if (!dat_file || !db_path) {
-        fprintf(stderr, "Usage: %s <survey2023spring.dat> <gsp_data.db>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <survey2023spring.dat> <gsp.db>\n", argv[0]);
         return 1;
     }
 

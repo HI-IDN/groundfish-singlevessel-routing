@@ -50,7 +50,7 @@ gurobi:
 
 # Database Configuration
 database:
-  path: "dat/gsp_data.db"                # Path to SQLite database
+  path: "dat/gsp.db"                     # Path to SQLite database
   auto_create_schema: true               # Auto-create tables if not exist
 
 # Output and Logging

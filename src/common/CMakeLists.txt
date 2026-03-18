@@ -93,7 +93,7 @@ target_link_libraries(gsp_prepare_routing_data
 # Data files
 set(STATIONS_DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/stations.dat)
 set(HISTORICAL_SURVEY_DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/survey2023spring.dat)
-set(DB_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/gsp_data.db)
+set(DB_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/gsp.db)
 
 # Custom target: import stations
 add_custom_target(run_stations

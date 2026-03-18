@@ -4,7 +4,7 @@
 BUILD_DIR = ../build
 CONFIG_YAML = ../config/gsp_solver.yaml
 
-COUNTRY_DB ?= ../dat/gsp_data.db
+COUNTRY_DB ?= ../dat/gsp.db
 COUNTRY_ISLAND ?= ../dat/island.tsv
 COUNTRY_DAT ?= ../dat/waypoints.dat
 COUNTRY_PORT_FILE ?= ../dat/ports.dat
@@ -96,7 +96,7 @@ plot-routes:
 	done'
 
 plot-country:
-	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp_data.db dat/coastline_waypoints_ports.png'
+	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp.db dat/coastline_waypoints_ports.png'
 
 plot-overview:
 	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R'

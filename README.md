@@ -143,7 +143,7 @@ GSP Solver - Phase 0: Initialization
 Boat: Árni Friðriksson (ID=2)
 Capacity: 45 tonnes
 Home Port: Hafnarfjörður
-Database: dat/gsp_data.db
+Database: dat/gsp.db
 
 Strategy: OPT (Optimal via NP-MIP)
 Solver: Gurobi 11.0
@@ -173,7 +173,7 @@ Results:
 #### Verify Phase 0 Completion
 
 ```bash
-sqlite3 dat/gsp_data.db \
+sqlite3 dat/gsp.db \
   "SELECT strategy, total_distance, num_stations, num_segments, runtime_seconds 
    FROM init_runs 
    WHERE boat_id = 2 
@@ -199,7 +199,7 @@ capacity-aware MIP solves.
 ```bash
 ./build/gsp_gurobi --mode sweep \
   --strategy opt \
-  --database dat/gsp_data.db \
+  --database dat/gsp.db \
   --config config/gsp_solver.yaml \
   --input sol/opt/init.json \
   --output sol/opt/sweep.json \
@@ -294,7 +294,7 @@ sweep:
 **Compare all INIT strategies:**
 
 ```bash
-sqlite3 dat/gsp_data.db \
+sqlite3 dat/gsp.db \
   "SELECT 
      strategy,
      total_distance,
@@ -308,7 +308,7 @@ sqlite3 dat/gsp_data.db \
 **Best MH result for each L2SEG:**
 
 ```bash
-sqlite3 dat/gsp_data.db \
+sqlite3 dat/gsp.db \
   "SELECT 
      init.strategy,
      mh.l2seg,
@@ -325,7 +325,7 @@ sqlite3 dat/gsp_data.db \
 **Track convergence:**
 
 ```bash
-sqlite3 dat/gsp_data.db \
+sqlite3 dat/gsp.db \
   "SELECT 
      iteration,
      total_distance,
@@ -382,7 +382,7 @@ Typical runtimes on 8-core system (Árni Friðriksson, 580 stations, 45 tonne ca
 
 ### Database Tables
 
-Solution tracking uses 8 tables in `dat/gsp_data.db`:
+Solution tracking uses 8 tables in `dat/gsp.db`:
 
 - `init_runs` - One entry per boat/strategy combination
 - `init_tours` - Tour waypoints for each init solution
