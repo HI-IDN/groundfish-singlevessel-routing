@@ -274,11 +274,9 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
 
     /* Query boat info including start/end location IDs for proximity checks. */
     const char *boat_sql =
-        "SELECT b.name, b.capacity, b.start_location_id, b.end_location_id, "
-        "       l1.lat, l1.lon, l2.lat, l2.lon "
+        "SELECT b.name, b.capacity, b.location_id, l1.lat, l1.lon "
         "FROM boats b "
-        "JOIN locations l1 ON b.start_location_id = l1.id "
-        "JOIN locations l2 ON b.end_location_id = l2.id "
+        "JOIN locations l1 ON b.location_id = l1.id "
         "WHERE b.id = ?;";
 
     sqlite3_stmt *stmt;
@@ -292,7 +290,7 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     int capacity = 0;
     int boat_start_loc_id = 0;
     int boat_end_loc_id = 0;
-    double home_lat = 0.0, home_lon = 0.0;
+    double dock_lat = 0.0, dock_lon = 0.0;
 
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         const char *name = (const char*)sqlite3_column_text(stmt, 0);
@@ -302,9 +300,9 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
         }
         capacity = sqlite3_column_int(stmt, 1);
         boat_start_loc_id = sqlite3_column_int(stmt, 2);
-        boat_end_loc_id = sqlite3_column_int(stmt, 3);
-        home_lat = sqlite3_column_double(stmt, 4);
-        home_lon = sqlite3_column_double(stmt, 5);
+        boat_end_loc_id = boat_start_loc_id;
+        dock_lat = sqlite3_column_double(stmt, 3);
+        dock_lon = sqlite3_column_double(stmt, 4);
     } else {
         fprintf(stderr, "Boat %d not found in database\n", boat_id);
         sqlite3_finalize(stmt);
@@ -318,7 +316,7 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
         "SELECT s.id, s.table_type, s.table_id, s.segment, "
         "       CASE WHEN s.table_type = %d THEN st.start_location_id "
         "            WHEN s.table_type = %d THEN p.location_id "
-        "            WHEN s.table_type = %d THEN b.start_location_id "
+        "            WHEN s.table_type = %d THEN b.location_id "
         "            ELSE NULL END AS resolved_loc_id, "
         "       CASE WHEN s.table_type = %d THEN st.end_location_id ELSE NULL END AS station_end_loc_id, "
         "       CASE WHEN s.table_type = %d THEN st.amount ELSE 0 END AS catch_amount "
@@ -558,8 +556,8 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     fprintf(out, "    \"strategy\": \"baseline\",\n");
     fprintf(out, "    \"boat_id\": %d,\n", boat_id);
     fprintf(out, "    \"boat_name\": \"%s\",\n", boat_name);
-    fprintf(out, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", home_lat, home_lon);
-    fprintf(out, "    \"boat_location_ids\": [%d, %d]\n", boat_start_loc_id, boat_end_loc_id);
+    fprintf(out, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", dock_lat, dock_lon);
+    fprintf(out, "    \"boat_location_id\": %d\n", boat_start_loc_id);
     fprintf(out, "  },\n");
 
     fprintf(out, "  \"problem\": {\n");

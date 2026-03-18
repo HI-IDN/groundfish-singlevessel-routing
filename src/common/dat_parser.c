@@ -134,15 +134,12 @@ void dataset_add_boat(DataSet *ds, const Item *item) {
     boat->boat_id = ds->n_boats;
     boat->name = xstrdup(item->Name);
 
-    /* BoatData: [0-3]=start/end location, [4]=capacity */
-    int start_east = (int)item->BoatData[0];
-    int start_north = (int)item->BoatData[1];
-    int end_east = (int)item->BoatData[2];
-    int end_north = (int)item->BoatData[3];
+    /* BoatData: [0-1]=docked location, [2]=capacity */
+    int east = (int)item->BoatData[0];
+    int north = (int)item->BoatData[1];
 
-    boat->start_location_id = dataset_add_location(ds, start_east, start_north);
-    boat->end_location_id = dataset_add_location(ds, end_east, end_north);
-    boat->capacity = (int)item->BoatData[4];
+    boat->location_id = dataset_add_location(ds, east, north);
+    boat->capacity = (int)item->BoatData[2];
 
     ds->n_boats++;
 }
@@ -258,7 +255,7 @@ void free_tokens(char **tok, int cnt) {
 static void parse_boat_item(const char **tok, const char *line, Item *it) {
     memset(it, 0, sizeof(*it));
     it->Type = NODE_TYPE_BOAT;
-    it->Name = xstrdup(tok[12]);
+    it->Name = xstrdup(tok[10]);
     it->RawLine = xstrdup(line);
 
     char *hash = strchr(line, '#');
@@ -270,13 +267,13 @@ static void parse_boat_item(const char **tok, const char *line, Item *it) {
         }
     }
 
-    it->BoatDataLen = 11;
-    for (int i = 0; i < 11; i++) it->BoatData[i] = atof(tok[1 + i]);
+    it->BoatDataLen = 9;
+    for (int i = 0; i < 9; i++) it->BoatData[i] = atof(tok[1 + i]);
 
     it->LatLonDegMin[0] = it->BoatData[0];
     it->LatLonDegMin[1] = it->BoatData[1];
-    it->LatLonDegMin[2] = it->BoatData[2];
-    it->LatLonDegMin[3] = it->BoatData[3];
+    it->LatLonDegMin[2] = it->BoatData[0];
+    it->LatLonDegMin[3] = it->BoatData[1];
     for (int k = 0; k < 4; k++) {
         it->LatLonRad[k] = degmin_to_rad(it->LatLonDegMin[k]);
     }
@@ -408,7 +405,7 @@ void read_dat_file_selected(const char *fname, DataSet *out_dataset, int select_
         Item it;
         int valid = 0;
 
-        if (strcmp(tok[0], GSP_DAT_TAG_BOAT) == 0 && nt >= 13) {
+        if (strcmp(tok[0], GSP_DAT_TAG_BOAT) == 0 && nt >= 11) {
             parse_boat_item((const char**)tok, line, &it);
             valid = 1;
             boat_count++;

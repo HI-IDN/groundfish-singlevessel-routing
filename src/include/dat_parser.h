@@ -12,7 +12,7 @@ typedef struct {
     char *Name;
     char *RawLine;
     char *Comment;
-    double BoatData[11];
+    double BoatData[9];
     int BoatDataLen;
     double StationData[9];
     int StationDataLen;
@@ -36,8 +36,7 @@ typedef struct
     int boat_id;
     char *name;
     int capacity;
-    int start_location_id;
-    int end_location_id;
+    int location_id;
 } Boat;
 
 /* Station: sampling location with catch data */

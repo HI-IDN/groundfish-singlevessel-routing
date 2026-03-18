@@ -1,9 +1,7 @@
 #!/usr/bin/env Rscript
 # GSP Survey Route Plotter
-# Visualizes survey routes exported from export_survey_json tool
 # Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|capacity-feasible|presolve]
 
-# Load required packages
 required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite")
 
 script_file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
@@ -13,31 +11,26 @@ script_dir <- if (length(script_file_arg) > 0) {
   "R"
 }
 source(file.path(script_dir, "plot_utils.R"))
-
 load_required_packages(required_packages)
 
-# Main script execution
 cat("=== GSP Survey Route Plotter ===\n\n")
 
-# Parse command-line arguments
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) == 0) {
   warning("Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|capacity-feasible|presolve]\n", call. = FALSE)
-  args <- c("sol/opt/noport.json", "final")  # Default for testing
+  args <- c("sol/opt/noport.json", "final")
 }
 
 survey_file <- args[1]
 selected_variant <- if (length(args) >= 2) args[2] else "final"
 
-# Check if survey file exists
 if (!file.exists(survey_file)) {
   stop(sprintf("Survey file not found: %s", survey_file), call. = FALSE)
 }
 
 cat(sprintf("Survey file: %s\n", survey_file))
-
-# Load survey JSON
 cat("\nLoading survey data from JSON...\n")
+
 survey <- tryCatch({
   jsonlite::fromJSON(survey_file)
 }, error = function(e) {
@@ -45,15 +38,9 @@ survey <- tryCatch({
 })
 
 ensure_segment_list <- function(x) {
-  if (is.null(x)) {
-    return(list())
-  }
-  if (is.list(x) && !is.data.frame(x)) {
-    return(x)
-  }
-  if (is.data.frame(x)) {
-    return(split(x, seq_len(nrow(x))))
-  }
+  if (is.null(x)) return(list())
+  if (is.list(x) && !is.data.frame(x)) return(x)
+  if (is.data.frame(x)) return(split(x, seq_len(nrow(x))))
   list(x)
 }
 
@@ -69,33 +56,27 @@ resolve_solution_block <- function(survey, variant_name) {
   if (is.null(survey$solution[[variant_name]])) {
     stop(sprintf("Requested variant '%s' is missing from this JSON.", variant_name), call. = FALSE)
   }
-  return(list(
-      solution = survey$solution[[variant_name]],
-      feasible = survey$solution[[variant_name]]$feasible,
-      pass_name = variant_name,
-      variant_label = variant_name
-  ))
+  list(
+    solution = survey$solution[[variant_name]],
+    feasible = survey$solution[[variant_name]]$feasible,
+    pass_name = variant_name,
+    variant_label = variant_name
+  )
 }
 
 resolved <- resolve_solution_block(survey, selected_variant)
 solution <- resolved$solution
 solution$tour_segments_location_ids <- ensure_segment_list(solution$tour_segments_location_ids)
 solution$tour_segments_station_ids <- ensure_segment_list(solution$tour_segments_station_ids)
-variant_label <- if (!is.null(resolved$variant_label) && length(resolved$variant_label) > 0) {
-  resolved$variant_label
-} else {
-  selected_variant
+
+if (length(solution$tour_segments_location_ids) == 0) {
+  stop("tour_segments_location_ids is missing from this JSON.", call. = FALSE)
 }
 
-cat(sprintf("Variant: %s\n", selected_variant))
-if (!is.null(resolved$pass_name)) {
-  cat(sprintf("Pass: %s\n", resolved$pass_name))
-}
-
-# Extract metadata
 boat_id <- survey$metadata$boat_id
 boat_name <- survey$metadata$boat_name
-home_port <- survey$metadata$home_port
+boat_docked_location <- survey$metadata$boat_docked_location
+boat_location_id <- as.integer(survey$metadata$boat_location_id)
 capacity <- survey$problem$capacity
 num_stations <- survey$problem$num_stations
 segment_count <- solution$segment_count
@@ -106,9 +87,12 @@ segment_catch <- solution$segment_catch_amount
 segment_distance <- solution$segment_distance_nm
 segment_length <- solution$tour_length
 segment_station_ids <- solution$tour_segments_station_ids
+variant_label <- resolved$variant_label
 
+cat(sprintf("Variant: %s\n", selected_variant))
+if (!is.null(resolved$pass_name)) cat(sprintf("Pass: %s\n", resolved$pass_name))
 cat(sprintf("Boat: %s (ID: %d)\n", boat_name, boat_id))
-cat(sprintf("Home port: %.6f°, %.6f°\n", home_port$lat, home_port$lon))
+cat(sprintf("Boat docked location: %.6f°, %.6f°\n", boat_docked_location$lat, boat_docked_location$lon))
 cat(sprintf("Capacity: %d\n", capacity))
 cat(sprintf("Stations: %d\n", num_stations))
 cat(sprintf("Segments: %d\n", segment_count))
@@ -141,7 +125,6 @@ cat(sprintf("| **Total** | **%d** | **%d** | **%d** | **%.2f** |\n\n",
             sum(segment_summary$Catch),
             total_distance))
 
-# Check for capacity violations
 if (!feasible) {
   cat("Capacity violations detected:\n")
   for (s in seq_along(segment_catch)) {
@@ -152,131 +135,126 @@ if (!feasible) {
   cat("\n")
 }
 
-# Load database for coastline
 db_path <- "dat/gsp_data.db"
 if (!file.exists(db_path)) {
   stop(sprintf("Database file not found: %s", db_path), call. = FALSE)
 }
 
-# Load coastline data
 cat("Loading coastline data...\n")
 coastline <- read_db_table(db_path, "SELECT lat, lon FROM coastline")
 
-# Load all locations for mapping location IDs to coordinates
 cat("Loading location data...\n")
 locations <- read_db_table(db_path, "SELECT id, lat, lon FROM locations")
 
-# Build lookup sets from JSON annotations
-boat_loc_ids     <- unlist(survey$metadata$boat_location_ids)
-dock_loc_ids     <- unlist(solution$dock_location_ids)
+dock_loc_ids <- unlist(solution$dock_location_ids)
 waypoint_loc_ids <- unlist(solution$unique_waypoint_location_ids)
-if (length(solution$tour_segments_location_ids) == 0) {
-  stop("tour_segments_location_ids is missing from this JSON.", call. = FALSE)
-}
 
 classify_point <- function(loc_id) {
-  if (loc_id %in% boat_loc_ids)     return("BOAT")
-  if (loc_id %in% dock_loc_ids)     return("PORT")
+  if (loc_id == boat_location_id) return("BOAT")
+  if (loc_id %in% dock_loc_ids) return("PORT")
   if (loc_id %in% waypoint_loc_ids) return("WAYP")
-  return("Station")
+  "Station"
 }
 
-# Build route path from tour_segments_location_ids
 cat("Building route path from segments...\n")
-tour_segments <- solution$tour_segments_location_ids
 route_path <- tibble()
 segment_id <- 1
-
-for (segment in tour_segments) {
-  for (i in seq_along(segment)) {
-    loc_id <- segment[i]
+for (segment in solution$tour_segments_location_ids) {
+  for (loc_id in segment) {
     loc_row <- locations %>% filter(id == loc_id)
-
     if (nrow(loc_row) > 0) {
-      route_path <- bind_rows(route_path,
-                              tibble(
-                                segment    = segment_id,
-                                sequence   = nrow(route_path) + 1,
-                                lat        = loc_row$lat[1],
-                                lon        = loc_row$lon[1],
-                                location_id = loc_id,
-                                point_type = classify_point(loc_id)
-                              ))
+      route_path <- bind_rows(
+        route_path,
+        tibble(
+          segment = segment_id,
+          sequence = nrow(route_path) + 1,
+          lat = loc_row$lat[1],
+          lon = loc_row$lon[1],
+          location_id = loc_id,
+          point_type = classify_point(loc_id)
+        )
+      )
     }
   }
   segment_id <- segment_id + 1
 }
 
-cat(sprintf("Built route path with %d waypoints across %d segments\n\n",
-            nrow(route_path), segment_count))
+cat(sprintf("Built route path with %d locations across %d segments\n\n", nrow(route_path), segment_count))
 
-# Create base plot with coastline
-cat("Creating survey route visualization...\n")
 p <- base_coastline_plot(coastline)
 
-# Create legend labels with segment statistics
 segment_labels <- sprintf("#%d: %.0f nm, %d kg",
                           seq_along(segment_distance),
                           segment_distance,
                           segment_catch)
 
-# Add route path with segment coloring
 p <- p +
-  geom_path(data = route_path,
-            aes(x = lon, y = lat, color = factor(segment)),
-            linewidth = 0.8, alpha = 0.7, inherit.aes = FALSE) +
-  scale_color_viridis_d(option = "turbo",
-                        name = "Segment Stats",
-                        labels = segment_labels)
+  geom_path(
+    data = route_path,
+    aes(x = lon, y = lat, color = factor(segment)),
+    linewidth = 0.8,
+    alpha = 0.7,
+    inherit.aes = FALSE
+  ) +
+  scale_color_viridis_d(
+    option = "turbo",
+    name = "Segment Stats",
+    labels = segment_labels
+  )
 
-# Add station points
-station_points <- route_path %>%
-  filter(point_type == "Station")
-
-p <- p +
-  geom_point(data = station_points,
-             aes(x = lon, y = lat),
-             size = 1.5, color = "steelblue", alpha = 0.4, inherit.aes = FALSE)
-
-# Add port points
-port_points <- route_path %>%
-  filter(point_type == "PORT") %>%
-  distinct(lat, lon, .keep_all = TRUE)
+station_points <- route_path %>% filter(point_type == "Station")
+port_points <- route_path %>% filter(point_type == "PORT") %>% distinct(lat, lon, .keep_all = TRUE)
+waypoints <- route_path %>% filter(point_type == "WAYP") %>% distinct(lat, lon, .keep_all = TRUE)
 
 p <- p +
-  geom_point(data = port_points,
-             aes(x = lon, y = lat),
-             size = 3, shape = 1, inherit.aes = FALSE)
+  geom_point(
+    data = station_points,
+    aes(x = lon, y = lat),
+    size = 1.5,
+    color = "steelblue",
+    alpha = 0.4,
+    inherit.aes = FALSE
+  ) +
+  geom_point(
+    data = port_points,
+    aes(x = lon, y = lat),
+    size = 3,
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  geom_point(
+    data = waypoints,
+    aes(x = lon, y = lat),
+    shape = 42,
+    size = 1.5,
+    inherit.aes = FALSE
+  ) +
+  annotate(
+    "point",
+    x = boat_docked_location$lon,
+    y = boat_docked_location$lat,
+    size = 3,
+    shape = 16
+  ) +
+  annotate(
+    "text",
+    x = boat_docked_location$lon,
+    y = boat_docked_location$lat,
+    label = "Boat docked",
+    hjust = -0.2,
+    vjust = 0.5,
+    size = 3.5,
+    fontface = "bold"
+  )
 
-# Add home port marker using annotate() to avoid data length warnings
-p <- p +
-  annotate("point", x = home_port$lon, y = home_port$lat,
-           size = 3, shape = 16) +
-  annotate("text", x = home_port$lon, y = home_port$lat,
-           label = "Home", hjust = -0.2, vjust = 0.5,
-           size = 3.5, fontface = "bold")
-
-# Plot waypoints with shape 42
-waypoints <- route_path %>%
-  filter(point_type == "WAYP") %>%
-  distinct(lat, lon, .keep_all = TRUE)
-
-p <- p +
-  geom_point(data = waypoints,
-             aes(x = lon, y = lat),
-             shape=42, size = 1.5, inherit.aes = FALSE)
-
-
-# Create subtitle with feasibility info
 subtitle_text <- sprintf(
   "Distance: %.0f nm | Stations: %d | Segments: %d | Capacity: %d tons",
   total_distance,
   num_stations,
   segment_count,
-  capacity / 1000  # Convert kg to tons for subtitle
+  capacity / 1000
 )
 
-# Finalize plot
 p <- p +
   coord_fixed_for_lat(route_path$lat, fallback_lat = 65.0) +
   labs(
@@ -288,11 +266,8 @@ p <- p +
 
 p <- apply_degree_axes(p)
 p <- p + gsp_common_theme(legend_position = "bottom", legend_direction = "horizontal")
-
-# Override legend to use 2 columns
 p <- p + guides(color = guide_legend(ncol = 3, byrow = TRUE))
 
-# Save plot
 output_file <- gsub("\\.json$", ".png", survey_file)
 cat(sprintf("\nSaving plot to %s...\n", output_file))
 
@@ -305,5 +280,5 @@ ggsave(
   bg = "white"
 )
 
-cat(sprintf("✓ Plot saved to: %s\n", normalizePath(output_file)))
-cat("✓ Visualization complete!\n")
+cat(sprintf("OK Plot saved to: %s\n", normalizePath(output_file)))
+cat("OK Visualization complete!\n")

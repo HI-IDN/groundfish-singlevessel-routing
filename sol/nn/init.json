@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "init_nn_1.0",
-    "timestamp": "1773855972",
+    "timestamp": "1773856145",
     "mode": "init_nn",
     "strategy": "nn",
     "boat_id": 2,
@@ -65,10 +65,10 @@
     "feasible": true,
     "total_distance_nm": [9219.15],
     "final_total_distance_nm": 9219.15,
-    "preprocessing_seconds": 1.119719,
-    "solution_runtime_seconds": [0.057558],
-    "postprocessing_seconds": 0.835875,
-    "total_runtime_seconds": 2.013184,
+    "preprocessing_seconds": 1.394559,
+    "solution_runtime_seconds": [0.068873],
+    "postprocessing_seconds": 1.073892,
+    "total_runtime_seconds": 2.537357,
     "method": "nearest_neighbor"
   }
 }

@@ -1,4 +1,4 @@
-BOAT 663381 224128 640278 220834 14000 10 4 30 255 153 153 "Bjarni Sæmundsson"
+BOAT 640278 220834 14000 10 4 30 255 153 153 "Bjarni Sæmundsson"
 STAT 671 5 0 663615 215451 663716 214462 1643 12  #   \\ botndypi_kastad= 72 botndypi_hift= 88 \\
 STAT 621 3 0 663003 213672 663019 214666 47 14  #  Endurtekið tog, rifnaði í fyrri tilraun \\ botndypi_kastad= 110 botndypi_hift= 103 \\
 STAT 671 11 0 663526 213257 663865 212728 2352 15  #   \\ botndypi_kastad= 107 botndypi_hift= 119 \\
@@ -114,7 +114,7 @@ STAT 524 2 0 650141 242612 650226 243528 1200 15  #   \\ botndypi_kastad= 124 bo
 STAT 474 2 0 645619 244764 645482 245647 624 18  #   \\ botndypi_kastad= 157 botndypi_hift= 144 \\
 STAT 474 12 0 645138 241148 644815 241687 1956 24  #   \\ botndypi_kastad= 222 botndypi_hift= 277 \\
 PORT 640278 220834 "Hafnarfjörður" 1
-BOAT 640278 220834 640278 220834 45000 10 4 30 153 153 255 "Árni Friðriksson"
+BOAT    640278 220834 45000 10 4 30 153 153 255 "Árni Friðriksson"
 STAT 472 11 0 643450 224868 643839 224473 86 12  #   \\ botndypi_kastad= 63 botndypi_hift= 45 \\
 STAT 473 1 0 643451 230243 643082 230583 1247 13  #   \\ botndypi_kastad= 66 botndypi_hift= 96 \\
 STAT 473 11 0 643670 233515 643519 234345 540 15  #   \\ botndypi_kastad= 111 botndypi_hift= 120 \\
@@ -285,7 +285,7 @@ STAT 524 12 0 651044 250001 650647 250006 544 14  #   \\ botndypi_kastad= 100 bo
 STAT 474 31 0 645300 240558 645121 240428 287 13  #  Gríðar mikið af loðnu undir, híft \\ botndypi_kastad= 85 botndypi_hift= 59 \\
 STAT 474 4 0 644222 241510 643863 241075 1146 15  #   \\ botndypi_kastad= 130 botndypi_hift= 102 \\
 PORT 640278 220834 "Hafnarfjörður" 1
-BOAT 651837 132441 651837 132441 200000 10 4 30 255 204 153 "Gullver"
+BOAT 651837 132441 200000 10 4 30 255 204 153 "Gullver"
 STAT 512 7 0 651719 130004 651716 125064 807 16  #   \\ botndypi_kastad= 163 botndypi_hift= 191 \\
 STAT 512 11 0 651500 124982 651501 124100 701 15  #   \\ botndypi_kastad= 130 botndypi_hift= 161 \\
 STAT 512 13 0 651240 124600 650900 125300 366 15  #   \\ botndypi_kastad= 155 botndypi_hift= 148 \\
@@ -439,7 +439,7 @@ STAT 615 11 0 662607 150771 662887 150047 257 13  #  Festa 66°26,287-15°07,065
 STAT 614 2 0 662790 143580 662852 143033 44 12  #  Fast eftir 2,3sml. Allt heilt,gilt. \\ botndypi_kastad= 99 botndypi_hift= 95 \\
 STAT 614 1 0 662692 141081 662299 140909 200 12  #   \\ botndypi_kastad= 100 botndypi_hift= 101 \\
 PORT 651701 135483 "Seyðisfjörður" 1
-BOAT 632590 200670 632590 200670 200000 10 4 30 255 153 204 "Breki"
+BOAT 632590 200670 200000 10 4 30 255 153 204 "Breki"
 STAT 319 12 0 631975 195166 632271 194488 1905 20  #  Botndýpi 218-140 m, Vír 250-195 fm. \\ botndypi_kastad= 218 botndypi_hift= 140 \\
 STAT 319 35 0 631992 194612 631653 195104 2726 28  #  Vír 270-390 fm. \\ botndypi_kastad= 207 botndypi_hift= 444 \\
 STAT 319 36 0 631598 195313 631407 200097 305 40  #   \\ botndypi_kastad= 478 botndypi_hift= 446 \\

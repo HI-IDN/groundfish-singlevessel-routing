@@ -183,19 +183,13 @@ boats <- read_db_table(
   db_path,
   "SELECT b.id AS boat_id,
           COALESCE(b.name, '') AS name,
-          ls.id AS start_location_id,
-          ls.easting AS start_easting,
-          ls.northing AS start_northing,
-          ls.lat AS start_lat,
-          ls.lon AS start_lon,
-          le.id AS end_location_id,
-          le.easting AS end_easting,
-          le.northing AS end_northing,
-          le.lat AS end_lat,
-          le.lon AS end_lon
+          l.id AS location_id,
+          l.easting AS easting,
+          l.northing AS northing,
+          l.lat AS lat,
+          l.lon AS lon
    FROM boats b
-   JOIN locations ls ON ls.id = b.start_location_id
-   JOIN locations le ON le.id = b.end_location_id
+   JOIN locations l ON l.id = b.location_id
    ORDER BY b.id"
 )
 
@@ -256,47 +250,13 @@ ports <- ports |>
     )
   )
 
-boat_starts <- boats |>
-  dplyr::transmute(
-    boat_id,
-    name,
-    location_id = start_location_id,
-    easting = start_easting,
-    northing = start_northing,
-    lat = start_lat,
-    lon = start_lon,
+boat_points <- boats |>
+  dplyr::mutate(
     hover_text = purrr::pmap_chr(
-      list(boat_id, name, start_location_id, start_easting, start_northing, start_lat, start_lon),
+      list(boat_id, name, location_id, easting, northing, lat, lon),
       \(boat_id, name, location_id, easting, northing, lat, lon) {
         fmt_hover(
-          sprintf("Boat %s start", boat_id),
-          c(
-            sprintf("name: %s", name),
-            sprintf("location_id: %s", location_id),
-            sprintf("easting: %s", easting),
-            sprintf("northing: %s", northing),
-            sprintf("lat: %.6f", lat),
-            sprintf("lon: %.6f", lon)
-          )
-        )
-      }
-    )
-  )
-
-boat_ends <- boats |>
-  dplyr::transmute(
-    boat_id,
-    name,
-    location_id = end_location_id,
-    easting = end_easting,
-    northing = end_northing,
-    lat = end_lat,
-    lon = end_lon,
-    hover_text = purrr::pmap_chr(
-      list(boat_id, name, end_location_id, end_easting, end_northing, end_lat, end_lon),
-      \(boat_id, name, location_id, easting, northing, lat, lon) {
-        fmt_hover(
-          sprintf("Boat %s end", boat_id),
+          sprintf("Boat %s docked", boat_id),
           c(
             sprintf("name: %s", name),
             sprintf("location_id: %s", location_id),
@@ -371,20 +331,9 @@ p <- base_coastline_plot(coastline) +
     inherit.aes = FALSE
   ) +
   ggplot2::geom_point(
-    data = boat_starts,
+    data = boat_points,
     ggplot2::aes(x = lon, y = lat, text = hover_text),
     shape = 24,
-    size = 2.1,
-    color = "#CC79A7",
-    fill = "#FBE6F4",
-    stroke = 0.35,
-    alpha = 0.95,
-    inherit.aes = FALSE
-  ) +
-  ggplot2::geom_point(
-    data = boat_ends,
-    ggplot2::aes(x = lon, y = lat, text = hover_text),
-    shape = 25,
     size = 2.1,
     color = "#CC79A7",
     fill = "#FBE6F4",

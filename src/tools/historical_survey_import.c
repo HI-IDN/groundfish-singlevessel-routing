@@ -70,7 +70,7 @@ static int parse_survey_file(const char *dat_file, SurveyEntryVec *entries) {
         SurveyEntry entry;
         memset(&entry, 0, sizeof(entry));
 
-        if (strcmp(tok[0], GSP_DAT_TAG_BOAT) == 0 && nt >= 13) {
+        if (strcmp(tok[0], GSP_DAT_TAG_BOAT) == 0 && nt >= 11) {
             entry.type = NODE_TYPE_BOAT;
             entry.easting = atoi(tok[1]);
             entry.northing = atoi(tok[2]);
@@ -109,7 +109,7 @@ static int lookup_boat_id(sqlite3 *db, int easting, int northing) {
     int boat_id = 0;
     const char *sql =
         "SELECT b.id FROM boats b "
-        "JOIN locations l ON b.start_location_id = l.id "
+        "JOIN locations l ON b.location_id = l.id "
         "WHERE l.easting = ? AND l.northing = ?;";
 
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;

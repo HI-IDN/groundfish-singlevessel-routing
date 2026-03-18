@@ -45,8 +45,8 @@ int solve_mip_noport(const mip_noport_instance_t *instance,
     endpaired.max_location_id = instance->max_location_id;
 
     error = solve_mip_endpaired_tsp(&endpaired, params,
-                                    instance->boat->start_location_id,
-                                    instance->boat->end_location_id,
+                                    instance->boat->location_id,
+                                    instance->boat->location_id,
                                     &endpaired_solution);
     if (error) {
         solution->status = MIP_STATUS_INFEASIBLE;

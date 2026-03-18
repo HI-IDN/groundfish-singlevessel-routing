@@ -13,6 +13,7 @@ COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
 NN_INIT_JSON = ../sol/nn/init.json
 NN_SWEEP_JSON = ../sol/nn/sweep.json
+L2SEG ?=
 
 .PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep_nn plot plot-country plot-overview plot-routes help
 
@@ -63,6 +64,15 @@ sweep_nn: build
 	@bash -lc 'set -euo pipefail; \
 		init_json="$(NN_INIT_JSON)"; \
 		db="$(COUNTRY_DB)"; \
+		l2seg="$(L2SEG)"; \
+		output="$(NN_SWEEP_JSON)"; \
+		log="../sol/nn/sweep.log"; \
+		l2seg_arg=""; \
+		if [ -n "$$l2seg" ]; then \
+			output="../sol/nn/sweep_l2seg$${l2seg}.json"; \
+			log="../sol/nn/sweep_l2seg$${l2seg}.log"; \
+			l2seg_arg="--l2seg $$l2seg"; \
+		fi; \
 		if [ ! -f "$$init_json" ]; then \
 			echo "NN init missing -> generating $$init_json"; \
 			cd "$(BUILD_DIR)" && $(MAKE) run_init_nn; \
@@ -72,7 +82,7 @@ sweep_nn: build
 		else \
 			echo "Reusing existing $$init_json"; \
 		fi; \
-		cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy nn --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$(NN_SWEEP_JSON)"'
+		cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy nn --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$$output" $$l2seg_arg 2>&1 | tee "$$log"'
 
 plot-routes:
 	@bash -lc 'set -euo pipefail; cd ..; \

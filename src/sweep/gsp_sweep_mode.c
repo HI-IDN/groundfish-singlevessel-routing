@@ -53,9 +53,21 @@ typedef struct {
     double boat_start_lon;
 } sweep_boat_t;
 
+typedef struct {
+    int l1seg;
+    int l2seg;
+    int max_iterations;
+} sweep_config_t;
+
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
            (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+}
+
+static void log_progress(const char *message) {
+    if (!message) return;
+    printf("%s\n", message);
+    fflush(stdout);
 }
 
 static void free_solution(nn_solution_t *sol) {
@@ -184,6 +196,55 @@ static int read_boat_id_from_yaml(const char *yaml_path) {
 
     fclose(fp);
     return boat_id;
+}
+
+static int read_int_after_colon(const char *line, int default_value) {
+    const char *p = strchr(line, ':');
+    if (!p) return default_value;
+    while (*p && !isdigit((unsigned char)*p) && *p != '-') p++;
+    if (!*p) return default_value;
+    return atoi(p);
+}
+
+static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *cfg) {
+    FILE *fp;
+    char line[MAX_LINE];
+    int in_sweep = 0;
+
+    if (!cfg) return;
+    cfg->l1seg = 0;
+    cfg->l2seg = 0;
+    cfg->max_iterations = 0;
+
+    fp = fopen(yaml_path, "r");
+    if (!fp) return;
+
+    while (fgets(line, sizeof(line), fp)) {
+        char *trim = line;
+        while (*trim == ' ' || *trim == '\t') trim++;
+        if (*trim == '#' || *trim == '\0' || *trim == '\n') continue;
+
+        if (!in_sweep) {
+            if (strncmp(trim, "sweep:", 6) == 0) in_sweep = 1;
+            continue;
+        }
+
+        if (trim == line && strchr(trim, ':') && strncmp(trim, "sweep:", 6) != 0) break;
+
+        if (strncmp(trim, "l1seg:", 6) == 0) {
+            cfg->l1seg = read_int_after_colon(trim, cfg->l1seg);
+        } else if (strncmp(trim, "max_iterations:", 15) == 0) {
+            cfg->max_iterations = read_int_after_colon(trim, cfg->max_iterations);
+        } else if (strncmp(trim, "l2seg_values:", 12) == 0) {
+            const char *p = strchr(trim, '[');
+            if (p) {
+                while (*p && !isdigit((unsigned char)*p) && *p != '-') p++;
+                if (*p) cfg->l2seg = atoi(p);
+            }
+        }
+    }
+
+    fclose(fp);
 }
 
 static char *read_text_file(const char *path) {
@@ -453,8 +514,8 @@ static void free_instance(nn_instance_t *inst) {
 static int load_boat(sqlite3 *db, int boat_id, sweep_boat_t *boat) {
     sqlite3_stmt *stmt = NULL;
     const char *sql =
-        "SELECT b.name, b.capacity, b.start_location_id, b.end_location_id, l.lat, l.lon "
-        "FROM boats b JOIN locations l ON l.id = b.start_location_id WHERE b.id = ?";
+        "SELECT b.name, b.capacity, b.location_id, l.lat, l.lon "
+        "FROM boats b JOIN locations l ON l.id = b.location_id WHERE b.id = ?";
 
     memset(boat, 0, sizeof(*boat));
     boat->boat_id = boat_id;
@@ -466,9 +527,9 @@ static int load_boat(sqlite3 *db, int boat_id, sweep_boat_t *boat) {
         if (name) snprintf(boat->boat_name, sizeof(boat->boat_name), "%s", (const char*)name);
         boat->boat_capacity = sqlite3_column_double(stmt, 1);
         boat->boat_start_loc_id = sqlite3_column_int(stmt, 2);
-        boat->boat_end_loc_id = sqlite3_column_int(stmt, 3);
-        boat->boat_start_lat = sqlite3_column_double(stmt, 4);
-        boat->boat_start_lon = sqlite3_column_double(stmt, 5);
+        boat->boat_end_loc_id = boat->boat_start_loc_id;
+        boat->boat_start_lat = sqlite3_column_double(stmt, 3);
+        boat->boat_start_lon = sqlite3_column_double(stmt, 4);
         sqlite3_finalize(stmt);
         return 1;
     }
@@ -725,6 +786,48 @@ static int solution_is_feasible(const nn_instance_t *inst, const sweep_boat_t *b
            stations_are_unique_and_complete(sol->visit_station_ids, sol->visit_station_count, inst->num_stations);
 }
 
+static int station_in_segment(const nn_solution_t *sol, int segment_index, int station_id) {
+    for (int i = 0; i < sol->visit_station_count; i++) {
+        if (sol->visit_station_segment[i] == segment_index &&
+            sol->visit_station_ids[i] == station_id) return 1;
+    }
+    return 0;
+}
+
+static void write_station_mutation_ids(FILE *fp,
+                                       const nn_solution_t *prev_sol,
+                                       const nn_solution_t *curr_sol) {
+    fprintf(fp, "      \"tour_segments_station_mutation_ids\": [\n");
+    for (int s = 0; s < curr_sol->segment_count; s++) {
+        int first = 1;
+        fprintf(fp, "        [");
+        if (prev_sol) {
+            for (int i = 0; i < prev_sol->visit_station_count; i++) {
+                int station_id;
+                if (prev_sol->visit_station_segment[i] != s) continue;
+                station_id = prev_sol->visit_station_ids[i];
+                if (!station_in_segment(curr_sol, s, station_id)) {
+                    if (!first) fprintf(fp, ", ");
+                    fprintf(fp, "%d", -station_id);
+                    first = 0;
+                }
+            }
+            for (int i = 0; i < curr_sol->visit_station_count; i++) {
+                int station_id;
+                if (curr_sol->visit_station_segment[i] != s) continue;
+                station_id = curr_sol->visit_station_ids[i];
+                if (!station_in_segment(prev_sol, s, station_id)) {
+                    if (!first) fprintf(fp, ", ");
+                    fprintf(fp, "%d", station_id);
+                    first = 0;
+                }
+            }
+        }
+        fprintf(fp, "]%s\n", (s + 1 < curr_sol->segment_count) ? "," : "");
+    }
+    fprintf(fp, "      ],\n");
+}
+
 #ifdef HAVE_GUROBI
 static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, sweep_segment_t *segment) {
     int *station_ids = NULL;
@@ -836,14 +939,55 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const sweep
 }
 #endif
 
+static int count_segment_station_changes(const sweep_segment_t *before,
+                                         const sweep_segment_t *after) {
+    int changes = 0;
+    for (int i = 0; i < before->count; i++) {
+        int found = 0;
+        int station_id = abs(before->signed_station_ids[i]);
+        for (int j = 0; j < after->count; j++) {
+            if (abs(after->signed_station_ids[j]) == station_id) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) changes++;
+    }
+    for (int i = 0; i < after->count; i++) {
+        int found = 0;
+        int station_id = abs(after->signed_station_ids[i]);
+        for (int j = 0; j < before->count; j++) {
+            if (abs(before->signed_station_ids[j]) == station_id) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) changes++;
+    }
+    return changes;
+}
+
 static void write_solution_json(FILE *fp, const nn_solution_t *sol,
                                 const sweep_boat_t *boat, int feasible) {
+    fprintf(fp, "      \"tour_segments_location_ids\": [\n");
+    for (int s = 0; s < sol->segment_count; s++) {
+        fprintf(fp, "        [");
+        for (int i = sol->segment_starts[s]; i <= sol->segment_ends[s]; i++) {
+            fprintf(fp, "%d", sol->tour[i]);
+            if (i < sol->segment_ends[s]) fprintf(fp, ", ");
+        }
+        fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
+    }
+    fprintf(fp, "      ],\n");
+
     fprintf(fp, "      \"dock_location_ids\": [");
     fprintf(fp, "%d", boat->boat_start_loc_id);
     for (int s = 0; s < sol->segment_count - 1; s++) {
         fprintf(fp, ", %d", sol->tour[sol->segment_ends[s]]);
     }
     fprintf(fp, ", %d],\n", boat->boat_end_loc_id);
+
+    fprintf(fp, "      \"unique_waypoint_location_ids\": [],\n");
 
     fprintf(fp, "      \"tour_segments_station_ids\": [\n");
     for (int s = 0; s < sol->segment_count; s++) {
@@ -889,12 +1033,14 @@ static void write_solution_json(FILE *fp, const nn_solution_t *sol,
 
 static void write_pass_entry(FILE *fp,
                              const char *pass_name,
+                             const nn_solution_t *prev_solution,
                              const sweep_snapshot_t *snapshot,
                              const sweep_boat_t *boat) {
     fprintf(fp, "    \"%s\": {\n", pass_name);
     fprintf(fp, "      \"pass\": %d,\n", snapshot->pass_index);
     fprintf(fp, "      \"changed\": %d,\n", snapshot->changed);
     fprintf(fp, "      \"boundary_changes\": %d,\n", snapshot->boundary_changes);
+    write_station_mutation_ids(fp, prev_solution, &snapshot->solution);
     write_solution_json(fp, &snapshot->solution, boat, snapshot->feasible);
     fprintf(fp, "\n    }");
 }
@@ -902,6 +1048,7 @@ static void write_pass_entry(FILE *fp,
 static int write_sweep_json(const char *output_path,
                             const sweep_boat_t *boat,
                             const nn_instance_t *inst,
+                            const sweep_config_t *cfg,
                             const sweep_snapshot_t *snapshots,
                             int snapshot_count,
                             int total_boundary_changes,
@@ -919,10 +1066,12 @@ static int write_sweep_json(const char *output_path,
     fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "sweep");
     fprintf(fp, "    \"boat_id\": %d,\n", boat->boat_id);
     fprintf(fp, "    \"boat_name\": \"%s\",\n", boat->boat_name);
-    fprintf(fp, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n",
+    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n",
             boat->boat_start_lat, boat->boat_start_lon);
-    fprintf(fp, "    \"boat_location_ids\": [%d, %d]\n",
-            boat->boat_start_loc_id, boat->boat_end_loc_id);
+    fprintf(fp, "    \"boat_location_id\": %d,\n", boat->boat_start_loc_id);
+    fprintf(fp, "    \"l1seg\": %d,\n", cfg ? cfg->l1seg : 0);
+    fprintf(fp, "    \"l2seg\": %d,\n", cfg ? cfg->l2seg : 0);
+    fprintf(fp, "    \"max_iterations\": %d\n", cfg ? cfg->max_iterations : 0);
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"problem\": {\n");
@@ -933,13 +1082,15 @@ static int write_sweep_json(const char *output_path,
     fprintf(fp, "  \"solution\": {\n");
     for (int i = 0; i < snapshot_count; i++) {
         char pass_name[32];
-        snprintf(pass_name, sizeof(pass_name), "pass%d", snapshots[i].pass_index);
-        write_pass_entry(fp, pass_name, &snapshots[i], boat);
+        if (snapshots[i].pass_index == 0) snprintf(pass_name, sizeof(pass_name), "init");
+        else snprintf(pass_name, sizeof(pass_name), "pass%d", snapshots[i].pass_index);
+        write_pass_entry(fp, pass_name, (i > 0) ? &snapshots[i - 1].solution : NULL, &snapshots[i], boat);
         fprintf(fp, "%s\n", (i + 1 < snapshot_count) ? "," : "");
     }
     fprintf(fp, "  },\n");
 
-    snprintf(final_pass_name, sizeof(final_pass_name), "pass%d", snapshots[snapshot_count - 1].pass_index);
+    if (snapshots[snapshot_count - 1].pass_index == 0) snprintf(final_pass_name, sizeof(final_pass_name), "init");
+    else snprintf(final_pass_name, sizeof(final_pass_name), "pass%d", snapshots[snapshot_count - 1].pass_index);
     fprintf(fp, "  \"summary\": {\n");
     fprintf(fp, "    \"final\": \"%s\",\n", final_pass_name);
     fprintf(fp, "    \"status\": \"sweep_complete\",\n");
@@ -973,13 +1124,14 @@ static int write_sweep_json(const char *output_path,
 static void parse_sweep_args(int argc, char **argv,
                              const char **strategy, const char **database,
                              const char **config, const char **input,
-                             const char **output, int *time_limit) {
+                             const char **output, int *time_limit, int *l2seg) {
     *strategy = NULL;
     *database = NULL;
     *config = NULL;
     *input = NULL;
     *output = NULL;
     *time_limit = 0;
+    *l2seg = 0;
 
     for (int i = 1; i < argc - 1; i++) {
         if (strcmp(argv[i], "--strategy") == 0) *strategy = argv[i + 1];
@@ -988,15 +1140,17 @@ static void parse_sweep_args(int argc, char **argv,
         else if (strcmp(argv[i], "--input") == 0) *input = argv[i + 1];
         else if (strcmp(argv[i], "--output") == 0) *output = argv[i + 1];
         else if (strcmp(argv[i], "--time-limit") == 0) *time_limit = atoi(argv[i + 1]);
+        else if (strcmp(argv[i], "--l2seg") == 0) *l2seg = atoi(argv[i + 1]);
     }
 }
 
 int mode_sweep(int argc, char **argv) {
     const char *strategy = NULL, *database = NULL, *config = NULL, *input = NULL, *output = NULL;
-    int time_limit = 0;
+    int time_limit = 0, cli_l2seg = 0;
     sqlite3 *db = NULL;
     nn_instance_t inst = {0};
     sweep_boat_t boat;
+    sweep_config_t sweep_cfg;
     sweep_segment_t *segments = NULL;
     int segment_count = 0;
     nn_solution_t current_solution = {0};
@@ -1010,11 +1164,13 @@ int mode_sweep(int argc, char **argv) {
     printf("GSP Solver - Phase 1: Sweep\n");
     printf("============================================================\n\n");
 
-    parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output, &time_limit);
+    parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output, &time_limit, &cli_l2seg);
     if (!strategy || !database || !config || !input || !output) {
         fprintf(stderr, "ERROR: sweep requires --strategy, --database, --config, --input, and --output\n");
         goto cleanup;
     }
+    read_sweep_config_from_yaml(config, &sweep_cfg);
+    if (cli_l2seg > 0) sweep_cfg.l2seg = cli_l2seg;
 
 #ifndef HAVE_GUROBI
     fprintf(stderr, "ERROR: sweep mode requires Gurobi support at build time\n");
@@ -1037,6 +1193,11 @@ int mode_sweep(int argc, char **argv) {
         fprintf(stderr, "ERROR: Failed to load segmented solution from %s\n", input);
         goto cleanup;
     }
+    printf("Loaded segmented input: %d segments, %.2f nm total\n",
+           segment_count, current_solution.total_distance);
+    printf("Sweep parameters: l1seg=%d l2seg=%d max_iterations=%d time_limit=%d\n",
+           sweep_cfg.l1seg, sweep_cfg.l2seg, sweep_cfg.max_iterations, time_limit);
+    fflush(stdout);
 
     {
         GRBenv *env = NULL;
@@ -1081,6 +1242,7 @@ int mode_sweep(int argc, char **argv) {
                 goto cleanup;
             }
             if (!write_sweep_json(output, &boat, &inst,
+                                  &sweep_cfg,
                                   snapshots, snapshot_count,
                                   total_boundary_changes, snapshot.total_runtime_seconds,
                                   strategy)) {
@@ -1088,6 +1250,9 @@ int mode_sweep(int argc, char **argv) {
                 GRBfreeenv(env);
                 goto cleanup;
             }
+            printf("Wrote initial sweep snapshot: init %.2f nm feasible=%s\n",
+                   snapshot.solution.total_distance, snapshot.feasible ? "true" : "false");
+            fflush(stdout);
         }
 
         active = (int*)malloc((size_t)((segment_count > 1) ? segment_count - 1 : 1) * sizeof(int));
@@ -1102,20 +1267,57 @@ int mode_sweep(int argc, char **argv) {
             int changed = 0;
             sweep_snapshot_t snapshot;
 
+            if (sweep_cfg.max_iterations > 0 && pass_index > sweep_cfg.max_iterations) {
+                keep_running = 0;
+                break;
+            }
+
             clock_gettime(CLOCK_MONOTONIC, &t_pass_start);
             memset(&snapshot, 0, sizeof(snapshot));
+            printf("Starting sweep pass%d across %d boundaries\n",
+                   pass_index, (segment_count > 1) ? segment_count - 1 : 0);
+            fflush(stdout);
 
             for (int b = 0; b < segment_count - 1; b++) {
+                sweep_segment_t left_before = {0};
+                sweep_segment_t right_before = {0};
+                double before_total;
                 if (!active[b]) continue;
                 active[b] = 0;
+                before_total = segments[b].distance_nm + segments[b + 1].distance_nm;
+                left_before.count = segments[b].count;
+                right_before.count = segments[b + 1].count;
+                left_before.signed_station_ids = (int*)malloc((size_t)left_before.count * sizeof(int));
+                right_before.signed_station_ids = (int*)malloc((size_t)right_before.count * sizeof(int));
+                if (!left_before.signed_station_ids || !right_before.signed_station_ids) {
+                    free(left_before.signed_station_ids);
+                    free(right_before.signed_station_ids);
+                    free(active);
+                    GRBfreeenv(env);
+                    goto cleanup;
+                }
+                memcpy(left_before.signed_station_ids, segments[b].signed_station_ids, (size_t)left_before.count * sizeof(int));
+                memcpy(right_before.signed_station_ids, segments[b + 1].signed_station_ids, (size_t)right_before.count * sizeof(int));
+                printf("  pass%d boundary %d/%d: seg%d=%d stations seg%d=%d stations\n",
+                       pass_index, b + 1, segment_count - 1, b + 1, segments[b].count, b + 2, segments[b + 1].count);
+                fflush(stdout);
                 if (optimize_boundary(env, &inst, &boat, &segments[b], &segments[b + 1])) {
+                    int station_changes = count_segment_station_changes(&left_before, &segments[b]) +
+                                          count_segment_station_changes(&right_before, &segments[b + 1]);
                     changed = 1;
                     boundary_changes++;
                     total_boundary_changes++;
                     if (b > 0) active[b - 1] = 1;
                     active[b] = 1;
                     if (b + 1 < segment_count - 1) active[b + 1] = 1;
+                    printf("    improved: %.2f -> %.2f nm, moved_station_marks=%d\n",
+                           before_total, segments[b].distance_nm + segments[b + 1].distance_nm, station_changes);
+                } else {
+                    printf("    no change\n");
                 }
+                fflush(stdout);
+                free(left_before.signed_station_ids);
+                free(right_before.signed_station_ids);
             }
 
             free_solution(&current_solution);
@@ -1145,6 +1347,7 @@ int mode_sweep(int argc, char **argv) {
                 goto cleanup;
             }
             if (!write_sweep_json(output, &boat, &inst,
+                                  &sweep_cfg,
                                   snapshots, snapshot_count,
                                   total_boundary_changes, snapshot.total_runtime_seconds,
                                   strategy)) {
@@ -1153,6 +1356,10 @@ int mode_sweep(int argc, char **argv) {
                 GRBfreeenv(env);
                 goto cleanup;
             }
+            printf("Completed pass%d: changed=%d boundary_changes=%d total_distance=%.2f runtime=%.2fs total=%.2fs\n",
+                   pass_index, changed, boundary_changes, snapshot.solution.total_distance,
+                   snapshot.pass_runtime_seconds, snapshot.total_runtime_seconds);
+            fflush(stdout);
 
             pass_index++;
             if (!changed) keep_running = 0;

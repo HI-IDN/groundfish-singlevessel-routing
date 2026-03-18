@@ -158,6 +158,18 @@ static char *strip_quotes_local(const char *name) {
     return out;
 }
 
+static int count_rows(sqlite3 *db, const char *table_name) {
+    sqlite3_stmt *stmt = NULL;
+    char sql[128];
+    int count = 0;
+
+    snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM %s;", table_name);
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) count = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return count;
+}
+
 static int insert_location_from_degmin(sqlite3_stmt *insert_stmt,
                                        sqlite3_stmt *select_stmt,
                                        int lat_degmin,
@@ -296,25 +308,20 @@ static int store_boats_from_dat(sqlite3 *db,
     if (rc != SQLITE_OK) goto cleanup;
 
     rc = sqlite3_prepare_v2(db,
-                            "INSERT INTO boats (start_location_id, end_location_id, capacity, name) "
-                            "VALUES (?, ?, ?, ?);",
+                            "INSERT INTO boats (location_id, capacity, name) VALUES (?, ?, ?);",
                             -1, &boat_stmt, NULL);
     if (rc != SQLITE_OK) goto cleanup;
 
     sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
     for (int i = 0; i < dataset.n_boats; i++) {
         const Boat *boat = &dataset.boats[i];
-        const Location *start_loc = &dataset.locations[boat->start_location_id];
-        const Location *end_loc = &dataset.locations[boat->end_location_id];
+        const Location *loc = &dataset.locations[boat->location_id];
         seen++;
 
-        int start_loc_id = insert_location_from_degmin(loc_insert_stmt, loc_select_stmt,
-                                                       start_loc->easting,
-                                                       start_loc->northing);
-        int end_loc_id = insert_location_from_degmin(loc_insert_stmt, loc_select_stmt,
-                                                     end_loc->easting,
-                                                     end_loc->northing);
-        if (start_loc_id <= 0 || end_loc_id <= 0) {
+        int loc_id = insert_location_from_degmin(loc_insert_stmt, loc_select_stmt,
+                                                       loc->easting,
+                                                       loc->northing);
+        if (loc_id <= 0) {
             rc = SQLITE_ERROR;
             sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
             goto cleanup;
@@ -327,10 +334,9 @@ static int store_boats_from_dat(sqlite3 *db,
             goto cleanup;
         }
 
-        sqlite3_bind_int(boat_stmt, 1, start_loc_id);
-        sqlite3_bind_int(boat_stmt, 2, end_loc_id);
-        sqlite3_bind_int(boat_stmt, 3, boat->capacity);
-        sqlite3_bind_text(boat_stmt, 4, clean_name, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(boat_stmt, 1, loc_id);
+        sqlite3_bind_int(boat_stmt, 2, boat->capacity);
+        sqlite3_bind_text(boat_stmt, 3, clean_name, -1, SQLITE_TRANSIENT);
 
         if (sqlite3_step(boat_stmt) != SQLITE_DONE) {
             free(clean_name);
@@ -564,8 +570,7 @@ static int create_full_schema(sqlite3 *db) {
         ");"
         "CREATE TABLE IF NOT EXISTS boats ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  start_location_id INTEGER REFERENCES locations(id),"
-        "  end_location_id INTEGER REFERENCES locations(id),"
+        "  location_id INTEGER REFERENCES locations(id),"
         "  capacity INTEGER,"
         "  name TEXT"
         ");"
@@ -643,8 +648,7 @@ static int reset_waypoint_stage_tables(sqlite3 *db) {
         "DELETE FROM locations "
         "WHERE id NOT IN (SELECT start_location_id FROM stations) "
         "  AND id NOT IN (SELECT end_location_id FROM stations) "
-        "  AND id NOT IN (SELECT start_location_id FROM boats) "
-        "  AND id NOT IN (SELECT end_location_id FROM boats) "
+        "  AND id NOT IN (SELECT location_id FROM boats) "
         "  AND id NOT IN (SELECT location_id FROM ports);";
     return sqlite3_exec(db, sql, NULL, NULL, NULL);
 }
@@ -1008,6 +1012,13 @@ int country_bootstrap_run(int argc, char **argv) {
             fprintf(stderr, "Failed to store buffered coastline support: %s\n", sqlite3_errmsg(db));
             goto cleanup;
         }
+    }
+
+    if (waypoints_only) {
+        ports_seen = count_rows(db, "ports");
+        ports_inserted = ports_seen;
+        boats_seen = count_rows(db, "boats");
+        boats_inserted = boats_seen;
     }
 
     write_metadata(db, coastline_file_path, waypoint_file, port_file, boat_file,

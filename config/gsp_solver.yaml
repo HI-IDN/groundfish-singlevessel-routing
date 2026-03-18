@@ -40,8 +40,6 @@ sweep:
 
   # Iteration control
   max_iterations: 100                    # Maximum iterations per L2SEG sweep
-  max_stall_iterations: 20               # Stop if no improvement for N iterations
-  log_interval: 1                        # Log every iteration
 
 # Gurobi Solver Settings
 gurobi:

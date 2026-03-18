@@ -254,8 +254,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
     fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
     fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
-    fprintf(fp, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
-    fprintf(fp, "    \"boat_location_ids\": [%d, %d]\n", boat_start_loc_id, boat_end_loc_id);
+    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
+    fprintf(fp, "    \"boat_location_id\": %d\n", boat_start_loc_id);
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"problem\": {\n");
@@ -729,14 +729,16 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (sqlite3_prepare_v2(db,
-            "SELECT b.name, b.capacity, b.start_location_id, b.end_location_id, l.lat, l.lon "
-            "FROM boats b JOIN locations l ON l.id = b.start_location_id WHERE b.id = ?;",
-            -1, &stmt, NULL) != SQLITE_OK) {
+    {
+        const char *boat_sql =
+            "SELECT b.name, b.capacity, b.location_id, l.lat, l.lon "
+            "FROM boats b JOIN locations l ON l.id = b.location_id WHERE b.id = ?;";
+        if (sqlite3_prepare_v2(db, boat_sql, -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_close(db);
         free(station_order);
         free_instance(&inst);
         return 1;
+    }
     }
     sqlite3_bind_int(stmt, 1, boat_id);
     if (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -744,9 +746,9 @@ int main(int argc, char **argv) {
         if (name_txt) snprintf(boat_name, sizeof(boat_name), "%s", (const char*)name_txt);
         boat_capacity = sqlite3_column_double(stmt, 1);
         boat_start_loc_id = sqlite3_column_int(stmt, 2);
-        boat_end_loc_id = sqlite3_column_int(stmt, 3);
-        boat_start_lat = sqlite3_column_double(stmt, 4);
-        boat_start_lon = sqlite3_column_double(stmt, 5);
+        boat_end_loc_id = boat_start_loc_id;
+        boat_start_lat = sqlite3_column_double(stmt, 3);
+        boat_start_lon = sqlite3_column_double(stmt, 4);
     }
     sqlite3_finalize(stmt);
 

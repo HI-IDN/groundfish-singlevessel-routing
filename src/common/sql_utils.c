@@ -77,3 +77,4 @@ int sql_rollback(sqlite3 *db) {
     return sql_execute(db, "ROLLBACK;");
 }
 
+

@@ -29,7 +29,7 @@ locations <- read_db_table(
    UNION ALL
    SELECT b.name, l.lat, l.lon, 'Boat' as type
    FROM boats b
-   INNER JOIN locations l ON b.start_location_id = l.id
+   INNER JOIN locations l ON b.location_id = l.id
    ORDER BY type DESC"
 )
 

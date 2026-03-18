@@ -88,6 +88,7 @@ add_executable(gsp
     init/greedy_insertion.c
     init/cheapest_insertion.c
     common/feasibility.c
+    common/sql_utils.c
     sweep/gsp_sweep_mode.c
 )
 
@@ -104,6 +105,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         init/greedy_insertion.c
         init/cheapest_insertion.c
         common/feasibility.c
+        common/sql_utils.c
         sweep/gsp_sweep_mode.c
         mip/endpaired_tsp.c
         mip/mip_common.c
@@ -129,6 +131,7 @@ endif()
 add_executable(gsp_init_opt
     init/opt_init_from_noport.c
     common/feasibility.c
+    common/sql_utils.c
 )
 
 target_link_libraries(gsp_init_opt
@@ -187,6 +190,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         ${GSP_MIP_SHARED_SOURCES}
         init/noport_order_main.c
         common/feasibility.c
+        common/sql_utils.c
     )
 
     target_include_directories(gsp_noport_opt PRIVATE
@@ -233,6 +237,7 @@ add_custom_target(run_init_opt
 add_executable(historical_survey
     tools/export_survey_json.c
     common/feasibility.c
+    common/sql_utils.c
 )
 
 target_link_libraries(historical_survey
@@ -247,6 +252,7 @@ target_include_directories(historical_survey PRIVATE
 add_executable(gsp_country
     tools/country_bootstrap_main.c
     common/dat_parser.c
+    common/sql_utils.c
     common/coastline_db.c
 )
 

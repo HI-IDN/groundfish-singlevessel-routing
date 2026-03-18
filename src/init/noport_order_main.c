@@ -116,9 +116,9 @@ static int read_opt_config(const char *yaml_path, int *boat_id_out, double *time
 static int load_boat(sqlite3 *db, int boat_id, app_instance_t *app) {
     sqlite3_stmt *stmt = NULL;
     const char *sql =
-        "SELECT b.id, b.name, b.capacity, b.start_location_id, b.end_location_id, l.lat, l.lon "
+        "SELECT b.id, b.name, b.capacity, b.location_id, l.lat, l.lon "
         "FROM boats b "
-        "JOIN locations l ON l.id = b.start_location_id "
+        "JOIN locations l ON l.id = b.location_id "
         "WHERE b.id = ?;";
 
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 1;
@@ -131,10 +131,9 @@ static int load_boat(sqlite3 *db, int boat_id, app_instance_t *app) {
     app->boat.boat_id = sqlite3_column_int(stmt, 0);
     app->boat.name = dupstr_local((const char*)sqlite3_column_text(stmt, 1));
     app->boat.capacity = sqlite3_column_int(stmt, 2);
-    app->boat.start_location_id = sqlite3_column_int(stmt, 3);
-    app->boat.end_location_id = sqlite3_column_int(stmt, 4);
-    app->boat_start_lat = sqlite3_column_double(stmt, 5);
-    app->boat_start_lon = sqlite3_column_double(stmt, 6);
+    app->boat.location_id = sqlite3_column_int(stmt, 3);
+    app->boat_start_lat = sqlite3_column_double(stmt, 4);
+    app->boat_start_lon = sqlite3_column_double(stmt, 5);
     sqlite3_finalize(stmt);
     return 0;
 }
@@ -320,7 +319,7 @@ static int build_route_locations(const app_instance_t *app,
     int route_cap = 0;
     int total_catch = 0;
 
-    if (!append_loc_if_changed(&route, &route_len, &route_cap, app->boat.start_location_id)) goto fail;
+    if (!append_loc_if_changed(&route, &route_len, &route_cap, app->boat.location_id)) goto fail;
 
     for (int i = 0; i < solution->order_length; i++) {
         int signed_station_id = solution->signed_station_ids[i];
@@ -336,7 +335,7 @@ static int build_route_locations(const app_instance_t *app,
         total_catch += station->amount;
     }
 
-    if (!append_loc_if_changed(&route, &route_len, &route_cap, app->boat.end_location_id)) goto fail;
+    if (!append_loc_if_changed(&route, &route_len, &route_cap, app->boat.location_id)) goto fail;
 
     *route_out = route;
     *route_len_out = route_len;
@@ -396,8 +395,8 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "    \"strategy\": \"opt\",\n");
     fprintf(fp, "    \"boat_id\": %d,\n", app->boat.boat_id);
     fprintf(fp, "    \"boat_name\": \"%s\",\n", app->boat.name ? app->boat.name : "Unknown");
-    fprintf(fp, "    \"home_port\": {\"lat\": %.6f, \"lon\": %.6f},\n", app->boat_start_lat, app->boat_start_lon);
-    fprintf(fp, "    \"boat_location_ids\": [%d, %d]\n", app->boat.start_location_id, app->boat.end_location_id);
+    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", app->boat_start_lat, app->boat_start_lon);
+    fprintf(fp, "    \"boat_location_id\": %d\n", app->boat.location_id);
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"problem\": {\n");
@@ -426,7 +425,7 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "    ],\n");
 
     fprintf(fp, "    \"dock_location_ids\": [%d, %d],\n",
-            app->boat.start_location_id, app->boat.end_location_id);
+            app->boat.location_id, app->boat.location_id);
 
     fprintf(fp, "    \"unique_waypoint_location_ids\": [");
     for (int i = 0; i < unique_wp_count; i++) {
