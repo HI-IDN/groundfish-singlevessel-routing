@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # GSP Survey Route Plotter
 # Visualizes survey routes exported from export_survey_json tool
-# Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|presolve]
+# Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|capacity-feasible|presolve]
 
 # Load required packages
 required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite")
@@ -22,7 +22,7 @@ cat("=== GSP Survey Route Plotter ===\n\n")
 # Parse command-line arguments
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) == 0) {
-  warning("Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|presolve]\n", call. = FALSE)
+  warning("Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|capacity-feasible|presolve]\n", call. = FALSE)
   args <- c("sol/opt/noport.json", "final")  # Default for testing
 }
 
@@ -59,26 +59,38 @@ ensure_segment_list <- function(x) {
 
 resolve_solution_block <- function(survey, variant_name) {
   variant_name <- tolower(variant_name)
-  if (variant_name %in% c("final", "main", "solution")) {
-    return(survey$solution)
-  }
-  if (variant_name %in% c("presolve", "pre")) {
-    if (!is.null(survey$presolve)) {
-      return(survey$presolve)
+  if (variant_name %in% c("final", "solution")) {
+    variant_name <- survey$summary$final
+    if (is.null(variant_name) || is.null(survey$solution[[variant_name]])) {
+      stop("Requested variant 'final' is missing from this JSON.", call. = FALSE)
     }
-    if (!is.null(survey$solution_variants$before_capacity_fix)) {
-      return(survey$solution_variants$before_capacity_fix)
-    }
-    stop("Requested variant 'presolve' is not available in this JSON.", call. = FALSE)
   }
-  stop(sprintf("Unknown solution variant: %s", variant_name), call. = FALSE)
+  if (variant_name %in% c("presolve", "pre")) variant_name <- "presolve"
+  if (is.null(survey$solution[[variant_name]])) {
+    stop(sprintf("Requested variant '%s' is missing from this JSON.", variant_name), call. = FALSE)
+  }
+  return(list(
+      solution = survey$solution[[variant_name]],
+      feasible = survey$solution[[variant_name]]$feasible,
+      pass_name = variant_name,
+      variant_label = variant_name
+  ))
 }
 
-solution <- resolve_solution_block(survey, selected_variant)
+resolved <- resolve_solution_block(survey, selected_variant)
+solution <- resolved$solution
 solution$tour_segments_location_ids <- ensure_segment_list(solution$tour_segments_location_ids)
 solution$tour_segments_station_ids <- ensure_segment_list(solution$tour_segments_station_ids)
+variant_label <- if (!is.null(resolved$variant_label) && length(resolved$variant_label) > 0) {
+  resolved$variant_label
+} else {
+  selected_variant
+}
 
 cat(sprintf("Variant: %s\n", selected_variant))
+if (!is.null(resolved$pass_name)) {
+  cat(sprintf("Pass: %s\n", resolved$pass_name))
+}
 
 # Extract metadata
 boat_id <- survey$metadata$boat_id
@@ -88,7 +100,8 @@ capacity <- survey$problem$capacity
 num_stations <- survey$problem$num_stations
 segment_count <- solution$segment_count
 total_distance <- solution$total_distance_nm
-feasible <- solution$feasible
+feasible <- resolved$feasible
+if (is.null(feasible) || length(feasible) == 0) feasible <- solution$feasible
 segment_catch <- solution$segment_catch_amount
 segment_distance <- solution$segment_distance_nm
 segment_length <- solution$tour_length
@@ -157,6 +170,9 @@ locations <- read_db_table(db_path, "SELECT id, lat, lon FROM locations")
 boat_loc_ids     <- unlist(survey$metadata$boat_location_ids)
 dock_loc_ids     <- unlist(solution$dock_location_ids)
 waypoint_loc_ids <- unlist(solution$unique_waypoint_location_ids)
+if (length(solution$tour_segments_location_ids) == 0) {
+  stop("tour_segments_location_ids is missing from this JSON.", call. = FALSE)
+}
 
 classify_point <- function(loc_id) {
   if (loc_id %in% boat_loc_ids)     return("BOAT")
@@ -194,22 +210,6 @@ for (segment in tour_segments) {
 cat(sprintf("Built route path with %d waypoints across %d segments\n\n",
             nrow(route_path), segment_count))
 
-# Add cumulative metrics
-cat("Calculating cumulative distance and catch...\n")
-route_path <- route_path %>%
-  mutate(
-    cumulative_distance_nm = cumsum(ifelse(point_type %in% c("PORT", "BOAT"),
-                                           segment_distance[segment],
-                                           0)),
-    cumulative_catch_kg = cumsum(ifelse(point_type %in% c("PORT", "BOAT"),
-                                        segment_catch[segment],
-                                        0))
-  ) %>%
-  # Forward-fill cumulative values within each segment
-  group_by(segment) %>%
-  fill(cumulative_distance_nm, cumulative_catch_kg, .direction = "down") %>%
-  ungroup()
-
 # Create base plot with coastline
 cat("Creating survey route visualization...\n")
 p <- base_coastline_plot(coastline)
@@ -229,27 +229,23 @@ p <- p +
                         name = "Segment Stats",
                         labels = segment_labels)
 
-# Add station points with cumsum tooltip
+# Add station points
 station_points <- route_path %>%
   filter(point_type == "Station")
 
 p <- p +
   geom_point(data = station_points,
-             aes(x = lon, y = lat,
-                 text = sprintf("Loc: %d\nCum Dist: %.1f nm\nCum Catch: %.0f kg",
-                                location_id, cumulative_distance_nm, cumulative_catch_kg)),
+             aes(x = lon, y = lat),
              size = 1.5, color = "steelblue", alpha = 0.4, inherit.aes = FALSE)
 
-# Add port points with cumsum tooltip
+# Add port points
 port_points <- route_path %>%
   filter(point_type == "PORT") %>%
   distinct(lat, lon, .keep_all = TRUE)
 
 p <- p +
   geom_point(data = port_points,
-             aes(x = lon, y = lat,
-                 text = sprintf("PORT\nLoc: %d\nCum Dist: %.1f nm\nCum Catch: %.0f kg",
-                                location_id, cumulative_distance_nm, cumulative_catch_kg)),
+             aes(x = lon, y = lat),
              size = 3, shape = 1, inherit.aes = FALSE)
 
 # Add home port marker using annotate() to avoid data length warnings
@@ -285,7 +281,7 @@ p <- p +
   coord_fixed_for_lat(route_path$lat, fallback_lat = 65.0) +
   labs(
     title = sprintf("Survey Route: %s", boat_name),
-    subtitle = sprintf("%s | %s", tools::toTitleCase(gsub("_", " ", selected_variant)), subtitle_text),
+    subtitle = sprintf("%s | %s", tools::toTitleCase(gsub("[-_]", " ", variant_label)), subtitle_text),
     x = NULL,
     y = NULL
   )
@@ -311,14 +307,3 @@ ggsave(
 
 cat(sprintf("✓ Plot saved to: %s\n", normalizePath(output_file)))
 cat("✓ Visualization complete!\n")
-
-# Interactive usage: In R console, run:
-# plotly::ggplotly(p, tooltip = "text")
-# This will show cumulative distance and catch on hover
-
-
-
-
-
-
-

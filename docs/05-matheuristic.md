@@ -33,38 +33,47 @@ Each port insertion resets the load.
 
 ## Phase 1: boundary sweep
 
-The improvement phase repeatedly scans boundaries between adjacent segments in circular order. For each active boundary, the method solves a restricted two-segment subproblem.
+The paper defines a sweep as a full traversal of all boundaries in circular order. For each active
+boundary between adjacent segments in tour order, the method calls the boundary-capacity
+subroutine. When a boundary changes, that boundary and the other modified segments are marked
+active again. The process stops only when a full circular sweep yields no accepted change.
 
-When a boundary changes, neighboring boundaries are marked active and reconsidered in later passes. The process stops when a full sweep yields no accepted change.
+## Boundary-capacity subroutine
 
-## Two-segment subproblem
+For a boundary `b` between adjacent segments `S_L` and `S_R`, with boundary port `p`, the paper's
+subroutine is:
 
-For adjacent segments `S_L` and `S_R`, separated by boundary port `p`, the method solves a local C-MIP on `S_L union S_R` with:
-
-1. Fixed start node.
-2. Fixed end node.
-3. Exactly one forced visit to `p`.
-
-The MIP may reassign stations between the two segments subject to capacity. The best incumbent found within the two-segment time limit is accepted only if it improves total distance.
+1. Set `S_2seg = S_L union S_R union {s_D}` where `s_D` is empty unless the fallback move is used.
+2. If fallback is used, `s_D` is drawn from some other donor segment `S_D`, and `S_D' = S_D \ {s_D}`.
+3. Fix the start and end nodes around `S_2seg` and enforce exactly one visit to `p`.
+4. Solve the two-segment `C-MIP` on `S_2seg` with time limit `L_2seg`.
+5. Extract tentative segments `S_L'` and `S_R'` from the resulting tour.
+6. Re-optimize each tentative segment with a directed segment-TSP using limit `L_1seg`.
+7. If either segment-TSP fails, reject the move.
+8. Accept the move if `d(S_L') + d(S_R') < d(S_L) + d(S_R)`.
+9. If fallback was used, accept only if
+   `d(S_L') + d(S_R') + d(S_D') < d(S_L) + d(S_R) + d(S_D)`.
 
 ## Fallback move
 
-If the local C-MIP does not produce an accepted change, the algorithm tries a fallback move:
+If the two-segment-only attempt does not improve the boundary, the paper's fallback is:
 
-1. Select the closest station from outside the two current segments.
-2. Insert it into the nearer side if capacity allows.
-3. Re-optimize the left, right, and donor segments.
-4. Accept only if the three affected segments improve in total.
+1. Select the closest station `s_D` from any donor segment outside `{S_L, S_R}`.
+2. Require that inserting `s_D` into the nearer of `{S_L, S_R}` remains capacity-feasible.
+3. Rebuild the two-segment working set with `s_D` included.
+4. Re-run the boundary-capacity subroutine.
+5. Accept only if the affected left, right, and donor segments improve in total.
 
-## Boundary optimization subroutine
+## Algorithm form from the paper
 
-1. Build the local two-segment working set.
-2. Optionally add one donor station for the fallback case.
-3. Fix start and end nodes and force exactly one visit to the boundary port.
-4. Solve the two-segment C-MIP.
-5. Extract tentative segments from the returned tour.
-6. Re-optimize each tentative segment using directed segment-TSP solves.
-7. Accept the move only if the affected segment total strictly improves.
+The paper's matheuristic framework is:
+
+1. Obtain an ordered station list and an initial partition `V` using the chosen initialization mode.
+2. Evaluate each segment in `V` with the directed segment-TSP using limit `L_1seg`.
+3. Mark all boundaries as active.
+4. Repeat full circular sweeps over the boundaries until no boundary changes in a full sweep.
+5. For each active boundary, call the boundary-capacity subroutine with `L_1seg` and `L_2seg`.
+6. If the boundary changes, update `V` and mark that boundary and any modified segments as active.
 
 ## Key interpretation
 

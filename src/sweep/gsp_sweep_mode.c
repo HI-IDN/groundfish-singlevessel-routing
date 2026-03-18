@@ -499,12 +499,31 @@ static int extract_segment_arrays_from_input(const char *json_text,
                                              int ***segment_arrays,
                                              int **segment_sizes,
                                              int *segment_count) {
-    const char *best_pos = find_json_key(json_text, "best_solution");
-    if (best_pos) {
-        const char *candidate = find_json_key(best_pos, "tour_segments_station_ids");
-        if (candidate) {
-            return parse_nested_int_arrays(candidate, "tour_segments_station_ids",
-                                           segment_arrays, segment_sizes, segment_count);
+    const char *summary_pos = find_json_key(json_text, "summary");
+    if (summary_pos) {
+        const char *final_value = find_key_in_object(summary_pos, "final");
+        if (final_value && *final_value == '"') {
+            char variant_name[64];
+            int len = 0;
+            final_value++;
+            while (final_value[len] && final_value[len] != '"' && len < (int)sizeof(variant_name) - 1) {
+                variant_name[len] = final_value[len];
+                len++;
+            }
+            variant_name[len] = '\0';
+            if (len > 0) {
+                const char *solution_pos = find_json_key(json_text, "solution");
+                if (solution_pos) {
+                    const char *variant_pos = find_json_key(solution_pos, variant_name);
+                    if (variant_pos) {
+                        const char *candidate = find_json_key(variant_pos, "tour_segments_station_ids");
+                        if (candidate) {
+                            return parse_nested_int_arrays(candidate, "tour_segments_station_ids",
+                                                           segment_arrays, segment_sizes, segment_count);
+                        }
+                    }
+                }
+            }
         }
     }
     return parse_nested_int_arrays(json_text, "tour_segments_station_ids",
@@ -868,19 +887,28 @@ static void write_solution_json(FILE *fp, const nn_solution_t *sol,
     fprintf(fp, "      \"feasible\": %s\n", feasible ? "true" : "false");
 }
 
+static void write_pass_entry(FILE *fp,
+                             const char *pass_name,
+                             const sweep_snapshot_t *snapshot,
+                             const sweep_boat_t *boat) {
+    fprintf(fp, "    \"%s\": {\n", pass_name);
+    fprintf(fp, "      \"pass\": %d,\n", snapshot->pass_index);
+    fprintf(fp, "      \"changed\": %d,\n", snapshot->changed);
+    fprintf(fp, "      \"boundary_changes\": %d,\n", snapshot->boundary_changes);
+    write_solution_json(fp, &snapshot->solution, boat, snapshot->feasible);
+    fprintf(fp, "\n    }");
+}
+
 static int write_sweep_json(const char *output_path,
                             const sweep_boat_t *boat,
                             const nn_instance_t *inst,
-                            const nn_solution_t *initial_solution,
-                            int initial_feasible,
                             const sweep_snapshot_t *snapshots,
                             int snapshot_count,
-                            const nn_solution_t *best_solution,
-                            int best_feasible,
                             int total_boundary_changes,
                             double total_runtime_seconds,
                             const char *strategy_name) {
     FILE *fp = fopen(output_path, "w");
+    char final_pass_name[32];
     if (!fp) return 0;
 
     fprintf(fp, "{\n");
@@ -902,41 +930,39 @@ static int write_sweep_json(const char *output_path,
     fprintf(fp, "    \"capacity\": %.0f\n", boat->boat_capacity);
     fprintf(fp, "  },\n");
 
-    fprintf(fp, "  \"initial_solution\": {\n");
-    fprintf(fp, "    \"feasible\": %s,\n", initial_feasible ? "true" : "false");
-    fprintf(fp, "    \"solution\": {\n");
-    write_solution_json(fp, initial_solution, boat, initial_feasible);
-    fprintf(fp, "\n    }\n");
-    fprintf(fp, "  },\n");
-
-    fprintf(fp, "  \"snapshots\": [\n");
+    fprintf(fp, "  \"solution\": {\n");
     for (int i = 0; i < snapshot_count; i++) {
-        fprintf(fp, "    {\n");
-        fprintf(fp, "      \"pass\": %d,\n", snapshots[i].pass_index);
-        fprintf(fp, "      \"changed\": %d,\n", snapshots[i].changed);
-        fprintf(fp, "      \"boundary_changes\": %d,\n", snapshots[i].boundary_changes);
-        fprintf(fp, "      \"pass_runtime_seconds\": %.6f,\n", snapshots[i].pass_runtime_seconds);
-        fprintf(fp, "      \"total_runtime_seconds\": %.6f,\n", snapshots[i].total_runtime_seconds);
-        fprintf(fp, "      \"feasible\": %s,\n", snapshots[i].feasible ? "true" : "false");
-        fprintf(fp, "      \"solution\": {\n");
-        write_solution_json(fp, &snapshots[i].solution, boat, snapshots[i].feasible);
-        fprintf(fp, "\n      }\n");
-        fprintf(fp, "    }%s\n", (i + 1 < snapshot_count) ? "," : "");
+        char pass_name[32];
+        snprintf(pass_name, sizeof(pass_name), "pass%d", snapshots[i].pass_index);
+        write_pass_entry(fp, pass_name, &snapshots[i], boat);
+        fprintf(fp, "%s\n", (i + 1 < snapshot_count) ? "," : "");
     }
-    fprintf(fp, "  ],\n");
-
-    fprintf(fp, "  \"best_solution\": {\n");
-    fprintf(fp, "    \"feasible\": %s,\n", best_feasible ? "true" : "false");
-    fprintf(fp, "    \"solution\": {\n");
-    write_solution_json(fp, best_solution, boat, best_feasible);
-    fprintf(fp, "\n    }\n");
     fprintf(fp, "  },\n");
 
-    fprintf(fp, "  \"solver_stats\": {\n");
+    snprintf(final_pass_name, sizeof(final_pass_name), "pass%d", snapshots[snapshot_count - 1].pass_index);
+    fprintf(fp, "  \"summary\": {\n");
+    fprintf(fp, "    \"final\": \"%s\",\n", final_pass_name);
     fprintf(fp, "    \"status\": \"sweep_complete\",\n");
-    fprintf(fp, "    \"snapshot_count\": %d,\n", snapshot_count);
+    fprintf(fp, "    \"feasible\": %s,\n", snapshots[snapshot_count - 1].feasible ? "true" : "false");
+    fprintf(fp, "    \"total_distance_nm\": [");
+    for (int i = 0; i < snapshot_count; i++) {
+        fprintf(fp, "%.2f", snapshots[i].solution.total_distance);
+        if (i + 1 < snapshot_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", snapshots[snapshot_count - 1].solution.total_distance);
+    fprintf(fp, "    \"preprocessing_seconds\": 0.0,\n");
+    fprintf(fp, "    \"solution_runtime_seconds\": [");
+    for (int i = 0; i < snapshot_count; i++) {
+        fprintf(fp, "%.6f", snapshots[i].pass_runtime_seconds);
+        if (i + 1 < snapshot_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "    \"postprocessing_seconds\": 0.0,\n");
+    fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n", total_runtime_seconds);
+    fprintf(fp, "    \"pass_count\": %d,\n", snapshot_count);
     fprintf(fp, "    \"total_boundary_changes\": %d,\n", total_boundary_changes);
-    fprintf(fp, "    \"total_runtime_seconds\": %.6f\n", total_runtime_seconds);
+    fprintf(fp, "    \"method\": \"%s\"\n", strategy_name ? strategy_name : "sweep");
     fprintf(fp, "  }\n");
     fprintf(fp, "}\n");
 
@@ -973,9 +999,7 @@ int mode_sweep(int argc, char **argv) {
     sweep_boat_t boat;
     sweep_segment_t *segments = NULL;
     int segment_count = 0;
-    nn_solution_t initial_solution = {0};
     nn_solution_t current_solution = {0};
-    nn_solution_t best_solution = {0};
     sweep_snapshot_t *snapshots = NULL;
     int snapshot_count = 0, snapshot_capacity = 0;
     int total_boundary_changes = 0;
@@ -1009,12 +1033,8 @@ int mode_sweep(int argc, char **argv) {
         fprintf(stderr, "ERROR: Failed to load boat from config/database\n");
         goto cleanup;
     }
-    if (!load_segments_from_json(input, &inst, &boat, &segments, &segment_count, &initial_solution)) {
+    if (!load_segments_from_json(input, &inst, &boat, &segments, &segment_count, &current_solution)) {
         fprintf(stderr, "ERROR: Failed to load segmented solution from %s\n", input);
-        goto cleanup;
-    }
-    if (!segment_to_solution(&inst, &boat, segments, segment_count, &initial_solution)) {
-        fprintf(stderr, "ERROR: Failed to materialize initial sweep solution\n");
         goto cleanup;
     }
 
@@ -1040,10 +1060,6 @@ int mode_sweep(int argc, char **argv) {
             GRBfreeenv(env);
             goto cleanup;
         }
-        if (!copy_solution(&best_solution, &current_solution)) {
-            GRBfreeenv(env);
-            goto cleanup;
-        }
 
         {
             sweep_snapshot_t snapshot;
@@ -1065,9 +1081,7 @@ int mode_sweep(int argc, char **argv) {
                 goto cleanup;
             }
             if (!write_sweep_json(output, &boat, &inst,
-                                  &initial_solution, solution_is_feasible(&inst, &boat, &initial_solution),
                                   snapshots, snapshot_count,
-                                  &best_solution, snapshot.feasible,
                                   total_boundary_changes, snapshot.total_runtime_seconds,
                                   strategy)) {
                 fprintf(stderr, "ERROR: Failed to persist initial sweep snapshot JSON\n");
@@ -1119,14 +1133,6 @@ int mode_sweep(int argc, char **argv) {
             snapshot.pass_runtime_seconds = elapsed_seconds(t_pass_start, t_pass_end);
             snapshot.total_runtime_seconds = elapsed_seconds(t_start, t_now);
             snapshot.feasible = solution_is_feasible(&inst, &boat, &current_solution);
-            if (current_solution.total_distance + SWEEP_EPS < best_solution.total_distance) {
-                free_solution(&best_solution);
-                if (!copy_solution(&best_solution, &current_solution)) {
-                    free(active);
-                    GRBfreeenv(env);
-                    goto cleanup;
-                }
-            }
             if (!copy_solution(&snapshot.solution, &current_solution)) {
                 free(active);
                 GRBfreeenv(env);
@@ -1139,9 +1145,7 @@ int mode_sweep(int argc, char **argv) {
                 goto cleanup;
             }
             if (!write_sweep_json(output, &boat, &inst,
-                                  &initial_solution, solution_is_feasible(&inst, &boat, &initial_solution),
                                   snapshots, snapshot_count,
-                                  &best_solution, solution_is_feasible(&inst, &boat, &best_solution),
                                   total_boundary_changes, snapshot.total_runtime_seconds,
                                   strategy)) {
                 fprintf(stderr, "ERROR: Failed to persist sweep snapshot JSON\n");
@@ -1166,9 +1170,7 @@ cleanup:
     if (db) sqlite3_close(db);
     free_instance(&inst);
     free_segments(segments, segment_count);
-    free_solution(&initial_solution);
     free_solution(&current_solution);
-    free_solution(&best_solution);
     free_snapshot_array(snapshots, snapshot_count);
     return rc;
 }

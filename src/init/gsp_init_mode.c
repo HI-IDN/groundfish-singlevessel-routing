@@ -766,6 +766,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     struct timespec t_output_start, t_output_preload_end, t_output_expand_end, t_output_end;
     int leg_query_count = 0;
     int total_waypoint_ids = 0;
+    int has_presolve;
+    const char *final_variant_name;
 
     FILE *fp = fopen(output_path, "w");
     if (!fp) {
@@ -807,15 +809,14 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    \"target_capacity\": %.0f,\n", target_capacity);
     fprintf(fp, "    \"target_catch_slack_kg\": %d\n", target_catch_slack_kg);
     fprintf(fp, "  },\n");
-    write_solution_section(fp, "solution", inst, sol, boat_start_loc_id, boat_end_loc_id,
-                           is_feasible, &cache, &leg_query_count, &total_waypoint_ids,
-                           "final", 0);
-    fprintf(fp, ",\n");
+    has_presolve = pre_capacity_sol &&
+                   pre_capacity_sol->visit_station_count > 0 &&
+                   (strcmp(strategy_name ? strategy_name : "", "ci") == 0 ||
+                    strcmp(strategy_name ? strategy_name : "", "ge") == 0);
+    final_variant_name = "capacity-feasible";
 
-    if (pre_capacity_sol &&
-        pre_capacity_sol->visit_station_count > 0 &&
-        (strcmp(strategy_name ? strategy_name : "", "ci") == 0 ||
-         strcmp(strategy_name ? strategy_name : "", "ge") == 0)) {
+    fprintf(fp, "  \"solution\": {\n");
+    if (has_presolve) {
         int before_feasible = init_solution_is_capacity_feasible(pre_capacity_sol, boat_capacity) &&
                               stations_are_unique_and_complete(pre_capacity_sol->visit_station_ids,
                                                                pre_capacity_sol->visit_station_count,
@@ -825,32 +826,49 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                                before_feasible, &cache, &leg_query_count, &total_waypoint_ids,
                                "presolve", 1);
         fprintf(fp, ",\n");
+        write_solution_section(fp, final_variant_name, inst, sol, boat_start_loc_id, boat_end_loc_id,
+                               is_feasible, &cache, &leg_query_count, &total_waypoint_ids,
+                               final_variant_name, 0);
+        fprintf(fp, "\n");
+    } else {
+        write_solution_section(fp, final_variant_name, inst, sol, boat_start_loc_id, boat_end_loc_id,
+                               is_feasible, &cache, &leg_query_count, &total_waypoint_ids,
+                               final_variant_name, 0);
+        fprintf(fp, "\n");
     }
+    fprintf(fp, "  },\n");
     clock_gettime(CLOCK_MONOTONIC, &t_output_expand_end);
     printf("[OUTPUT] Waypoint expansion: %d legs, %d waypoint IDs, direct=%d reverse=%d miss=%d, %.3f s\n",
            leg_query_count, total_waypoint_ids, cache.direct_hits, cache.reverse_hits, cache.misses,
            elapsed_seconds(t_output_preload_end, t_output_expand_end));
 
-    {
-        struct timespec t_stats_now;
-        double output_elapsed_seconds;
-        double postprocessing_seconds;
-        double total_runtime_seconds;
-
-        clock_gettime(CLOCK_MONOTONIC, &t_stats_now);
-        output_elapsed_seconds = elapsed_seconds(t_output_start, t_stats_now);
-        postprocessing_seconds = check_runtime_seconds + output_elapsed_seconds;
-        total_runtime_seconds = elapsed_seconds(mode_start_time, t_stats_now);
-
-        fprintf(fp, "  \"solver_stats\": {\n");
+    fprintf(fp, "  \"summary\": {\n");
+    fprintf(fp, "    \"final\": \"%s\",\n", final_variant_name);
     fprintf(fp, "    \"status\": \"init_complete\",\n");
+    fprintf(fp, "    \"feasible\": %s,\n", is_feasible ? "true" : "false");
+    fprintf(fp, "    \"total_distance_nm\": [");
+    if (has_presolve) {
+        fprintf(fp, "%.2f, %.2f", pre_capacity_sol->total_distance, sol->total_distance);
+    } else {
+        fprintf(fp, "%.2f", sol->total_distance);
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", sol->total_distance);
     fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
-    fprintf(fp, "    \"method_runtime_seconds\": %.6f,\n", solve_runtime_seconds);
-        fprintf(fp, "    \"postprocessing_seconds\": %.6f,\n", postprocessing_seconds);
-        fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n", total_runtime_seconds);
+    fprintf(fp, "    \"solution_runtime_seconds\": [");
+    if (has_presolve) {
+        fprintf(fp, "%.6f, %.6f", solve_runtime_seconds, check_runtime_seconds);
+    } else {
+        fprintf(fp, "%.6f", solve_runtime_seconds);
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "    \"postprocessing_seconds\": %.6f,\n",
+            elapsed_seconds(t_output_start, t_output_expand_end));
+    fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n",
+            preprocessing_seconds + solve_runtime_seconds + check_runtime_seconds +
+            elapsed_seconds(t_output_start, t_output_expand_end));
     fprintf(fp, "    \"method\": \"%s\"\n", method_name ? method_name : "unknown");
     fprintf(fp, "  }\n");
-    }
 
     fprintf(fp, "}\n");
 
@@ -899,19 +917,32 @@ static void write_metadata_only_json(const char *output_path,
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"solution\": {\n");
-    fprintf(fp, "    \"tour_segments_location_ids\": [],\n");
-    fprintf(fp, "    \"tour_segments_station_ids\": [],\n");
-    fprintf(fp, "    \"tour_length\": [],\n");
-    fprintf(fp, "    \"segment_count\": 0,\n");
-    fprintf(fp, "    \"segment_catch_amount\": [],\n");
-    fprintf(fp, "    \"segment_distance_nm\": [],\n");
-    fprintf(fp, "    \"total_distance_nm\": 0.0,\n");
-    fprintf(fp, "    \"feasible\": false\n");
+    fprintf(fp, "    \"capacity-feasible\": {\n");
+    fprintf(fp, "      \"tour_segments_location_ids\": [],\n");
+    fprintf(fp, "      \"tour_segments_station_ids\": [],\n");
+    fprintf(fp, "      \"tour_length\": [],\n");
+    fprintf(fp, "      \"segment_count\": 0,\n");
+    fprintf(fp, "      \"segment_catch_amount\": [],\n");
+    fprintf(fp, "      \"segment_distance_nm\": [],\n");
+    fprintf(fp, "      \"total_distance_nm\": 0.0,\n");
+    fprintf(fp, "      \"preprocessing_seconds\": 0.0,\n");
+    fprintf(fp, "      \"method_runtime_seconds\": 0.0,\n");
+    fprintf(fp, "      \"postprocessing_seconds\": 0.0,\n");
+    fprintf(fp, "      \"total_runtime_seconds\": 0.0,\n");
+    fprintf(fp, "      \"feasible\": false\n");
+    fprintf(fp, "    }\n");
     fprintf(fp, "  },\n");
 
-    fprintf(fp, "  \"solver_stats\": {\n");
+    fprintf(fp, "  \"summary\": {\n");
+    fprintf(fp, "    \"final\": \"capacity-feasible\",\n");
     fprintf(fp, "    \"status\": \"debug_metadata_only\",\n");
-    fprintf(fp, "    \"runtime_seconds\": 0.0,\n");
+    fprintf(fp, "    \"feasible\": false,\n");
+    fprintf(fp, "    \"total_distance_nm\": [0.0],\n");
+    fprintf(fp, "    \"final_total_distance_nm\": 0.0,\n");
+    fprintf(fp, "    \"preprocessing_seconds\": 0.0,\n");
+    fprintf(fp, "    \"solution_runtime_seconds\": [0.0],\n");
+    fprintf(fp, "    \"postprocessing_seconds\": 0.0,\n");
+    fprintf(fp, "    \"total_runtime_seconds\": 0.0,\n");
     fprintf(fp, "    \"method\": \"none\"\n");
     fprintf(fp, "  }\n");
     fprintf(fp, "}\n");

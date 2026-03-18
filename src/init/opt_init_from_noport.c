@@ -234,6 +234,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                        int is_feasible,
                        double preprocessing_seconds,
                        double solve_runtime_seconds) {
+    const char *final_variant_name = "capacity-feasible";
     FILE *fp = fopen(output_path, "w");
     int *unique_waypoint_location_ids = NULL;
     int uniq_wp_n = 0, uniq_wp_cap = 0;
@@ -280,6 +281,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     }
 
     fprintf(fp, "  \"solution\": {\n");
+    fprintf(fp, "    \"%s\": {\n", final_variant_name);
+    fprintf(fp, "    \"variant\": \"%s\",\n", final_variant_name);
     fprintf(fp, "    \"tour_segments_location_ids\": [\n");
     for (int s = 0; s < sol->segment_count; s++) {
         int start = sol->segment_starts[s];
@@ -375,12 +378,19 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
 
     fprintf(fp, "    \"total_distance_nm\": %.2f,\n", sol->total_distance);
     fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
+    fprintf(fp, "    }\n");
     fprintf(fp, "  },\n");
 
-    fprintf(fp, "  \"solver_stats\": {\n");
+    fprintf(fp, "  \"summary\": {\n");
+    fprintf(fp, "    \"final\": \"%s\",\n", final_variant_name);
     fprintf(fp, "    \"status\": \"init_complete\",\n");
+    fprintf(fp, "    \"feasible\": %s,\n", is_feasible ? "true" : "false");
+    fprintf(fp, "    \"total_distance_nm\": [%.2f],\n", sol->total_distance);
+    fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", sol->total_distance);
     fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
-    fprintf(fp, "    \"runtime_seconds\": %.6f,\n", solve_runtime_seconds);
+    fprintf(fp, "    \"solution_runtime_seconds\": [%.6f],\n", solve_runtime_seconds);
+    fprintf(fp, "    \"postprocessing_seconds\": 0.0,\n");
+    fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n", preprocessing_seconds + solve_runtime_seconds);
     fprintf(fp, "    \"method\": \"%s\"\n", method_name ? method_name : "unknown");
     fprintf(fp, "  }\n");
     fprintf(fp, "}\n");

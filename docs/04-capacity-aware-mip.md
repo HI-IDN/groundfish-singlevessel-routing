@@ -44,13 +44,18 @@ Because any port included in the model must also be visited exactly once, the fu
 
 ## C-MIP procedure
 
-1. Build the directed graph with paired nodes for vessel, stations, and fixed ports.
+The paper states the general capacity-aware MIP procedure as:
+
+1. Build the directed graph with paired nodes for the vessel, stations, and fixed ports.
 2. Duplicate port nodes to encode the fixed maximum number of port calls.
 3. Create the MIP with degree, pair, flow, and capacity constraints.
 4. Enable subtour elimination through a callback.
-5. Set the solver time limit.
+5. Set the solver time limit `L`.
 6. Optimize and record the best feasible incumbent.
 7. Return the incumbent tour and objective value, if any.
+
+In the paper's terminology, this is the `C-MIP` procedure used both as a full end-to-end model and
+as the exact subroutine inside the matheuristic boundary improvement step.
 
 ## Why the full model is hard
 
