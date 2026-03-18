@@ -2,6 +2,7 @@
 # Build directory is at ../build (root level)
 
 BUILD_DIR = ../build
+CONFIG_YAML = ../config/gsp_solver.yaml
 
 COUNTRY_DB ?= ../dat/gsp_data.db
 COUNTRY_ISLAND ?= ../dat/island.tsv
@@ -10,7 +11,10 @@ COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt plot plot-country plot-overview plot-routes help
+NN_INIT_JSON = ../sol/nn/init.json
+NN_SWEEP_JSON = ../sol/nn/sweep.json
+
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep_nn plot plot-country plot-overview plot-routes help
 
 all: build
 
@@ -53,6 +57,22 @@ noport-opt: build
 
 init_opt: build
 	@cd $(BUILD_DIR) && $(MAKE) run_init_opt
+
+sweep_nn: build
+	@mkdir -p ../sol/nn
+	@bash -lc 'set -euo pipefail; \
+		init_json="$(NN_INIT_JSON)"; \
+		db="$(COUNTRY_DB)"; \
+		if [ ! -f "$$init_json" ]; then \
+			echo "NN init missing -> generating $$init_json"; \
+			cd "$(BUILD_DIR)" && $(MAKE) run_init_nn; \
+		elif [ "$$db" -nt "$$init_json" ]; then \
+			echo "Database newer than $$init_json -> regenerating NN init"; \
+			cd "$(BUILD_DIR)" && $(MAKE) run_init_nn; \
+		else \
+			echo "Reusing existing $$init_json"; \
+		fi; \
+		cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy nn --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$(NN_SWEEP_JSON)"'
 
 plot-routes:
 	@bash -lc 'set -euo pipefail; cd ..; \
@@ -101,6 +121,7 @@ help:
 	@echo "  make init_opt"
 	@echo ""
 	@echo "Phase 1: Sweep"
+	@echo "  make sweep_nn"
 	@echo ""
 	@echo "Other targets:"
 	@echo "  make build"

@@ -105,6 +105,9 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         init/cheapest_insertion.c
         common/feasibility.c
         sweep/gsp_sweep_mode.c
+        mip/endpaired_tsp.c
+        mip/mip_common.c
+        mip/mip_paired_tour.c
     )
 
     target_link_libraries(gsp_gurobi
@@ -173,8 +176,15 @@ add_custom_target(run_init_ci
 )
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
+    set(GSP_MIP_SHARED_SOURCES
+        mip/mip_common.c
+        mip/mip_paired_tour.c
+    )
+
     add_executable(gsp_noport_opt
         mip/noport.c
+        mip/endpaired_tsp.c
+        ${GSP_MIP_SHARED_SOURCES}
         init/noport_order_main.c
         common/feasibility.c
     )

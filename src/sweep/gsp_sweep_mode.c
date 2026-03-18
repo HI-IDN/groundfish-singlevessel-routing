@@ -13,6 +13,7 @@
 
 #ifdef HAVE_GUROBI
 #include <gurobi_c.h>
+#include "../mip/include/mip_endpaired_tsp.h"
 #endif
 
 #ifndef __stdcall
@@ -51,11 +52,6 @@ typedef struct {
     double boat_start_lat;
     double boat_start_lon;
 } sweep_boat_t;
-
-typedef struct {
-    int n;
-    int numvars;
-} callback_data_t;
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
@@ -574,326 +570,73 @@ cleanup:
 }
 
 #ifdef HAVE_GUROBI
-static void *xmalloc_local(size_t nbytes) {
-    void *ptr = malloc(nbytes);
-    if (!ptr) {
-        fprintf(stderr, "Out of memory\n");
-        exit(1);
-    }
-    return ptr;
-}
-
-static void *xcalloc_local(size_t count, size_t size) {
-    void *ptr = calloc(count, size);
-    if (!ptr) {
-        fprintf(stderr, "Out of memory\n");
-        exit(1);
-    }
-    return ptr;
-}
-
-static void findsubtour_directed(int n, const double *sol, int *tourlen_out, int *tour_out) {
-    int *unvisited = (int*)xcalloc_local((size_t)n, sizeof(int));
-    int *best = (int*)xmalloc_local((size_t)n * sizeof(int));
-    int *current = (int*)xmalloc_local((size_t)n * sizeof(int));
-    int best_len = n + 1;
-    int remaining = n;
-
-    for (int i = 0; i < n; i++) unvisited[i] = 1;
-
-    while (remaining > 0) {
-        int start = -1;
-        int len = 0;
-        int cursor;
-
-        for (int i = 0; i < n; i++) {
-            if (unvisited[i]) {
-                start = i;
-                break;
-            }
-        }
-        if (start < 0) break;
-
-        cursor = start;
-        while (cursor >= 0 && unvisited[cursor]) {
-            current[len++] = cursor;
-            unvisited[cursor] = 0;
-            remaining--;
-
-            {
-                int next = -1;
-                for (int j = 0; j < n; j++) {
-                    if (sol[cursor * n + j] > 0.5 && unvisited[j]) {
-                        next = j;
-                        break;
-                    }
-                }
-                cursor = next;
-            }
-        }
-
-        if (len < best_len) {
-            best_len = len;
-            memcpy(best, current, (size_t)len * sizeof(int));
-        }
-    }
-
-    memcpy(tour_out, best, (size_t)best_len * sizeof(int));
-    *tourlen_out = best_len;
-
-    free(unvisited);
-    free(best);
-    free(current);
-}
-
-static int *node_tour_to_letour(const int *tour, int len, int size, int *out_len) {
-    int *letour = (int*)xmalloc_local((size_t)size * sizeof(int));
-    int count = 0;
-
-    for (int i = 0; i < len; i++) {
-        int city = tour[i] / 2;
-        int seen = 0;
-        for (int j = 0; j < count; j++) {
-            if (abs(letour[j]) == city) {
-                seen = 1;
-                break;
-            }
-        }
-        if (!seen) letour[count++] = (tour[i] % 2 == 1) ? -city : city;
-    }
-
-    *out_len = count;
-    return letour;
-}
-
-static void orient_node_tour(int *tour, int len) {
-    if (!tour || len <= 1) return;
-    if (len > 1 && tour[0] == 1 && tour[1] == 0) {
-        for (int i = 0, j = len - 1; i < j; i++, j--) {
-            int tmp = tour[i];
-            tour[i] = tour[j];
-            tour[j] = tmp;
-        }
-    }
-}
-
-static int __stdcall subtourelim(GRBmodel *model, void *cbdata, int where, void *usrdata) {
-    callback_data_t *cb = (callback_data_t*)usrdata;
-    int error = 0;
-    (void)model;
-
-    if (where == GRB_CB_MIPSOL) {
-        double *sol = (double*)xmalloc_local((size_t)cb->numvars * sizeof(double));
-        int *tour = (int*)xmalloc_local((size_t)cb->n * sizeof(int));
-        int len = 0;
-
-        GRBcbget(cbdata, where, GRB_CB_MIPSOL_SOL, sol);
-        findsubtour_directed(cb->n, sol, &len, tour);
-
-        if (len < cb->n) {
-            int max_pairs = len * (len - 1) / 2;
-            int nz = 2 * max_pairs;
-            int *ind = (int*)xmalloc_local((size_t)nz * sizeof(int));
-            double *val = (double*)xmalloc_local((size_t)nz * sizeof(double));
-            int k = 0;
-
-            for (int a = 0; a < len; a++) {
-                for (int b = a + 1; b < len; b++) {
-                    int i = tour[a];
-                    int j = tour[b];
-                    ind[k] = i * cb->n + j;
-                    val[k++] = 1.0;
-                    ind[k] = j * cb->n + i;
-                    val[k++] = 1.0;
-                }
-            }
-            error = GRBcblazy(cbdata, k, ind, val, GRB_LESS_EQUAL, (double)len - 1.0);
-            free(ind);
-            free(val);
-        }
-
-        free(sol);
-        free(tour);
-    }
-
-    return error;
-}
-
 static int solve_segment_tsp(GRBenv *env, const nn_instance_t *inst,
                              int start_loc_id, int end_loc_id,
                              const int *station_ids, int n_stations,
                              int *out_catch, double *out_distance,
                              int **out_signed_station_ids) {
-    int n = 2 * (n_stations + 1);
-    double *dist = NULL;
-    int *entry = NULL;
-    int *exit = NULL;
-    GRBmodel *model = NULL;
-    int *ind = NULL;
-    double *val = NULL;
-    int *node_tour = NULL;
-    int node_len = 0;
-    double *sol = NULL;
-    int status = 0;
-    int solcount = 0;
-    int error = 0;
-    int *signed_ids = NULL;
-    double objective = 0.0;
-    int total_catch = 0;
-    const double big_m = 1e12;
+    mip_endpaired_instance_t mip_instance;
+    mip_endpaired_solution_t mip_solution;
+    mip_params_t mip_params;
+    int *instance_station_ids = NULL;
+    int *start_loc_ids = NULL;
+    int *end_loc_ids = NULL;
+    int *amounts = NULL;
 
     if (n_stations <= 0) return 0;
+    memset(&mip_instance, 0, sizeof(mip_instance));
+    memset(&mip_solution, 0, sizeof(mip_solution));
+    memset(&mip_params, 0, sizeof(mip_params));
 
-    dist = (double*)malloc((size_t)n * (size_t)n * sizeof(double));
-    entry = (int*)malloc((size_t)(n_stations + 1) * sizeof(int));
-    exit = (int*)malloc((size_t)(n_stations + 1) * sizeof(int));
-    if (!dist || !entry || !exit) goto fail;
+    instance_station_ids = (int*)malloc((size_t)n_stations * sizeof(int));
+    start_loc_ids = (int*)malloc((size_t)n_stations * sizeof(int));
+    end_loc_ids = (int*)malloc((size_t)n_stations * sizeof(int));
+    amounts = (int*)malloc((size_t)n_stations * sizeof(int));
+    if (!instance_station_ids || !start_loc_ids || !end_loc_ids || !amounts) goto fail;
 
-    entry[0] = start_loc_id;
-    exit[0] = end_loc_id;
     for (int i = 0; i < n_stations; i++) {
         int station_idx = find_station_index(inst, station_ids[i]);
         if (station_idx < 0) goto fail;
-        entry[i + 1] = inst->nodes[station_idx].start_loc_id;
-        exit[i + 1] = inst->nodes[station_idx].end_loc_id;
-        total_catch += inst->nodes[station_idx].amount;
+        instance_station_ids[i] = station_ids[i];
+        start_loc_ids[i] = inst->nodes[station_idx].start_loc_id;
+        end_loc_ids[i] = inst->nodes[station_idx].end_loc_id;
+        amounts[i] = inst->nodes[station_idx].amount;
     }
 
-    for (int i = 0; i < n_stations + 1; i++) {
-        for (int j = 0; j < n_stations + 1; j++) {
-            double d00 = get_distance(inst, entry[i], entry[j]);
-            double d01 = get_distance(inst, entry[i], exit[j]);
-            double d10 = get_distance(inst, exit[i], entry[j]);
-            double d11 = get_distance(inst, exit[i], exit[j]);
-            dist[(2 * i + 0) * n + (2 * j + 0)] = (d00 >= 0.0) ? d00 : big_m;
-            dist[(2 * i + 0) * n + (2 * j + 1)] = (d01 >= 0.0) ? d01 : big_m;
-            dist[(2 * i + 1) * n + (2 * j + 0)] = (d10 >= 0.0) ? d10 : big_m;
-            dist[(2 * i + 1) * n + (2 * j + 1)] = (d11 >= 0.0) ? d11 : big_m;
-        }
+    mip_instance.num_stations = n_stations;
+    mip_instance.station_ids = instance_station_ids;
+    mip_instance.station_start_loc_ids = start_loc_ids;
+    mip_instance.station_end_loc_ids = end_loc_ids;
+    mip_instance.station_amounts = amounts;
+    mip_instance.distances = inst->distances;
+    mip_instance.max_location_id = inst->max_loc_id;
+
+    mip_params.verbose = 0;
+    mip_params.shared_env = env;
+
+    if (solve_mip_endpaired_tsp(&mip_instance, &mip_params,
+                                start_loc_id, end_loc_id, &mip_solution) != 0) {
+        goto fail;
     }
 
-    dist[1] = 0.0;
-    dist[n] = 0.0;
+    *out_catch = mip_solution.catch_amount;
+    *out_distance = mip_solution.total_distance_nm;
+    *out_signed_station_ids = mip_solution.signed_station_ids;
+    mip_solution.signed_station_ids = NULL;
 
-    error = GRBnewmodel(env, &model, "segment_tsp", 0, NULL, NULL, NULL, NULL, NULL);
-    if (error) goto fail;
-
-    GRBsetintparam(GRBgetenv(model), "OutputFlag", 0);
-    GRBsetintparam(GRBgetenv(model), "LogToConsole", 0);
-
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < n; j++) {
-            error = GRBaddvar(model, 0, NULL, NULL, dist[i * n + j], 0.0, 1.0, GRB_BINARY, NULL);
-            if (error) goto fail;
-        }
-    }
-
-    ind = (int*)malloc((size_t)n * sizeof(int));
-    val = (double*)malloc((size_t)n * sizeof(double));
-    if (!ind || !val) goto fail;
-    for (int i = 0; i < n; i++) val[i] = 1.0;
-
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < n; j++) ind[j] = i * n + j;
-        error = GRBaddconstr(model, n, ind, val, GRB_EQUAL, 1.0, NULL);
-        if (error) goto fail;
-    }
-    for (int j = 0; j < n; j++) {
-        for (int i = 0; i < n; i++) ind[i] = i * n + j;
-        error = GRBaddconstr(model, n, ind, val, GRB_EQUAL, 1.0, NULL);
-        if (error) goto fail;
-    }
-    for (int i = 0; i < n_stations + 1; i++) {
-        int a = 2 * i;
-        int b = 2 * i + 1;
-        ind[0] = a * n + b;
-        ind[1] = b * n + a;
-        val[0] = 1.0;
-        val[1] = 1.0;
-        error = GRBaddconstr(model, 2, ind, val, GRB_EQUAL, 1.0, NULL);
-        if (error) goto fail;
-    }
-    for (int i = 0; i < n; i++) {
-        error = GRBsetdblattrelement(model, GRB_DBL_ATTR_UB, i * n + i, 0.0);
-        if (error) goto fail;
-    }
-
-    {
-        callback_data_t cb;
-        cb.n = n;
-        cb.numvars = n * n;
-        error = GRBsetcallbackfunc(model, subtourelim, (void*)&cb);
-        if (error) goto fail;
-        error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_LAZYCONSTRAINTS, 1);
-        if (error) goto fail;
-        error = GRBoptimize(model);
-        if (error) goto fail;
-    }
-
-    error = GRBgetintattr(model, GRB_INT_ATTR_STATUS, &status);
-    if (error) goto fail;
-    error = GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount);
-    if (error || solcount <= 0 || status != GRB_OPTIMAL) goto fail;
-
-    error = GRBgetdblattr(model, GRB_DBL_ATTR_OBJVAL, &objective);
-    if (error) goto fail;
-
-    sol = (double*)malloc((size_t)n * (size_t)n * sizeof(double));
-    node_tour = (int*)malloc((size_t)n * sizeof(int));
-    if (!sol || !node_tour) goto fail;
-    error = GRBgetdblattrarray(model, GRB_DBL_ATTR_X, 0, n * n, sol);
-    if (error) goto fail;
-    findsubtour_directed(n, sol, &node_len, node_tour);
-    orient_node_tour(node_tour, node_len);
-
-    {
-        int letour_len = 0;
-        int *letour = node_tour_to_letour(node_tour, node_len, n_stations + 1, &letour_len);
-        int out_count = 0;
-        if (!letour) goto fail;
-        signed_ids = (int*)malloc((size_t)n_stations * sizeof(int));
-        if (!signed_ids) {
-            free(letour);
-            goto fail;
-        }
-        for (int i = 0; i < letour_len; i++) {
-            int token = letour[i];
-            int local_idx;
-            int sign;
-            if (token == 0) continue;
-            sign = (token < 0) ? -1 : 1;
-            local_idx = abs(token) - 1;
-            if (local_idx < 0 || local_idx >= n_stations) continue;
-            signed_ids[out_count++] = sign * station_ids[local_idx];
-        }
-        free(letour);
-        if (out_count != n_stations) goto fail;
-    }
-
-    *out_catch = total_catch;
-    *out_distance = objective;
-    *out_signed_station_ids = signed_ids;
-
-    free(dist);
-    free(entry);
-    free(exit);
-    free(ind);
-    free(val);
-    free(node_tour);
-    free(sol);
-    if (model) GRBfreemodel(model);
+    free_mip_endpaired_solution(&mip_solution);
+    free(instance_station_ids);
+    free(start_loc_ids);
+    free(end_loc_ids);
+    free(amounts);
     return 1;
 
 fail:
-    free(dist);
-    free(entry);
-    free(exit);
-    free(ind);
-    free(val);
-    free(node_tour);
-    free(sol);
-    free(signed_ids);
-    if (model) GRBfreemodel(model);
+    free_mip_endpaired_solution(&mip_solution);
+    free(instance_station_ids);
+    free(start_loc_ids);
+    free(end_loc_ids);
+    free(amounts);
     return 0;
 }
 #endif

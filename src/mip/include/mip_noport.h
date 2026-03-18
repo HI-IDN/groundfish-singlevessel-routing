@@ -1,15 +1,9 @@
 #ifndef GSP_MIP_NOPORT_H
 #define GSP_MIP_NOPORT_H
 
+#include "mip_common.h"
 #include "constants.h"
 #include "dat_parser.h"
-
-typedef struct {
-    double time_limit_seconds;
-    int thread_count;
-    int verbose;
-    double mip_gap;
-} mip_noport_params_t;
 
 typedef struct {
     const Boat *boat;
@@ -18,6 +12,8 @@ typedef struct {
     double **distances;
     int max_location_id;
 } mip_noport_instance_t;
+
+typedef mip_params_t mip_noport_params_t;
 
 typedef struct {
     int *signed_station_ids;

@@ -526,6 +526,7 @@ int main(int argc, char **argv) {
     mip_instance.distances = app.distances;
     mip_instance.max_location_id = app.max_location_id;
 
+    memset(&mip_params, 0, sizeof(mip_params));
     mip_params.time_limit_seconds = time_limit_seconds;
     mip_params.thread_count = 4;
     mip_params.verbose = 1;
