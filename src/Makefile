@@ -10,7 +10,7 @@ COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt plot-routes help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt plot plot-country plot-overview plot-routes help
 
 all: build
 
@@ -65,6 +65,14 @@ plot-routes:
 		fi; \
 	done'
 
+plot-country:
+	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp_data.db dat/coastline_waypoints_ports.png'
+
+plot-overview:
+	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R'
+
+plot: plot-country plot-overview plot-routes
+
 clean:
 	@echo "Cleaning build directory..."
 	@rm -rf $(BUILD_DIR)
@@ -97,6 +105,9 @@ help:
 	@echo "Other targets:"
 	@echo "  make build"
 	@echo "  make survey"
+	@echo "  make plot"
+	@echo "  make plot-country"
+	@echo "  make plot-overview"
 	@echo "  make plot-routes"
 	@echo "  make clean"
 	@echo "  make reconfigure"

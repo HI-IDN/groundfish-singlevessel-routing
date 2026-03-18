@@ -16,14 +16,14 @@ enum {
 #define GSP_DAT_TAG_PORT "PORT"
 
 /* Waypoint granularity levels stored in the waypoints.granularity INTEGER column.
- *   0 = coarse coastline approximation
- *   1 = routing coastline ring
- *   2 = buffered coastline support points
+ *   0 = coarse coastline ring
+ *   1 = buffered coastline support points
+ *   2 = manual WAYP points loaded from waypoints.dat
  */
 enum {
     GSP_WAYPOINT_GRANULARITY_COARSE   = 0,
-    GSP_WAYPOINT_GRANULARITY_ROUTING  = 1,
-    GSP_WAYPOINT_GRANULARITY_BUFFERED = 2
+    GSP_WAYPOINT_GRANULARITY_BUFFERED = 1,
+    GSP_WAYPOINT_GRANULARITY_MANUAL   = 2
 };
 
 enum {
@@ -60,12 +60,20 @@ enum {
 #define INFEASIBLE_LINK_PENALTY 100000.0
 #define DIJKSTRA_INFINITY 10000000000.0
 
-/* Buffered coastline support points:
- * 1 nautical mile is visibly offshore while still representing near-coast routing.
+/* Coarse coastline ring:
+ * A broader offshore ring used for long detours around the island.
  * The GEOS buffer is applied in geographic degrees, so we use the latitude approximation
  * 1 nm = 1/60 degree here.
  */
-#define BUFFERED_COASTLINE_OFFSET_NM 1.0
+#define COARSE_COASTLINE_OFFSET_NM 50.0
+#define COARSE_COASTLINE_OFFSET_DEG (COARSE_COASTLINE_OFFSET_NM / 60.0)
+#define COARSE_COASTLINE_MAX_POINTS 25
+
+/* Buffered coastline support points:
+ * 10 nautical mile is visibly offshore while still representing near-coast routing.
+ */
+#define BUFFERED_COASTLINE_OFFSET_NM 10.0
 #define BUFFERED_COASTLINE_OFFSET_DEG (BUFFERED_COASTLINE_OFFSET_NM / 60.0)
+#define BUFFERED_COASTLINE_MAX_POINTS 100
 
 #endif

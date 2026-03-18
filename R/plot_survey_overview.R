@@ -1,6 +1,4 @@
 #!/usr/bin/env Rscript
-# Survey Overview Plotter
-# Visualizes coastline, ports, stations, and boat locations from GSP database
 
 required_packages <- c("tidyverse", "DBI", "RSQLite")
 
@@ -14,77 +12,79 @@ source(file.path(script_dir, "plot_utils.R"))
 
 load_required_packages(required_packages)
 
-# Main script execution
 cat("=== Survey Overview Plotter ===\n\n")
 
-# Load coastline data
 cat("Loading coastline data...\n")
-coastline <- read_db_table("dat/gsp_data.db",
-                           "SELECT lat, lon FROM coastline")
+coastline <- read_db_table("dat/gsp_data.db", "SELECT lat, lon FROM coastline")
 
-# Plot coastline
 cat("\nPlotting coastline...\n")
 p <- base_coastline_plot(coastline)
 
-# Load port and boat location data
 cat("\nLoading locations...\n")
-locations <- read_db_table("dat/gsp_data.db",
-                           "SELECT p.name, l.lat, l.lon, 'Port' as type
-                           FROM ports p
-                           INNER JOIN locations l ON p.location_id = l.id
-                           UNION ALL
-                           SELECT b.name, l.lat, l.lon, 'Boat' as type
-                           FROM boats b
-                           INNER JOIN locations l ON b.start_location_id = l.id
-                           UNION ALL
-                           SELECT NULL, lat, lon, 'Waypoint' as type
-                           FROM locations l
-                           INNER JOIN waypoints w ON l.id = w.location_id
-                           ORDER BY type DESC")
+locations <- read_db_table(
+  "dat/gsp_data.db",
+  "SELECT p.name, l.lat, l.lon, 'Port' as type
+   FROM ports p
+   INNER JOIN locations l ON p.location_id = l.id
+   UNION ALL
+   SELECT b.name, l.lat, l.lon, 'Boat' as type
+   FROM boats b
+   INNER JOIN locations l ON b.start_location_id = l.id
+   ORDER BY type DESC"
+)
 
-# Load the stations data with both start and end locations
 cat("\nLoading trawl station locations...\n")
-stations <- read_db_table("dat/gsp_data.db",
-                          "SELECT s.id, s.amount,
-                          start.lat as start_lat, start.lon as start_lon,
-                          end.lat as end_lat, end.lon as end_lon
-                          FROM stations s
-                          INNER JOIN locations start ON s.start_location_id = start.id
-                          INNER JOIN locations end ON s.end_location_id = end.id
-                          ORDER BY s.id")
+stations <- read_db_table(
+  "dat/gsp_data.db",
+  "SELECT s.id, s.amount,
+          start.lat as start_lat, start.lon as start_lon,
+          end.lat as end_lat, end.lon as end_lon
+   FROM stations s
+   INNER JOIN locations start ON s.start_location_id = start.id
+   INNER JOIN locations end ON s.end_location_id = end.id
+   ORDER BY s.id"
+)
 
-
-# Create final plot with coastline, ports, boats, and stations
 cat("\nCreating final overview plot...\n")
 final_plot <- p +
-  # Stations with arrows colored by catch amount
-  geom_segment(data = stations,
-               aes(x = start_lon, y = start_lat, xend = end_lon, yend = end_lat,
-                   color = log10(amount + 1)),
-               arrow = grid::arrow(length = grid::unit(0.05, "cm")),
-               lineend = "round",
-               linewidth = 0.6,
-               inherit.aes = FALSE) +
-  # Continuous color scale: rainbow (low -> high)
+  geom_segment(
+    data = stations,
+    aes(
+      x = start_lon,
+      y = start_lat,
+      xend = end_lon,
+      yend = end_lat,
+      color = log10(amount + 1)
+    ),
+    arrow = grid::arrow(length = grid::unit(0.05, "cm")),
+    lineend = "round",
+    linewidth = 0.6,
+    inherit.aes = FALSE
+  ) +
   scale_colour_gradientn(
     colours = rev(rainbow(7)),
     name = "Catch amount\n(log10 scale)",
     na.value = "grey50",
     guide = "colourbar"
   ) +
-  # Plot ports and boats
-  geom_point(data = locations,
-             aes(x = lon, y = lat, shape = type),
-             size = 3,
-             inherit.aes = FALSE) +
-  scale_shape_manual(values = c("Port" = 1, "Boat" = 16, "Waypoint" = 42), name = "Locations") +
+  geom_point(
+    data = locations,
+    aes(x = lon, y = lat, shape = type),
+    size = 3,
+    inherit.aes = FALSE
+  ) +
+  scale_shape_manual(
+    values = c("Port" = 1, "Boat" = 16),
+    name = "Locations"
+  ) +
   labs(
     title = "Iceland Groundfish Survey Overview",
-    subtitle = sprintf("Coastline, Ports (%d), Boats (%d), Waypoints (%d), and Trawl Stations (%d)",
-                       nrow(filter(locations, type == "Port")),
-                       nrow(filter(locations, type == "Boat")),
-                       nrow(filter(locations, type == "Waypoint")),
-                       nrow(stations)),
+    subtitle = sprintf(
+      "Coastline, Ports (%d), Boats (%d), and Trawl Stations (%d)",
+      nrow(filter(locations, type == "Port")),
+      nrow(filter(locations, type == "Boat")),
+      nrow(stations)
+    ),
     x = NULL,
     y = NULL
   ) +
@@ -98,7 +98,6 @@ final_plot <- final_plot + gsp_common_theme(
 
 print(final_plot)
 
-# Save plot to dat folder
 output_file <- "dat/survey_overview.png"
 cat(sprintf("\nSaving plot to %s...\n", output_file))
 
@@ -111,5 +110,5 @@ ggsave(
   bg = "white"
 )
 
-cat(sprintf("✓ Plot saved to: %s\n", normalizePath(output_file)))
-cat("✓ Survey overview plot complete!\n")
+cat(sprintf("OK Plot saved to: %s\n", normalizePath(output_file)))
+cat("OK Survey overview plot complete!\n")

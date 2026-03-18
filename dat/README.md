@@ -1,21 +1,20 @@
-dat Directory
-=============
+`dat`
+=====
 
-This folder contains the input `.dat` files, the generated SQLite database, and preview plots used
-by the workflow in `src/`.
+This folder holds the core input files, the generated SQLite database, and the static country plot
+used by the current `src/` workflow.
 
 Files
 -----
 
 - `gsp_data.db`
-  Current working database used by `gsp_country` and the plotting scripts.
+  Working database generated and consumed by the data preparation pipeline.
 
-- `island.bin`
-  Coastline source file used by `gsp_country` via `--coastline-file`.
+- `island.tsv`
+  Coastline source file used by the country bootstrap.
 
 - `waypoints.dat`
-  Manual `WAYP` seed file. Each line uses DAT degmin storage, for example:
-  `WAYP 660004 182318`
+  Manual `WAYP` points in DAT degmin format.
 
 - `ports.dat`
   Dedicated `PORT` input file.
@@ -26,46 +25,62 @@ Files
 - `stations.dat`
   Dedicated `STAT` input file.
 
-- `data2023spring.dat`
-  Legacy combined survey DAT file kept for reference.
+- `survey2023spring.dat`
+  Historical survey assignment input used by the survey import/export path.
 
 - `coastline_waypoints_ports.png`
-  Preview image generated from `gsp_data.db`. This is the main static reference plot for coastline,
-  inferred waypoints, ports, and boat start/end locations.
+  Static plot of the coastline, coarse coastline ring, buffered coastline support points, manual
+  `WAYP` points, and ports.
 
-Main Workflow
--------------
+- `survey_overview.png`
+  Survey overview plot showing coastline, ports, boats, and trawl stations.
 
-1. Build and run the country bootstrap:
+Current Workflow
+----------------
+
+1. Build the routing data database:
 
 ```bash
-make -C src country
+make -C src prepare-routing-data
 ```
 
-This populates `dat/gsp_data.db` using:
+This populates `dat/gsp_data.db` from:
 
-- `dat/island.bin`
+- `dat/island.tsv`
 - `dat/waypoints.dat`
 - `dat/ports.dat`
 - `dat/boats.dat`
+- `dat/stations.dat`
 
-2. Generate the static preview plot:
-
-```bash
-Rscript R/plot_country.R dat/gsp_data.db dat/coastline_waypoints_ports.png
-```
-
-3. For interactive waypoint picking, use:
+2. Import/export the historical survey view if needed:
 
 ```bash
-Rscript R/click_country_points.R
+make -C src survey
 ```
+
+3. Generate plots:
+
+```bash
+make -C src plot
+```
+
+That runs:
+
+- `plot-country`
+  writes `dat/coastline_waypoints_ports.png`
+- `plot-overview`
+  writes `dat/survey_overview.png`
+- `plot-routes`
+  writes route plots alongside solution JSON files under `sol/`
 
 Notes
 -----
 
-- The DAT coordinate format is not projected meters. It uses degmin storage:
-  `DDMM.mm * 100`
-- Longitude values in the DAT files are stored as positive west values.
-- The helper tool and parser now use that same encoding when generating `WAYP easting northing`
-  lines.
+- DAT coordinates use degmin storage: `DDMM.mm * 100`
+- Longitudes in the DAT files are stored as positive west values
+
+
+Data 
+-----
+![Coastline, coarse coastline ring, buffered coastline support points, manual WAYP points, and ports](coastline_waypoints_ports.png)
+![Existing survey overview plot](survey_overview.png)
