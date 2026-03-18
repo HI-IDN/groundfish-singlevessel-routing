@@ -8,6 +8,7 @@
 #include "../include/coastline_db.h"
 #include "../include/constants.h"
 #include "../include/distance.h"
+#include "../include/distance_builder.h"
 #include "../include/geo_utils.h"
 #include <sqlite3.h>
 #include <stdio.h>
@@ -61,6 +62,145 @@ static char *build_waypoint_path_json(const int *path, int path_len,
     }
     snprintf(json_path + json_pos, (size_t)json_buffer_size - (size_t)json_pos, "]");
     return json_path;
+}
+
+static int int_contains(const int *arr, int n, int value) {
+    for (int i = 0; i < n; i++) {
+        if (arr[i] == value) return 1;
+    }
+    return 0;
+}
+
+static int int_push_unique(int **arr, int *n, int *cap, int value) {
+    if (int_contains(*arr, *n, value)) return 1;
+    if (*n >= *cap) {
+        int new_cap = (*cap == 0) ? 64 : (*cap * 2);
+        int *tmp = (int*)realloc(*arr, (size_t)new_cap * sizeof(int));
+        if (!tmp) return 0;
+        *arr = tmp;
+        *cap = new_cap;
+    }
+    (*arr)[(*n)++] = value;
+    return 1;
+}
+
+static int collect_waypoint_ids_from_json(const char *json, int **used_ids, int *used_n, int *used_cap) {
+    const char *p = json;
+    if (!json) return 1;
+    while (*p) {
+        char *endptr = NULL;
+        long v = strtol(p, &endptr, 10);
+        if (endptr != p) {
+            if (!int_push_unique(used_ids, used_n, used_cap, (int)v)) return 0;
+            p = endptr;
+        } else {
+            p++;
+        }
+    }
+    return 1;
+}
+
+static int prune_unused_waypoints(sqlite3 *db) {
+    sqlite3_stmt *path_stmt = NULL;
+    sqlite3_stmt *way_stmt = NULL;
+    sqlite3_stmt *delete_dist_stmt = NULL;
+    sqlite3_stmt *delete_way_stmt = NULL;
+    sqlite3_stmt *delete_loc_stmt = NULL;
+    int *used_ids = NULL;
+    int used_n = 0;
+    int used_cap = 0;
+    int removed = 0;
+    int rc = SQLITE_OK;
+
+    rc = sqlite3_prepare_v2(db,
+                            "SELECT waypoint_path FROM distances WHERE waypoint_path IS NOT NULL AND waypoint_path <> '';",
+                            -1, &path_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+
+    while (sqlite3_step(path_stmt) == SQLITE_ROW) {
+        const char *json = (const char*)sqlite3_column_text(path_stmt, 0);
+        if (!collect_waypoint_ids_from_json(json, &used_ids, &used_n, &used_cap)) {
+            rc = SQLITE_NOMEM;
+            goto cleanup;
+        }
+    }
+    sqlite3_finalize(path_stmt);
+    path_stmt = NULL;
+
+    rc = sqlite3_prepare_v2(db, "SELECT location_id FROM waypoints;", -1, &way_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+    rc = sqlite3_prepare_v2(db,
+                            "DELETE FROM distances WHERE from_location_id = ? OR to_location_id = ?;",
+                            -1, &delete_dist_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+    rc = sqlite3_prepare_v2(db, "DELETE FROM waypoints WHERE location_id = ?;", -1, &delete_way_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+    rc = sqlite3_prepare_v2(db,
+                            "DELETE FROM locations WHERE id = ? "
+                            "AND id NOT IN (SELECT location_id FROM stations) "
+                            "AND id NOT IN (SELECT start_location_id FROM boats) "
+                            "AND id NOT IN (SELECT end_location_id FROM boats) "
+                            "AND id NOT IN (SELECT location_id FROM ports);",
+                            -1, &delete_loc_stmt, NULL);
+    if (rc != SQLITE_OK) goto cleanup;
+
+    sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+    while (sqlite3_step(way_stmt) == SQLITE_ROW) {
+        int loc_id = sqlite3_column_int(way_stmt, 0);
+        if (int_contains(used_ids, used_n, loc_id)) continue;
+
+        sqlite3_bind_int(delete_dist_stmt, 1, loc_id);
+        sqlite3_bind_int(delete_dist_stmt, 2, loc_id);
+        if (sqlite3_step(delete_dist_stmt) != SQLITE_DONE) {
+            rc = SQLITE_ERROR;
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            goto cleanup;
+        }
+        sqlite3_reset(delete_dist_stmt);
+        sqlite3_clear_bindings(delete_dist_stmt);
+
+        sqlite3_bind_int(delete_way_stmt, 1, loc_id);
+        if (sqlite3_step(delete_way_stmt) != SQLITE_DONE) {
+            rc = SQLITE_ERROR;
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            goto cleanup;
+        }
+        sqlite3_reset(delete_way_stmt);
+        sqlite3_clear_bindings(delete_way_stmt);
+
+        sqlite3_bind_int(delete_loc_stmt, 1, loc_id);
+        if (sqlite3_step(delete_loc_stmt) != SQLITE_DONE) {
+            rc = SQLITE_ERROR;
+            sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+            goto cleanup;
+        }
+        sqlite3_reset(delete_loc_stmt);
+        sqlite3_clear_bindings(delete_loc_stmt);
+        removed++;
+    }
+    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+
+    {
+        sqlite3_stmt *meta_stmt = NULL;
+        char value[32];
+        if (sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?);", -1, &meta_stmt, NULL) == SQLITE_OK) {
+            snprintf(value, sizeof(value), "%d", removed);
+            sqlite3_bind_text(meta_stmt, 1, "distance_pruned_waypoint_count", -1, SQLITE_STATIC);
+            sqlite3_bind_text(meta_stmt, 2, value, -1, SQLITE_TRANSIENT);
+            sqlite3_step(meta_stmt);
+            sqlite3_finalize(meta_stmt);
+        }
+    }
+    printf("Pruned %d unused waypoint locations\n", removed);
+
+cleanup:
+    free(used_ids);
+    sqlite3_finalize(path_stmt);
+    sqlite3_finalize(way_stmt);
+    sqlite3_finalize(delete_dist_stmt);
+    sqlite3_finalize(delete_way_stmt);
+    sqlite3_finalize(delete_loc_stmt);
+    return rc;
 }
 
 static int compute_and_store_distances(sqlite3 *db) {
@@ -292,7 +432,7 @@ static int compute_and_store_distances(sqlite3 *db) {
     return SQLITE_OK;
 }
 
-int main(int argc, char **argv) {
+int distance_builder_run(int argc, char **argv) {
     const char *db_path = "../../../dat/gsp_data.db";
 
     for (int i = 1; i < argc; i++) {
@@ -319,6 +459,7 @@ int main(int argc, char **argv) {
     printf("Dijkstra is used only when both endpoints are non-waypoints.\n");
 
     int rc = compute_and_store_distances(db);
+    if (rc == SQLITE_OK) rc = prune_unused_waypoints(db);
     sqlite3_close(db);
 
     if (rc != SQLITE_OK) {
@@ -329,3 +470,9 @@ int main(int argc, char **argv) {
     printf("Distance build complete\n");
     return 0;
 }
+
+#ifndef GSP_LIBRARY_ONLY
+int main(int argc, char **argv) {
+    return distance_builder_run(argc, argv);
+}
+#endif

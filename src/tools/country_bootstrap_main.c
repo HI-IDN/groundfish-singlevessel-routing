@@ -9,6 +9,7 @@
 #include "../include/dat_parser.h"
 #include "../include/geo_utils.h"
 #include "../include/coastline_db.h"
+#include "../include/country_bootstrap.h"
 
 typedef struct {
     double lat;
@@ -116,6 +117,37 @@ static double point_dist2(GeoPoint a, GeoPoint b) {
 
 static double segment_length(GeoPoint a, GeoPoint b) {
     return sqrt(point_dist2(a, b));
+}
+
+static int downsample_points_stride(const GeoPointVec *src, int target_max, GeoPointVec *dst) {
+    int stride;
+    if (!src || !dst || src->n <= 0) return 0;
+    if (target_max <= 0 || src->n <= target_max) {
+        point_vec_init(dst);
+        for (int i = 0; i < src->n; i++) {
+            if (!point_vec_push(dst, src->points[i].lat, src->points[i].lon)) {
+                point_vec_free(dst);
+                return 0;
+            }
+        }
+        return 1;
+    }
+
+    stride = (src->n + target_max - 1) / target_max;
+    point_vec_init(dst);
+    for (int i = 0; i < src->n; i += stride) {
+        if (!point_vec_push(dst, src->points[i].lat, src->points[i].lon)) {
+            point_vec_free(dst);
+            return 0;
+        }
+    }
+    if (dst->n == 0 || point_dist2(dst->points[dst->n - 1], src->points[src->n - 1]) > 1e-12) {
+        if (!point_vec_push(dst, src->points[src->n - 1].lat, src->points[src->n - 1].lon)) {
+            point_vec_free(dst);
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static int append_unique_point(GeoPointVec *v, double lat, double lon, double tol2) {
@@ -599,15 +631,22 @@ static int has_port_access_via_ring(GEOSContextHandle_t ctx,
 static int build_fine_candidates_from_coastline(GEOSContextHandle_t ctx,
                                                 const GEOSGeometry *coastline_polygon,
                                                 GeoPointVec *out) {
+    const int target_max_points = 1000;
     /* 32 segments gives a smooth curve that hugs the coast closely */
-    GEOSGeometry *buffered = GEOSBuffer_r(ctx, coastline_polygon, 0.005, 32);
+    GEOSGeometry *buffered = GEOSBuffer_r(ctx, coastline_polygon, BUFFERED_COASTLINE_OFFSET_DEG, 32);
+    GeoPointVec raw = {0};
     if (!buffered) return 0;
 
-    if (!extract_ring_points_from_polygon(ctx, buffered, out)) {
+    if (!extract_ring_points_from_polygon(ctx, buffered, &raw)) {
         GEOSGeom_destroy_r(ctx, buffered);
         return 0;
     }
     GEOSGeom_destroy_r(ctx, buffered);
+    if (!downsample_points_stride(&raw, target_max_points, out)) {
+        point_vec_free(&raw);
+        return 0;
+    }
+    point_vec_free(&raw);
     return 1;
 }
 
@@ -922,7 +961,9 @@ static int store_waypoints(sqlite3 *db, const GeoPointVec *ring, int granularity
     }
 
     rc = sqlite3_prepare_v2(db,
-                            "INSERT INTO waypoints (location_id, granularity) VALUES (?, ?);",
+                            "INSERT INTO waypoints (location_id, granularity) "
+                            "SELECT ?, ? "
+                            "WHERE NOT EXISTS (SELECT 1 FROM waypoints WHERE location_id = ?);",
                             -1, &way_stmt, NULL);
     if (rc != SQLITE_OK) {
         sqlite3_finalize(loc_insert_stmt);
@@ -945,6 +986,7 @@ static int store_waypoints(sqlite3 *db, const GeoPointVec *ring, int granularity
 
         sqlite3_bind_int(way_stmt, 1, loc_id);
         sqlite3_bind_int(way_stmt, 2, granularity);
+        sqlite3_bind_int(way_stmt, 3, loc_id);
         if (sqlite3_step(way_stmt) != SQLITE_DONE) {
             sqlite3_finalize(loc_insert_stmt);
             sqlite3_finalize(loc_select_stmt);
@@ -971,6 +1013,7 @@ static void write_metadata(sqlite3 *db,
                            const char *boat_file,
                            int loaded_seed_count,
                            int inserted_seed_count,
+                           int stored_seed_count,
                            int ports_seen,
                            int ports_inserted,
                            int boats_seen,
@@ -978,7 +1021,8 @@ static void write_metadata(sqlite3 *db,
                            int port_access_waypoints_added,
                            double buffer_distance,
                            double simplify_tolerance,
-                           int final_point_count) {
+                           int medium_point_count,
+                           int fine_point_count) {
     sqlite3_stmt *stmt = NULL;
     const char *sql = "INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?);";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return;
@@ -1029,6 +1073,11 @@ static void write_metadata(sqlite3 *db,
     sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
 
+    snprintf(value, sizeof(value), "%d", stored_seed_count);
+    sqlite3_bind_text(stmt, 1, "country_stored_seed_count", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
+
     snprintf(value, sizeof(value), "%d", ports_seen);
     sqlite3_bind_text(stmt, 1, "country_ports_seen", -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
@@ -1064,15 +1113,20 @@ static void write_metadata(sqlite3 *db,
     sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
 
-    snprintf(value, sizeof(value), "%d", final_point_count);
+    snprintf(value, sizeof(value), "%d", medium_point_count);
     sqlite3_bind_text(stmt, 1, "country_final_waypoint_count", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
+
+    snprintf(value, sizeof(value), "%d", fine_point_count);
+    sqlite3_bind_text(stmt, 1, "country_fine_waypoint_count", -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt); sqlite3_reset(stmt); sqlite3_clear_bindings(stmt);
 
     sqlite3_finalize(stmt);
 }
 
-int main(int argc, char **argv) {
+int country_bootstrap_run(int argc, char **argv) {
     const char *db_path = NULL;
     const char *coastline_file_path = NULL;
     const char *waypoint_file = NULL;
@@ -1087,6 +1141,7 @@ int main(int argc, char **argv) {
     GeoPointVec fine_candidates = {0};
     int loaded_seed_count = 0;
     int inserted_seed_count = 0;
+    int stored_seed_count = 0;
     int ports_seen = 0;
     int ports_inserted = 0;
     int boats_seen = 0;
@@ -1311,29 +1366,44 @@ int main(int argc, char **argv) {
                                      &fine_candidates, &medium_ring, &port_access_added);
     }
 
-    /* --- Store both rings --- */
+    /* --- Store all waypoint sets used by the routing graph --- */
     if (small_ring.n > 0) {
-        if (store_waypoints(db, &small_ring, GSP_WAYPOINT_GRANULARITY_SMALL) != SQLITE_OK) {
+        if (store_waypoints(db, &small_ring, GSP_WAYPOINT_GRANULARITY_COARSE) != SQLITE_OK) {
             fprintf(stderr, "Failed to store small waypoints: %s\n", sqlite3_errmsg(db));
             goto cleanup;
         }
     }
-    if (store_waypoints(db, &medium_ring, GSP_WAYPOINT_GRANULARITY_MEDIUM) != SQLITE_OK) {
+    if (store_waypoints(db, &medium_ring, GSP_WAYPOINT_GRANULARITY_ROUTING) != SQLITE_OK) {
         fprintf(stderr, "Failed to store medium waypoints: %s\n", sqlite3_errmsg(db));
         goto cleanup;
     }
+    if (seeds.n > 0) {
+        if (store_waypoints(db, &seeds, GSP_WAYPOINT_GRANULARITY_BUFFERED) != SQLITE_OK) {
+            fprintf(stderr, "Failed to store manual WAYP points: %s\n", sqlite3_errmsg(db));
+            goto cleanup;
+        }
+        stored_seed_count = seeds.n;
+    }
+    if (fine_candidates.n > 0) {
+        if (store_waypoints(db, &fine_candidates, GSP_WAYPOINT_GRANULARITY_BUFFERED) != SQLITE_OK) {
+            fprintf(stderr, "Failed to store fine waypoints: %s\n", sqlite3_errmsg(db));
+            goto cleanup;
+        }
+    }
 
     write_metadata(db, &opts, coastline_file_path, waypoint_file, port_file, boat_file,
-                   loaded_seed_count, inserted_seed_count, ports_seen, ports_inserted,
+                   loaded_seed_count, inserted_seed_count, stored_seed_count,
+                   ports_seen, ports_inserted,
                    boats_seen, boats_inserted,
-                   port_access_added, buffer_distance, simplify_tolerance, medium_ring.n);
+                   port_access_added, buffer_distance, simplify_tolerance, medium_ring.n, fine_candidates.n);
 
     printf("Stored waypoints in %s\n", db_path);
-    printf("  small  (granularity='small'):  %d points\n", small_ring.n);
-    printf("  medium (granularity='medium'): %d points\n", medium_ring.n);
+    printf("  coarse coastline approximation: %d points\n", small_ring.n);
+    printf("  routing coastline ring:         %d points\n", medium_ring.n);
+    printf("  buffered coastline support:     %d points\n", fine_candidates.n);
     if (waypoint_file) {
-        printf("  seeds: loaded=%d inserted=%d mode=%s\n",
-               loaded_seed_count, inserted_seed_count,
+        printf("  manual WAYP: loaded=%d stored=%d inserted_into_ring=%d mode=%s\n",
+               loaded_seed_count, stored_seed_count, inserted_seed_count,
                opts.seed_mode == GSP_SEED_MODE_PRESERVE_ALL ? "preserve_all" :
                (opts.seed_mode == GSP_SEED_MODE_HINTS_ONLY  ? "hints_only"   : "none"));
     }
@@ -1360,3 +1430,9 @@ cleanup:
     free_coastline_points(&coastline);
     return rc;
 }
+
+#ifndef GSP_LIBRARY_ONLY
+int main(int argc, char **argv) {
+    return country_bootstrap_run(argc, argv);
+}
+#endif

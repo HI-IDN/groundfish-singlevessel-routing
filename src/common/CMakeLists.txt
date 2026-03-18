@@ -69,6 +69,26 @@ target_link_libraries(gsp_historical_survey
     m
 )
 
+add_executable(gsp_prepare_routing_data
+    ../tools/prepare_routing_data_main.c
+    ../tools/country_bootstrap_main.c
+    ../tools/station_import.c
+    ../tools/distance_builder.c
+    dat_parser.c
+    distance.c
+    logging.c
+    sql_utils.c
+    coastline_db.c
+)
+
+target_compile_definitions(gsp_prepare_routing_data PRIVATE GSP_LIBRARY_ONLY=1)
+
+target_link_libraries(gsp_prepare_routing_data
+    ${SQLITE3_LIBRARIES}
+    ${GEOS_LIBRARIES}
+    m
+)
+
 
 # Data files
 set(STATIONS_DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/stations.dat)
@@ -98,6 +118,22 @@ add_custom_target(run_distance
     DEPENDS gsp_distances
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Recomputing distance matrix from existing database"
+)
+
+add_custom_target(run_prepare_routing_data
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND ${CMAKE_COMMAND} -E echo "=== Preparing Routing Data ==="
+    COMMAND ${CMAKE_COMMAND} -E echo "  Database: ${DB_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E echo "  Coastline: ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/island.tsv"
+    COMMAND ${CMAKE_COMMAND} -E echo "  Waypoints: ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/waypoints.dat"
+    COMMAND ${CMAKE_COMMAND} -E echo "  Ports: ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/ports.dat"
+    COMMAND ${CMAKE_COMMAND} -E echo "  Boats: ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/boats.dat"
+    COMMAND ${CMAKE_COMMAND} -E echo "  Stations: ${STATIONS_DAT_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND gsp_prepare_routing_data --db ${DB_FILE} --coastline-file ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/island.tsv --waypoint-file ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/waypoints.dat --port-file ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/ports.dat --boat-file ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/boats.dat --seed-hints-only --stations-file ${STATIONS_DAT_FILE}
+    DEPENDS gsp_prepare_routing_data
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Preparing routing data in one pass"
 )
 
 add_custom_target(run_survey_import

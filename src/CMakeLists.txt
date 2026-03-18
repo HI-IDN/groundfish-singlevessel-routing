@@ -63,18 +63,10 @@ include_directories(
 
 add_subdirectory(common)
 
-# Historical survey station import target
-add_custom_target(stations
-    COMMAND ${CMAKE_MAKE_PROGRAM} run_stations
+add_custom_target(prepare_routing_data
+    COMMAND ${CMAKE_MAKE_PROGRAM} run_prepare_routing_data
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
-    COMMENT "Step 2: Import historical survey stations"
-)
-
-# Distance recomputation target
-add_custom_target(distance
-    COMMAND ${CMAKE_MAKE_PROGRAM} run_distance
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
-    COMMENT "Step 3: Recompute all location-pair distances"
+    COMMENT "Prepare routing data: country bootstrap, station import, distance build, waypoint pruning"
 )
 
 add_custom_target(survey
@@ -264,7 +256,7 @@ target_include_directories(gsp_country PRIVATE
 # Install
 # ============================================================
 
-install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances gsp_historical_survey
+install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances gsp_historical_survey gsp_prepare_routing_data
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )
 

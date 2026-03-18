@@ -16,14 +16,14 @@ enum {
 #define GSP_DAT_TAG_PORT "PORT"
 
 /* Waypoint granularity levels stored in the waypoints.granularity INTEGER column.
- *   0 = small  – coarse / low-resolution ring (fewer points, used for broad routing)
- *   1 = medium – standard ring (default; balanced detail and performance)
- *   2 = fine   – high-resolution ring (many points, used for detailed port access)
+ *   0 = coarse coastline approximation
+ *   1 = routing coastline ring
+ *   2 = buffered coastline support points
  */
 enum {
-    GSP_WAYPOINT_GRANULARITY_SMALL  = 0,
-    GSP_WAYPOINT_GRANULARITY_MEDIUM = 1,
-    GSP_WAYPOINT_GRANULARITY_FINE   = 2
+    GSP_WAYPOINT_GRANULARITY_COARSE   = 0,
+    GSP_WAYPOINT_GRANULARITY_ROUTING  = 1,
+    GSP_WAYPOINT_GRANULARITY_BUFFERED = 2
 };
 
 enum {
@@ -33,9 +33,9 @@ enum {
     LOG_ERROR = 3
 };
 
-// Gurobi MIP status codes (https://www.gurobi.com/documentation/9.5/refman/mip_status_codes.html)
+/* Gurobi MIP status codes. */
 enum {
-	MIP_STATUS_OPTIMAL = 2,
+    MIP_STATUS_OPTIMAL = 2,
     MIP_STATUS_SUBOPTIMAL = 9,
     MIP_STATUS_TIME_LIMIT = 9,
     MIP_STATUS_INFEASIBLE = 3
@@ -57,9 +57,15 @@ enum {
 #define PI 3.14159265358979323846
 
 /* Distance computation constants */
-#define INFEASIBLE_LINK_PENALTY 100000.0  /* Penalty added to infeasible links that cross land */
-#define DIJKSTRA_INFINITY 10000000000.0    /* Infinity value for Dijkstra algorithm */
+#define INFEASIBLE_LINK_PENALTY 100000.0
+#define DIJKSTRA_INFINITY 10000000000.0
 
+/* Buffered coastline support points:
+ * 1 nautical mile is visibly offshore while still representing near-coast routing.
+ * The GEOS buffer is applied in geographic degrees, so we use the latitude approximation
+ * 1 nm = 1/60 degree here.
+ */
+#define BUFFERED_COASTLINE_OFFSET_NM 1.0
+#define BUFFERED_COASTLINE_OFFSET_DEG (BUFFERED_COASTLINE_OFFSET_NM / 60.0)
 
 #endif
-

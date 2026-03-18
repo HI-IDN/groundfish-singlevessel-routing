@@ -30,3 +30,12 @@ Design intent:
 - solver formulations live in `mip/`
 - sweep orchestration lives in `sweep/`
 - shared plumbing should move toward `common/` rather than being reimplemented per executable
+
+Common wrapper commands:
+
+- `make -C src prepare-routing-data`
+  runs the routing-data pipeline in one pass: coastline/waypoint bootstrap, station import, distance build, and unused-waypoint pruning
+- `make -C src init_nn`
+- `make -C src init_ge`
+- `make -C src init_ci`
+- `make -C src init_opt`

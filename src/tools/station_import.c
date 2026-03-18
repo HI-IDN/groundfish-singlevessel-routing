@@ -4,6 +4,7 @@
 
 #include "../include/dat_parser.h"
 #include "../include/geo_utils.h"
+#include "../include/station_import.h"
 #include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -142,7 +143,7 @@ static int insert_location(sqlite3_stmt *insert_stmt,
     return (int)sqlite3_last_insert_rowid(sqlite3_db_handle(insert_stmt));
 }
 
-int main(int argc, char **argv) {
+int station_import_run(int argc, char **argv) {
     const char *dat_file = NULL;
     const char *db_path = NULL;
 
@@ -271,3 +272,9 @@ int main(int argc, char **argv) {
     dataset_free(&dataset);
     return 0;
 }
+
+#ifndef GSP_LIBRARY_ONLY
+int main(int argc, char **argv) {
+    return station_import_run(argc, argv);
+}
+#endif
