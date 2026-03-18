@@ -58,17 +58,6 @@ target_link_libraries(gsp_distances
     m
 )
 
-# Historical survey import from ordered survey DAT
-add_executable(gsp_historical_survey
-    ../tools/historical_survey_import.c
-    dat_parser.c
-)
-
-target_link_libraries(gsp_historical_survey
-    ${SQLITE3_LIBRARIES}
-    m
-)
-
 add_executable(gsp_prepare_routing_data
     ../tools/prepare_routing_data_main.c
     ../tools/country_bootstrap_main.c
@@ -92,7 +81,6 @@ target_link_libraries(gsp_prepare_routing_data
 
 # Data files
 set(STATIONS_DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/stations.dat)
-set(HISTORICAL_SURVEY_DAT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/survey2023spring.dat)
 set(DB_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/gsp.db)
 
 # Custom target: import stations
@@ -134,16 +122,4 @@ add_custom_target(run_prepare_routing_data
     DEPENDS gsp_prepare_routing_data
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Preparing routing data in one pass"
-)
-
-add_custom_target(run_survey_import
-    COMMAND ${CMAKE_COMMAND} -E echo ""
-    COMMAND ${CMAKE_COMMAND} -E echo "=== Importing Historical Survey ==="
-    COMMAND ${CMAKE_COMMAND} -E echo "  Input: ${HISTORICAL_SURVEY_DAT_FILE}"
-    COMMAND ${CMAKE_COMMAND} -E echo "  Database: ${DB_FILE}"
-    COMMAND ${CMAKE_COMMAND} -E echo ""
-    COMMAND gsp_historical_survey ${HISTORICAL_SURVEY_DAT_FILE} ${DB_FILE}
-    DEPENDS gsp_historical_survey
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Importing historical survey assignments"
 )

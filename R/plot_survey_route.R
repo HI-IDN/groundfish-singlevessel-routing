@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # GSP Survey Route Plotter
-# Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|capacity-feasible|presolve]
+# Usage: Rscript plot_survey_route.R <path/to/boat*.json> [path/to/output.png] [final|capacity-feasible|presolve]
 
 required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite")
 
@@ -17,12 +17,19 @@ cat("=== GSP Survey Route Plotter ===\n\n")
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) == 0) {
-  warning("Usage: Rscript plot_survey_route.R <path/to/boat*.json> [final|capacity-feasible|presolve]\n", call. = FALSE)
-  args <- c("sol/opt/noport.json", "final")
+  warning("Usage: Rscript plot_survey_route.R <path/to/boat*.json> [path/to/output.png] [final|capacity-feasible|presolve]\n", call. = FALSE)
+  args <- c("sol/opt/noport.json", "sol/opt/noport.png", "final")
 }
 
 survey_file <- args[1]
-selected_variant <- if (length(args) >= 2) args[2] else "final"
+output_file <- if (length(args) >= 2 && grepl("\\.png$", args[2], ignore.case = TRUE)) args[2] else gsub("\\.json$", ".png", survey_file)
+selected_variant <- if (length(args) >= 3 && grepl("\\.png$", args[2], ignore.case = TRUE)) {
+  args[3]
+} else if (length(args) >= 2 && !grepl("\\.png$", args[2], ignore.case = TRUE)) {
+  args[2]
+} else {
+  "final"
+}
 
 if (!file.exists(survey_file)) {
   stop(sprintf("Survey file not found: %s", survey_file), call. = FALSE)
@@ -135,7 +142,7 @@ if (!feasible) {
   cat("\n")
 }
 
-db_path <- "dat/gsp_data.db"
+db_path <- "dat/gsp.db"
 if (!file.exists(db_path)) {
   stop(sprintf("Database file not found: %s", db_path), call. = FALSE)
 }
@@ -268,7 +275,6 @@ p <- apply_degree_axes(p)
 p <- p + gsp_common_theme(legend_position = "bottom", legend_direction = "horizontal")
 p <- p + guides(color = guide_legend(ncol = 3, byrow = TRUE))
 
-output_file <- gsub("\\.json$", ".png", survey_file)
 cat(sprintf("\nSaving plot to %s...\n", output_file))
 
 ggsave(

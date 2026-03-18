@@ -58,11 +58,11 @@ The corresponding PNG is written next to the JSON file, for example:
 
 |   Segment |  Length | Stations |     Catch | Distance (nm) |
 |----------:|--------:|---------:|----------:|--------------:|
-|         1 |      38 |       36 |     24176 |        392.96 |
+|         1 |      38 |       36 |     24176 |        585.60 |
 |         2 |      20 |       18 |     10744 |        218.42 |
 |         3 |      44 |       42 |     15896 |        633.66 |
 |         4 |      17 |       15 |     13065 |        310.19 |
-| **Total** | **119** |  **111** | **63881** |   **1555.23** |
+| **Total** | **119** |  **111** | **63881** |   **1747.87** |
 
 ### Boat 2: Árni Friðriksson
 
@@ -96,7 +96,7 @@ The corresponding PNG is written next to the JSON file, for example:
 
 |    ID     | Boat              | Segments |   Nodes | Stations | Total Catch | Distance (nm) | Feasible  |
 |:---------:|-------------------|---------:|--------:|---------:|------------:|--------------:|-----------|
-|     1     | Bjarni Sæmundsson |        4 |     119 |      111 |       63881 |       1555.23 | false[^1] |
+|     1     | Bjarni Sæmundsson |        4 |     119 |      111 |       63881 |       1747.87 | false[^1] |
 |     2     | Árni Friðriksson  |        6 |     176 |      164 |      144115 |       2218.98 | true      |
 |     3     | Gullver           |        2 |     155 |      151 |       72755 |       1818.73 | true      |
 |     4     | Breki             |        2 |     157 |      154 |      247314 |       1808.48 | true      |

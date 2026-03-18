@@ -70,11 +70,10 @@ add_custom_target(prepare_routing_data
 )
 
 add_custom_target(survey
-    COMMAND ${CMAKE_MAKE_PROGRAM} run_survey_import
-    COMMAND historical_survey ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp.db ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey
+    COMMAND historical_survey ${CMAKE_CURRENT_SOURCE_DIR}/../dat/survey2023spring.dat ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp.db ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey
     DEPENDS historical_survey
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
-    COMMENT "Step 4: Import historical survey assignments and export JSON"
+    COMMENT "Export historical survey JSON directly from DAT + database"
 )
 
 # ============================================================
@@ -236,6 +235,7 @@ add_custom_target(run_init_opt
 # Export historical survey to JSON for plotting
 add_executable(historical_survey
     tools/export_survey_json.c
+    common/dat_parser.c
     common/feasibility.c
     common/sql_utils.c
 )
@@ -272,7 +272,7 @@ target_include_directories(gsp_country PRIVATE
 # Install
 # ============================================================
 
-install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances gsp_historical_survey gsp_prepare_routing_data
+install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances gsp_prepare_routing_data
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )
 

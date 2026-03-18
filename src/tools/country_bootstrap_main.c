@@ -599,14 +599,6 @@ static int create_full_schema(sqlite3 *db) {
         "  granularity INTEGER NOT NULL DEFAULT 1,"
         "  FOREIGN KEY (location_id) REFERENCES locations(id)"
         ");"
-        "CREATE TABLE IF NOT EXISTS survey ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  boat_id INTEGER NOT NULL,"
-        "  table_type INTEGER,"
-        "  table_id INTEGER NOT NULL,"
-        "  segment INTEGER,"
-        "  FOREIGN KEY (boat_id) REFERENCES boats(id)"
-        ");"
         "CREATE TABLE IF NOT EXISTS coastline ("
         "  id INTEGER PRIMARY KEY,"
         "  lat REAL,"
@@ -631,7 +623,6 @@ static int create_full_schema(sqlite3 *db) {
 static int reset_country_stage_tables(sqlite3 *db) {
     const char *sql =
         "DELETE FROM distances;"
-        "DELETE FROM survey;"
         "DELETE FROM boats;"
         "DELETE FROM stations;"
         "DELETE FROM ports;"

@@ -114,7 +114,7 @@ STAT 524 2 0 650141 242612 650226 243528 1200 15  #   \\ botndypi_kastad= 124 bo
 STAT 474 2 0 645619 244764 645482 245647 624 18  #   \\ botndypi_kastad= 157 botndypi_hift= 144 \\
 STAT 474 12 0 645138 241148 644815 241687 1956 24  #   \\ botndypi_kastad= 222 botndypi_hift= 277 \\
 PORT 640278 220834 "Hafnarfjörður" 1
-BOAT    640278 220834 45000 10 4 30 153 153 255 "Árni Friðriksson"
+BOAT 640278 220834 45000 10 4 30 153 153 255 "Árni Friðriksson"
 STAT 472 11 0 643450 224868 643839 224473 86 12  #   \\ botndypi_kastad= 63 botndypi_hift= 45 \\
 STAT 473 1 0 643451 230243 643082 230583 1247 13  #   \\ botndypi_kastad= 66 botndypi_hift= 96 \\
 STAT 473 11 0 643670 233515 643519 234345 540 15  #   \\ botndypi_kastad= 111 botndypi_hift= 120 \\

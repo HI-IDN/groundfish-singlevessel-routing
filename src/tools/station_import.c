@@ -70,13 +70,6 @@ static int ensure_station_schema(sqlite3 *db) {
         "  FOREIGN KEY (start_location_id) REFERENCES locations(id),"
         "  FOREIGN KEY (end_location_id) REFERENCES locations(id)"
         ");"
-        "CREATE TABLE IF NOT EXISTS survey ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  boat_id INTEGER NOT NULL,"
-        "  table_type INTEGER,"
-        "  table_id INTEGER NOT NULL,"
-        "  segment INTEGER"
-        ");"
         "CREATE TABLE IF NOT EXISTS distances ("
         "  id INTEGER PRIMARY KEY,"
         "  from_location_id INTEGER REFERENCES locations(id),"
@@ -192,7 +185,6 @@ int station_import_run(int argc, char **argv) {
 
     sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
     sqlite3_exec(db, "DELETE FROM distances;", NULL, NULL, NULL);
-    sqlite3_exec(db, "DELETE FROM survey;", NULL, NULL, NULL);
     sqlite3_exec(db, "DELETE FROM stations;", NULL, NULL, NULL);
 
     for (int i = 0; i < dataset.n_stations; i++) {

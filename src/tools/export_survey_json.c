@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 
 #include "../include/constants.h"
+#include "../include/dat_parser.h"
 #include "../include/feasibility.h"
 
 #ifdef _WIN32
@@ -26,6 +27,170 @@
 static void die(const char *msg) {
     fprintf(stderr, "Error: %s\n", msg);
     exit(1);
+}
+
+static char *dup_cstr(const char *s) {
+    size_t n = strlen(s) + 1;
+    char *out = (char*)malloc(n);
+    if (!out) return NULL;
+    memcpy(out, s, n);
+    return out;
+}
+
+static char *dup_unquoted_cstr(const char *s) {
+    size_t len;
+    const char *start = s;
+    if (!s) return NULL;
+    len = strlen(s);
+    if (len >= 2 && s[0] == '"' && s[len - 1] == '"') {
+        start = s + 1;
+        len -= 2;
+    }
+    char *out = (char*)malloc(len + 1);
+    if (!out) return NULL;
+    memcpy(out, start, len);
+    out[len] = '\0';
+    return out;
+}
+
+typedef struct {
+    int type;
+    int easting;
+    int northing;
+    char *name;
+    int selected;
+} SurveyEntry;
+
+typedef struct {
+    SurveyEntry *entries;
+    int n;
+    int cap;
+} SurveyEntryVec;
+
+static void survey_entry_vec_init(SurveyEntryVec *vec) {
+    vec->n = 0;
+    vec->cap = 128;
+    vec->entries = (SurveyEntry*)calloc((size_t)vec->cap, sizeof(SurveyEntry));
+}
+
+static void survey_entry_vec_free(SurveyEntryVec *vec) {
+    for (int i = 0; i < vec->n; i++) {
+        free(vec->entries[i].name);
+    }
+    free(vec->entries);
+    vec->entries = NULL;
+    vec->n = 0;
+    vec->cap = 0;
+}
+
+static int survey_entry_vec_push(SurveyEntryVec *vec, SurveyEntry entry) {
+    if (vec->n == vec->cap) {
+        int new_cap = vec->cap * 2;
+        SurveyEntry *tmp = (SurveyEntry*)realloc(vec->entries, (size_t)new_cap * sizeof(SurveyEntry));
+        if (!tmp) return 0;
+        vec->entries = tmp;
+        vec->cap = new_cap;
+    }
+    vec->entries[vec->n++] = entry;
+    return 1;
+}
+
+static int parse_survey_file(const char *dat_file, SurveyEntryVec *entries) {
+    FILE *fp = fopen(dat_file, "rb");
+    if (!fp) {
+        perror("fopen");
+        return 0;
+    }
+
+    char line[4096];
+    while (fgets(line, sizeof(line), fp)) {
+        char **tok = NULL;
+        int nt = tokenize_line(line, &tok);
+        if (nt <= 0) {
+            free_tokens(tok, nt);
+            continue;
+        }
+
+        SurveyEntry entry;
+        memset(&entry, 0, sizeof(entry));
+
+        if (strcmp(tok[0], GSP_DAT_TAG_BOAT) == 0 && nt >= 11) {
+            entry.type = NODE_TYPE_BOAT;
+            entry.easting = atoi(tok[1]);
+            entry.northing = atoi(tok[2]);
+            entry.name = dup_unquoted_cstr(tok[10]);
+        } else if (strcmp(tok[0], GSP_DAT_TAG_STAT) == 0 && nt >= 10) {
+            if (atoi(tok[3]) == 5) {
+                free_tokens(tok, nt);
+                continue;
+            }
+            entry.type = NODE_TYPE_STATION;
+            entry.easting = atoi(tok[4]);
+            entry.northing = atoi(tok[5]);
+        } else if (strcmp(tok[0], GSP_DAT_TAG_PORT) == 0 && nt >= 5) {
+            entry.type = NODE_TYPE_PORT;
+            entry.easting = atoi(tok[1]);
+            entry.northing = atoi(tok[2]);
+            entry.selected = atoi(tok[4]) != 0;
+        } else {
+            free_tokens(tok, nt);
+            continue;
+        }
+
+        if (!survey_entry_vec_push(entries, entry)) {
+            free_tokens(tok, nt);
+            fclose(fp);
+            return 0;
+        }
+        free_tokens(tok, nt);
+    }
+
+    fclose(fp);
+    return 1;
+}
+
+static int lookup_boat_id(sqlite3 *db, const char *name) {
+    sqlite3_stmt *stmt = NULL;
+    int boat_id = 0;
+    const char *sql = "SELECT id FROM boats WHERE name = ?;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) == SQLITE_ROW) boat_id = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return boat_id;
+}
+
+static int lookup_station_id(sqlite3 *db, int easting, int northing) {
+    sqlite3_stmt *stmt = NULL;
+    int station_id = 0;
+    const char *sql =
+        "SELECT s.id FROM stations s "
+        "JOIN locations l ON s.start_location_id = l.id "
+        "WHERE l.easting = ? AND l.northing = ?;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_int(stmt, 1, easting);
+    sqlite3_bind_int(stmt, 2, northing);
+    if (sqlite3_step(stmt) == SQLITE_ROW) station_id = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return station_id;
+}
+
+static int lookup_port_id(sqlite3 *db, int easting, int northing) {
+    sqlite3_stmt *stmt = NULL;
+    int port_id = 0;
+    const char *sql =
+        "SELECT p.id FROM ports p "
+        "JOIN locations l ON p.location_id = l.id "
+        "WHERE l.easting = ? AND l.northing = ?;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_int(stmt, 1, easting);
+    sqlite3_bind_int(stmt, 2, northing);
+    if (sqlite3_step(stmt) == SQLITE_ROW) port_id = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return port_id;
 }
 
 static int append_int(int **arr, int *n, int *cap, int v) {
@@ -269,7 +434,7 @@ static void validate_waypoint_chain_distance(sqlite3 *db, int from_loc_id, int t
 }
 
 /* Export a single boat's route to JSON */
-static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
+static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat_id, const char *output_path) {
     printf("Exporting survey route for boat_id=%d to %s\n", boat_id, output_path);
 
     /* Query boat info including start/end location IDs for proximity checks. */
@@ -310,44 +475,25 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     }
     sqlite3_finalize(stmt);
 
-    /* Query survey route with resolved location IDs. */
-    char query_sql[2048];
-    snprintf(query_sql, sizeof(query_sql),
-        "SELECT s.id, s.table_type, s.table_id, s.segment, "
-        "       CASE WHEN s.table_type = %d THEN st.start_location_id "
-        "            WHEN s.table_type = %d THEN p.location_id "
-        "            WHEN s.table_type = %d THEN b.location_id "
-        "            ELSE NULL END AS resolved_loc_id, "
-        "       CASE WHEN s.table_type = %d THEN st.end_location_id ELSE NULL END AS station_end_loc_id, "
-        "       CASE WHEN s.table_type = %d THEN st.amount ELSE 0 END AS catch_amount "
-        "FROM survey s "
-        "LEFT JOIN stations st ON (s.table_type = %d AND s.table_id = st.id) "
-        "LEFT JOIN ports p ON (s.table_type = %d AND s.table_id = p.id) "
-        "LEFT JOIN boats b ON (s.table_type = %d AND s.table_id = b.id) "
-        "WHERE s.boat_id = ? "
-        "ORDER BY s.segment, s.id;",
-        NODE_TYPE_STATION,
-        NODE_TYPE_PORT,
-        NODE_TYPE_BOAT,
-        NODE_TYPE_STATION,
-        NODE_TYPE_STATION,
-        NODE_TYPE_STATION,
-        NODE_TYPE_PORT,
-        NODE_TYPE_BOAT);
-
-    if (sqlite3_prepare_v2(db, query_sql, -1, &stmt, NULL) != SQLITE_OK) {
-        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
-        return 1;
-    }
-    sqlite3_bind_int(stmt, 1, boat_id);
-
     int num_nodes = 0;
-    while (sqlite3_step(stmt) == SQLITE_ROW) num_nodes++;
-    sqlite3_reset(stmt);
+    int current_boat_id = 0;
+    for (int i = 0; i < entries->n; i++) {
+        const SurveyEntry *entry = &entries->entries[i];
+        if (entry->type == NODE_TYPE_BOAT) {
+            current_boat_id = lookup_boat_id(db, entry->name);
+            if (current_boat_id <= 0) {
+                fprintf(stderr, "Could not resolve boat named '%s'\n", entry->name ? entry->name : "(null)");
+                return 1;
+            }
+        }
+        if (current_boat_id == boat_id && (entry->type == NODE_TYPE_BOAT || entry->type == NODE_TYPE_STATION ||
+            (entry->type == NODE_TYPE_PORT && entry->selected))) {
+            num_nodes += (entry->type == NODE_TYPE_PORT && entry->selected) ? 2 : 1;
+        }
+    }
 
     if (num_nodes == 0) {
         fprintf(stderr, "No survey data found for boat_id=%d\n", boat_id);
-        sqlite3_finalize(stmt);
         return 1;
     }
 
@@ -359,16 +505,98 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     int *catch_amounts = (int*)malloc((size_t)num_nodes * sizeof(int));
 
     int idx = 0;
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        types[idx] = sqlite3_column_int(stmt, 1);
-        table_ids[idx] = sqlite3_column_int(stmt, 2);  /* boats.id, stations.id, or ports.id */
-        segments[idx] = sqlite3_column_int(stmt, 3);
-        resolved_loc_ids[idx] = sqlite3_column_type(stmt, 4) == SQLITE_NULL ? 0 : sqlite3_column_int(stmt, 4);
-        station_end_loc_ids[idx] = sqlite3_column_type(stmt, 5) == SQLITE_NULL ? 0 : sqlite3_column_int(stmt, 5);
-        catch_amounts[idx] = sqlite3_column_int(stmt, 6);
-        idx++;
+    current_boat_id = 0;
+    int segment = 0;
+    for (int i = 0; i < entries->n; i++) {
+        const SurveyEntry *entry = &entries->entries[i];
+        if (entry->type == NODE_TYPE_BOAT) {
+            current_boat_id = lookup_boat_id(db, entry->name);
+            if (current_boat_id <= 0) {
+                fprintf(stderr, "Could not resolve boat named '%s'\n", entry->name ? entry->name : "(null)");
+                free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
+                return 1;
+            }
+            segment = 1;
+            if (current_boat_id == boat_id) {
+                types[idx] = NODE_TYPE_BOAT;
+                table_ids[idx] = boat_id;
+                segments[idx] = segment;
+                resolved_loc_ids[idx] = boat_start_loc_id;
+                station_end_loc_ids[idx] = 0;
+                catch_amounts[idx] = 0;
+                idx++;
+            }
+            continue;
+        }
+
+        if (current_boat_id != boat_id) continue;
+
+        if (entry->type == NODE_TYPE_STATION) {
+            const char *station_sql =
+                "SELECT s.id, s.start_location_id, s.end_location_id, s.amount "
+                "FROM stations s "
+                "JOIN locations l ON s.start_location_id = l.id "
+                "WHERE l.easting = ? AND l.northing = ?;";
+            sqlite3_stmt *st = NULL;
+            if (sqlite3_prepare_v2(db, station_sql, -1, &st, NULL) != SQLITE_OK) {
+                fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+                free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
+                return 1;
+            }
+            sqlite3_bind_int(st, 1, entry->easting);
+            sqlite3_bind_int(st, 2, entry->northing);
+            if (sqlite3_step(st) != SQLITE_ROW) {
+                fprintf(stderr, "Could not resolve station at %d %d\n", entry->easting, entry->northing);
+                sqlite3_finalize(st);
+                free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
+                return 1;
+            }
+            types[idx] = NODE_TYPE_STATION;
+            table_ids[idx] = sqlite3_column_int(st, 0);
+            segments[idx] = segment;
+            resolved_loc_ids[idx] = sqlite3_column_int(st, 1);
+            station_end_loc_ids[idx] = sqlite3_column_int(st, 2);
+            catch_amounts[idx] = sqlite3_column_int(st, 3);
+            sqlite3_finalize(st);
+            idx++;
+        } else if (entry->type == NODE_TYPE_PORT && entry->selected) {
+            int port_id = lookup_port_id(db, entry->easting, entry->northing);
+            sqlite3_stmt *pt = NULL;
+            const char *port_sql = "SELECT location_id FROM ports WHERE id = ?;";
+            if (port_id <= 0 || sqlite3_prepare_v2(db, port_sql, -1, &pt, NULL) != SQLITE_OK) {
+                fprintf(stderr, "Could not resolve port at %d %d\n", entry->easting, entry->northing);
+                if (pt) sqlite3_finalize(pt);
+                free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
+                return 1;
+            }
+            sqlite3_bind_int(pt, 1, port_id);
+            if (sqlite3_step(pt) != SQLITE_ROW) {
+                fprintf(stderr, "Could not load port location for port %d\n", port_id);
+                sqlite3_finalize(pt);
+                free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
+                return 1;
+            }
+            int port_loc_id = sqlite3_column_int(pt, 0);
+            sqlite3_finalize(pt);
+
+            types[idx] = NODE_TYPE_PORT;
+            table_ids[idx] = port_id;
+            segments[idx] = segment;
+            resolved_loc_ids[idx] = port_loc_id;
+            station_end_loc_ids[idx] = 0;
+            catch_amounts[idx] = 0;
+            idx++;
+
+            segment++;
+            types[idx] = NODE_TYPE_PORT;
+            table_ids[idx] = port_id;
+            segments[idx] = segment;
+            resolved_loc_ids[idx] = port_loc_id;
+            station_end_loc_ids[idx] = 0;
+            catch_amounts[idx] = 0;
+            idx++;
+        }
     }
-    sqlite3_finalize(stmt);
 
     int num_stations = 0;
     for (int i = 0; i < num_nodes; i++) {
@@ -566,12 +794,17 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     fprintf(out, "    \"capacity\": %d\n", capacity);
     fprintf(out, "  },\n");
 
+    fprintf(out, "  \"summary\": {\n");
+    fprintf(out, "    \"final\": \"Spring 2023\"\n");
+    fprintf(out, "  },\n");
+
     fprintf(out, "  \"solution\": {\n");
+    fprintf(out, "    \"Spring 2023\": {\n");
 
     /* Build tour_segments: each segment = [port_start_location_id, [station_location_ids], port_end_location_id]
      * Segments are bounded by PORT entries or BOAT entries
      */
-    fprintf(out, "    \"tour_segments_location_ids\": [\n");
+    fprintf(out, "      \"tour_segments_location_ids\": [\n");
 
     for (int s = 0; s < segment_count; s++) {
         int a = seg_start[s], b = seg_end[s];
@@ -621,16 +854,16 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
         free(base);
         fprintf(out, "]%s\n", (s + 1 < segment_count) ? "," : "");
     }
-    fprintf(out, "    ],\n");
+    fprintf(out, "      ],\n");
 
-    fprintf(out, "    \"dock_location_ids\": [");
+    fprintf(out, "      \"dock_location_ids\": [");
     for (int i = 0; i < dock_n; i++) {
         if (i) fprintf(out, ", ");
         fprintf(out, "%d", dock_location_ids[i]);
     }
     fprintf(out, "],\n");
 
-    fprintf(out, "    \"unique_waypoint_location_ids\": [");
+    fprintf(out, "      \"unique_waypoint_location_ids\": [");
     if (unique_waypoint_location_ids != NULL) {
         for (int i = 0; i < uniq_wp_n; i++) {
             if (i) fprintf(out, ", ");
@@ -640,7 +873,7 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
     fprintf(out, "],\n");
 
     /* Build tour_segments_station_ids as station-id lists only, one list per segment. */
-    fprintf(out, "    \"tour_segments_station_ids\": [\n");
+    fprintf(out, "      \"tour_segments_station_ids\": [\n");
 
     for (int s = 0; s < segment_count; s++) {
         int a = seg_start[s];
@@ -663,29 +896,30 @@ static int export_boat_json(sqlite3 *db, int boat_id, const char *output_path) {
 
         fprintf(out, "]%s\n", (s + 1 < segment_count) ? "," : "");
     }
-    fprintf(out, "    ],\n");
+    fprintf(out, "      ],\n");
 
-    fprintf(out, "    \"tour_length\": [");
+    fprintf(out, "      \"tour_length\": [");
     for (int s = 0; s < segment_count; s++) {
         if (s) fprintf(out, ", ");
         fprintf(out, "%d", segment_length[s]);
     }
     fprintf(out, "],\n");
-    fprintf(out, "    \"segment_count\": %d,\n", segment_count);
-    fprintf(out, "    \"segment_catch_amount\": [");
+    fprintf(out, "      \"segment_count\": %d,\n", segment_count);
+    fprintf(out, "      \"segment_catch_amount\": [");
     for (int s = 0; s < segment_count; s++) {
         if (s) fprintf(out, ", ");
         fprintf(out, "%d", segment_catch[s]);
     }
     fprintf(out, "],\n");
-    fprintf(out, "    \"segment_distance_nm\": [");
+    fprintf(out, "      \"segment_distance_nm\": [");
     for (int s = 0; s < segment_count; s++) {
         if (s) fprintf(out, ", ");
         fprintf(out, "%.2f", segment_distance_nm[s]);
     }
     fprintf(out, "],\n");
-    fprintf(out, "    \"total_distance_nm\": %.2f,\n", total_distance);
-    fprintf(out, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
+    fprintf(out, "      \"total_distance_nm\": %.2f,\n", total_distance);
+    fprintf(out, "      \"feasible\": %s\n", is_feasible ? "true" : "false");
+    fprintf(out, "    }\n");
     fprintf(out, "  },\n");
 
     fprintf(out, "  \"solver_stats\": {\n");
@@ -746,20 +980,28 @@ int main(int argc, char **argv) {
     setlocale(LC_CTYPE, "");
     setlocale(LC_NUMERIC, "C");
 
-    if (argc < 3) {
-        fprintf(stderr, "Usage: %s <database.db> <output_subfolder> [boat_id]\n", argv[0]);
+    if (argc < 4) {
+        fprintf(stderr, "Usage: %s <survey2023spring.dat> <database.db> <output_subfolder> [boat_id]\n", argv[0]);
         fprintf(stderr, "  Exports survey route to JSON format for plotting\n");
         fprintf(stderr, "  If boat_id is 0 or not specified, exports all boats\n");
-        fprintf(stderr, "  Output files: <output_subfolder>_boat<id>.json\n");
+        fprintf(stderr, "  Output files: <output_subfolder>/boat<id>.json\n");
         fprintf(stderr, "\nExamples:\n");
-        fprintf(stderr, "  %s dat/gsp_data.db sol/survey         # Exports all boats\n", argv[0]);
-        fprintf(stderr, "  %s dat/gsp_data.db sol/survey 2       # Exports only boat 2\n", argv[0]);
+        fprintf(stderr, "  %s dat/survey2023spring.dat dat/gsp.db sol/survey\n", argv[0]);
+        fprintf(stderr, "  %s dat/survey2023spring.dat dat/gsp.db sol/survey 2\n", argv[0]);
         return 1;
     }
 
-    const char *db_path = argv[1];
-    const char *output_subfolder = argv[2];
-    int boat_id = (argc > 3) ? atoi(argv[3]) : 0;
+    const char *dat_path = argv[1];
+    const char *db_path = argv[2];
+    const char *output_subfolder = argv[3];
+    int boat_id = (argc > 4) ? atoi(argv[4]) : 0;
+
+    SurveyEntryVec entries;
+    survey_entry_vec_init(&entries);
+    if (!parse_survey_file(dat_path, &entries)) {
+        survey_entry_vec_free(&entries);
+        return 1;
+    }
 
     sqlite3 *db;
     if (sqlite3_open(db_path, &db) != SQLITE_OK) {
@@ -782,39 +1024,49 @@ int main(int argc, char **argv) {
         /* Export single boat */
         char output_path[512];
         snprintf(output_path, sizeof(output_path), "%s/boat%d.json", output_subfolder, boat_id);
-        result = export_boat_json(db, boat_id, output_path);
+        result = export_boat_json(db, &entries, boat_id, output_path);
     } else {
         /* Export all boats */
         printf("Exporting all boats from survey...\n\n");
-
-        const char *query_sql = "SELECT DISTINCT boat_id FROM survey ORDER BY boat_id;";
-        sqlite3_stmt *stmt;
-
-        if (sqlite3_prepare_v2(db, query_sql, -1, &stmt, NULL) != SQLITE_OK) {
-            fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
-            sqlite3_close(db);
-            return 1;
+        int *boat_ids = NULL;
+        int boat_count = 0, boat_cap = 0;
+        int current_boat_id = 0;
+        for (int i = 0; i < entries.n; i++) {
+            if (entries.entries[i].type != NODE_TYPE_BOAT) continue;
+            current_boat_id = lookup_boat_id(db, entries.entries[i].name);
+            if (current_boat_id <= 0) {
+                fprintf(stderr, "Could not resolve boat named '%s'\n", entries.entries[i].name ? entries.entries[i].name : "(null)");
+                free(boat_ids);
+                sqlite3_close(db);
+                survey_entry_vec_free(&entries);
+                return 1;
+            }
+            if (!append_unique_int(&boat_ids, &boat_count, &boat_cap, current_boat_id)) {
+                free(boat_ids);
+                sqlite3_close(db);
+                survey_entry_vec_free(&entries);
+                return 1;
+            }
         }
 
-        int boat_count = 0;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            int current_boat_id = sqlite3_column_int(stmt, 0);
+        int exported_count = 0;
+        for (int i = 0; i < boat_count; i++) {
+            current_boat_id = boat_ids[i];
             char output_path[512];
-            snprintf(output_path, sizeof(output_path), "%s/boat%d.json", output_subfolder,
-                current_boat_id);
+            snprintf(output_path, sizeof(output_path), "%s/boat%d.json", output_subfolder, current_boat_id);
 
-            int ret = export_boat_json(db, current_boat_id, output_path);
+            int ret = export_boat_json(db, &entries, current_boat_id, output_path);
             if (ret != 0) {
                 result = ret;
             } else {
-                boat_count++;
+                exported_count++;
             }
             printf("\n");
         }
-        sqlite3_finalize(stmt);
+        free(boat_ids);
 
-        if (boat_count > 0) {
-            printf("[OK] Exported %d boat(s) successfully\n", boat_count);
+        if (exported_count > 0) {
+            printf("[OK] Exported %d boat(s) successfully\n", exported_count);
         } else {
             fprintf(stderr, "No boats found in survey\n");
             result = 1;
@@ -822,6 +1074,7 @@ int main(int argc, char **argv) {
     }
 
     sqlite3_close(db);
+    survey_entry_vec_free(&entries);
     return result;
 }
 
