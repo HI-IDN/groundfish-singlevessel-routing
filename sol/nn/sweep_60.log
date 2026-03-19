@@ -1,0 +1,102 @@
+============================================================
+GSP Solver - Unified Entry Point
+============================================================
+
+Mode: sweep
+
+============================================================
+GSP Solver - Phase 1: Sweep
+============================================================
+
+Loaded segmented input: 13 segments, 9219.15 nm total
+Sweep parameters: l1seg=0 l2seg=60 max_iterations=100 time_limit=0
+Set parameter Username
+Set parameter LicenseID to value 2769518
+Academic license - for non-commercial use only - expires 2027-01-23
+Wrote initial sweep snapshot: init 8507.42 nm feasible=true
+Starting sweep pass1 across 13 boundaries
+  pass1 boundary 1/13: seg1=48 stations -> seg2=61 stations via port_id=19 name=Ísafjörður loc_id=19
+    improved: 1095.08 -> 1076.03 nm, gain=19.04 nm, moved_station_marks=2
+  pass1 boundary 2/13: seg2=62 stations -> seg3=82 stations via port_id=15 name=Sauðárkrókur loc_id=15
+    improved: 1511.76 -> 1504.02 nm, gain=7.74 nm, moved_station_marks=4
+  pass1 boundary 3/13: seg3=84 stations -> seg4=109 stations via port_id=23 name=Raufarhöfn loc_id=23
+    no change
+  pass1 boundary 4/13: seg4=109 stations -> seg5=40 stations via port_id=9 name=Eskifjörður loc_id=9
+    no change
+  pass1 boundary 5/13: seg5=40 stations -> seg6=38 stations via port_id=9 name=Eskifjörður loc_id=9
+    improved: 1655.31 -> 1640.11 nm, gain=15.20 nm, moved_station_marks=4
+  pass1 boundary 6/13: seg6=36 stations -> seg7=51 stations via port_id=19 name=Ísafjörður loc_id=19
+    improved: 1521.40 -> 1466.99 nm, gain=54.41 nm, moved_station_marks=2
+  pass1 boundary 7/13: seg7=52 stations -> seg8=36 stations via port_id=12 name=Patreksfjörður loc_id=12
+    no change
+  pass1 boundary 8/13: seg8=36 stations -> seg9=40 stations via port_id=7 name=Ólafsvík loc_id=7
+    improved: 1263.33 -> 1260.63 nm, gain=2.70 nm, moved_station_marks=2
+  pass1 boundary 9/13: seg9=41 stations -> seg10=47 stations via port_id=18 name=Bakkafjörður loc_id=18
+    improved: 1732.61 -> 1729.16 nm, gain=3.45 nm, moved_station_marks=2
+  pass1 boundary 10/13: seg10=46 stations -> seg11=24 stations via port_id=2 name=Grindarvík loc_id=2
+    improved: 1423.58 -> 1380.89 nm, gain=42.69 nm, moved_station_marks=2
+  pass1 boundary 11/13: seg11=25 stations -> seg12=3 stations via port_id=12 name=Patreksfjörður loc_id=12
+    improved: 814.03 -> 744.27 nm, gain=69.77 nm, moved_station_marks=4
+  pass1 boundary 12/13: seg12=5 stations -> seg13=1 stations via port_id=2 name=Grindarvík loc_id=2
+    improved: 481.11 -> 427.99 nm, gain=53.13 nm, moved_station_marks=4
+  pass1 boundary 13/13: seg13=3 stations -> seg1=47 stations via port_id=5 name=Hafnarfjörður loc_id=5
+    improved: 670.21 -> 664.02 nm, gain=6.19 nm, moved_station_marks=4
+Completed pass1: changed=1 boundary_changes=10 total_distance=8233.10 runtime=1351.74s total=1508.71s
+Starting sweep pass2 across 13 boundaries
+  pass2 boundary 1/13: seg1=45 stations -> seg2=60 stations via port_id=19 name=Ísafjörður loc_id=19
+    improved: 1039.85 -> 1023.52 nm, gain=16.33 nm, moved_station_marks=22
+  pass2 boundary 2/13: seg2=49 stations -> seg3=84 stations via port_id=15 name=Sauðárkrókur loc_id=15
+    improved: 1427.75 -> 1393.89 nm, gain=33.87 nm, moved_station_marks=44
+  pass2 boundary 3/13: seg3=62 stations -> seg4=109 stations via port_id=23 name=Raufarhöfn loc_id=23
+    no change
+  pass2 boundary 4/13: seg4=109 stations -> seg5=42 stations via port_id=9 name=Eskifjörður loc_id=9
+    no change
+  pass2 boundary 5/13: seg5=42 stations -> seg6=35 stations via port_id=9 name=Eskifjörður loc_id=9
+    no change
+  pass2 boundary 6/13: seg6=35 stations -> seg7=52 stations via port_id=19 name=Ísafjörður loc_id=19
+    no change
+  pass2 boundary 7/13: seg7=52 stations -> seg8=35 stations via port_id=12 name=Patreksfjörður loc_id=12
+    no change
+  pass2 boundary 8/13: seg8=35 stations -> seg9=42 stations via port_id=7 name=Ólafsvík loc_id=7
+    no change
+  pass2 boundary 9/13: seg9=42 stations -> seg10=45 stations via port_id=18 name=Bakkafjörður loc_id=18
+    no change
+  pass2 boundary 10/13: seg10=45 stations -> seg11=23 stations via port_id=2 name=Grindarvík loc_id=2
+    no change
+  pass2 boundary 11/13: seg11=23 stations -> seg12=3 stations via port_id=12 name=Patreksfjörður loc_id=12
+    no change
+  pass2 boundary 12/13: seg12=3 stations -> seg13=5 stations via port_id=2 name=Grindarvík loc_id=2
+    no change
+  pass2 boundary 13/13: seg13=5 stations -> seg1=56 stations via port_id=5 name=Hafnarfjörður loc_id=5
+    no change
+Completed pass2: changed=1 boundary_changes=2 total_distance=8182.90 runtime=3042.14s total=4642.28s
+Starting sweep pass3 across 13 boundaries
+  pass3 boundary 1/13: seg1=56 stations -> seg2=71 stations via port_id=19 name=Ísafjörður loc_id=19
+    improved: 1220.46 -> 1219.82 nm, gain=0.64 nm, moved_station_marks=4
+  pass3 boundary 2/13: seg2=73 stations -> seg3=62 stations via port_id=15 name=Sauðárkrókur loc_id=15
+    improved: 1407.79 -> 1401.98 nm, gain=5.81 nm, moved_station_marks=2
+  pass3 boundary 3/13: seg3=63 stations -> seg4=109 stations via port_id=23 name=Raufarhöfn loc_id=23
+    no change
+  pass3 boundary 13/13: seg13=5 stations -> seg1=54 stations via port_id=5 name=Hafnarfjörður loc_id=5
+    no change
+Completed pass3: changed=1 boundary_changes=2 total_distance=8176.45 runtime=2408.36s total=7188.25s
+Starting sweep pass4 across 13 boundaries
+  pass4 boundary 1/13: seg1=54 stations -> seg2=72 stations via port_id=19 name=Ísafjörður loc_id=19
+    no change
+  pass4 boundary 2/13: seg2=72 stations -> seg3=63 stations via port_id=15 name=Sauðárkrókur loc_id=15
+    no change
+Completed pass4: changed=0 boundary_changes=0 total_distance=8176.45 runtime=1005.44s total=8360.92s
+Final segment station order:
+  seg1: [499, 498, 497, 496, 495, 112, 113, 494, 114, 275, 111, 274, 107, 106, 105, 104, 103, 102, 101, 108, 109, 110, 273, 272, 271, 253, 252, 249, 248, 247, 245, 244, 243, 238, 237, 215, 214, 213, 192, 218, 191, 219, 190, 223, 222, 227, 231, 235, 234, 233, 232, 230, 181, 132]
+  seg2: [133, 134, 180, 229, 228, 179, 135, 136, 152, 153, 154, 174, 175, 176, 177, 171, 170, 168, 165, 166, 164, 162, 161, 160, 159, 163, 167, 172, 173, 155, 156, 157, 158, 150, 149, 148, 147, 146, 145, 144, 142, 9, 8, 141, 140, 139, 151, 138, 137, 2, 95, 90, 91, 89, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 70, 76, 75, 71, 72, 73]
+  seg3: [74, 68, 55, 56, 54, 53, 52, 51, 37, 66, 67, 69, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 93, 92, 94, 96, 4, 3, 1, 7, 6, 5, 25, 24, 23, 22, 18, 13, 14, 12, 11, 10, 143, 15, 16, 17, 19, 21, 20, 41, 42, 43, 44, 45, 46, 47, 40, 39, 48, 38, 50, 391]
+  seg4: [423, 422, 421, 420, 419, 383, 384, 382, 414, 413, 412, 409, 408, 410, 411, 380, 378, 379, 377, 376, 375, 374, 373, 372, 371, 370, 369, 359, 361, 360, 358, 357, 356, 355, 354, 353, 352, 351, 350, 349, 326, 327, 325, 324, 323, 322, 321, 339, 338, 337, 335, 336, 328, 329, 330, 331, 332, 348, 362, 364, 363, 347, 333, 334, 344, 345, 346, 276, 277, 278, 279, 280, 281, 341, 342, 343, 340, 320, 319, 318, 317, 316, 315, 314, 313, 312, 288, 290, 287, 286, 285, 552, 551, 550, 553, 554, 562, 564, 565, 567, 568, 537, 538, 539, 540, 543, 542, 563, 566]
+  seg5: [557, 556, 282, 283, 284, 555, 558, 559, 560, 561, 549, 541, 544, 545, 546, 547, 548, 291, 292, 307, 299, 298, 536, 535, 534, 576, 530, 529, 528, 527, 526, 524, 525, 578, 575, 577, 574, 573, 571, 572, 569, 570]
+  seg6: [289, 310, 311, 309, 308, 303, 302, 301, 300, 304, 305, 306, 294, 293, 295, 296, 297, 533, 532, 531, 523, 522, 521, 580, 579, 520, 519, 518, 517, 516, 427, 428, 429, 430, 432]
+  seg7: [178, 226, 182, 183, 169, 184, 185, 186, 187, 188, 189, 224, 225, 221, 220, 216, 217, 193, 194, 195, 196, 197, 198, 199, 201, 200, 212, 211, 210, 209, 208, 207, 206, 205, 256, 257, 259, 258, 128, 127, 126, 125, 124, 123, 471, 472, 122, 266, 267, 265, 264, 99]
+  seg8: [100, 98, 97, 236, 239, 240, 241, 242, 246, 250, 251, 255, 254, 260, 261, 262, 263, 268, 269, 270, 120, 121, 119, 118, 478, 479, 466, 467, 465, 480, 481, 477, 476, 115, 116]
+  seg9: [117, 475, 474, 473, 470, 469, 468, 464, 463, 484, 461, 462, 483, 482, 493, 492, 491, 490, 489, 486, 485, 487, 488, 502, 503, 504, 505, 506, 444, 443, 442, 441, 440, 439, 437, 438, 435, 436, 512, 513, 365, 366]
+  seg10: [367, 368, 426, 381, 425, 417, 424, 418, 416, 415, 404, 405, 406, 407, 399, 400, 401, 389, 390, 388, 387, 402, 403, 385, 386, 62, 61, 60, 58, 59, 57, 64, 65, 63, 392, 393, 394, 395, 398, 397, 396, 49, 202, 203, 204]
+  seg11: [507, 508, 509, 510, 511, 514, 515, 431, 433, 434, 445, 446, 447, 448, 449, 450, 451, 452, 453, 457, 456, 455, 454]
+  seg12: [131, 130, 129]
+  seg13: [458, 459, 460, 500, 501]
