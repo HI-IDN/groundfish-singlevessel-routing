@@ -115,17 +115,6 @@ collect_gap_values <- function(doc, passes) {
 }
 
 compute_gap_stats <- function(doc, passes) {
-  summary <- doc$summary %||% list()
-  gap_stats <- summary$capacity_mip_gap_percent
-  if (!is.null(gap_stats)) {
-    return(list(
-      min = as.numeric(gap_stats$min %||% NA_real_),
-      mean = as.numeric(gap_stats$mean %||% NA_real_),
-      max = as.numeric(gap_stats$max %||% NA_real_),
-      std = as.numeric(gap_stats$std %||% NA_real_)
-    ))
-  }
-
   vals <- collect_gap_values(doc, passes)
   if (length(vals) == 0) {
     return(list(min = NA_real_, mean = NA_real_, max = NA_real_, std = NA_real_))
@@ -280,7 +269,7 @@ rows$l2seg_display <- rows$l2seg * l2seg_scale
 missing_cols <- c()
 if (any(is.na(rows$total_solves))) missing_cols <- c(missing_cols, "total_capacity_solves")
 if (any(is.na(rows$gap_min) | is.na(rows$gap_mean) | is.na(rows$gap_max) | is.na(rows$gap_std))) {
-  missing_cols <- c(missing_cols, "capacity_mip_gap_percent")
+  missing_cols <- c(missing_cols, "capacity_mip_gap_percent_values")
 }
 
 render_output <- function() {

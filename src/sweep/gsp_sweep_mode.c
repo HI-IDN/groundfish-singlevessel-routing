@@ -38,14 +38,16 @@ typedef struct {
     nn_solution_t solution;
     int pass_index;
     int changed;
+    int boundary_count;
+    int *boundary_port_ids;
+    double *boundary_improvement_gain_nm;
     int boundary_attempts;
     int boundary_changes;
     int mip_solve_count;
     int mip_gap_count;
-    double mip_gap_min;
-    double mip_gap_max;
-    double mip_gap_sum;
-    double mip_gap_sum_sq;
+    double *mip_gap_values;
+    int mip_runtime_count;
+    double *mip_runtime_values;
     double pass_runtime_seconds;
     double total_runtime_seconds;
     int feasible;
@@ -69,11 +71,23 @@ typedef struct {
 
 typedef struct {
     int count;
+    int capacity;
+    double *values;
     double min;
     double max;
     double sum;
     double sum_sq;
 } gap_stats_t;
+
+typedef struct {
+    int count;
+    int capacity;
+    double *values;
+    double min;
+    double max;
+    double sum;
+    double sum_sq;
+} runtime_stats_t;
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
@@ -89,6 +103,43 @@ static void log_progress(const char *message) {
 static void gap_stats_init(gap_stats_t *stats) {
     if (!stats) return;
     stats->count = 0;
+    stats->capacity = 0;
+    stats->values = NULL;
+    stats->min = DBL_MAX;
+    stats->max = -DBL_MAX;
+    stats->sum = 0.0;
+    stats->sum_sq = 0.0;
+}
+
+static void gap_stats_free(gap_stats_t *stats) {
+    if (!stats) return;
+    free(stats->values);
+    stats->values = NULL;
+    stats->count = 0;
+    stats->capacity = 0;
+    stats->min = DBL_MAX;
+    stats->max = -DBL_MAX;
+    stats->sum = 0.0;
+    stats->sum_sq = 0.0;
+}
+
+static void runtime_stats_init(runtime_stats_t *stats) {
+    if (!stats) return;
+    stats->count = 0;
+    stats->capacity = 0;
+    stats->values = NULL;
+    stats->min = DBL_MAX;
+    stats->max = -DBL_MAX;
+    stats->sum = 0.0;
+    stats->sum_sq = 0.0;
+}
+
+static void runtime_stats_free(runtime_stats_t *stats) {
+    if (!stats) return;
+    free(stats->values);
+    stats->values = NULL;
+    stats->count = 0;
+    stats->capacity = 0;
     stats->min = DBL_MAX;
     stats->max = -DBL_MAX;
     stats->sum = 0.0;
@@ -96,7 +147,16 @@ static void gap_stats_init(gap_stats_t *stats) {
 }
 
 static void gap_stats_add(gap_stats_t *stats, double gap_percent) {
+    double *tmp;
     if (!stats || gap_percent < 0.0 || isnan(gap_percent)) return;
+    if (stats->count >= stats->capacity) {
+        int new_capacity = (stats->capacity <= 0) ? 16 : (stats->capacity * 2);
+        tmp = (double*)realloc(stats->values, (size_t)new_capacity * sizeof(double));
+        if (!tmp) return;
+        stats->values = tmp;
+        stats->capacity = new_capacity;
+    }
+    stats->values[stats->count] = gap_percent;
     if (stats->count == 0 || gap_percent < stats->min) stats->min = gap_percent;
     if (stats->count == 0 || gap_percent > stats->max) stats->max = gap_percent;
     stats->count++;
@@ -104,16 +164,22 @@ static void gap_stats_add(gap_stats_t *stats, double gap_percent) {
     stats->sum_sq += gap_percent * gap_percent;
 }
 
-static double gap_stats_mean(const gap_stats_t *stats) {
-    return (stats && stats->count > 0) ? stats->sum / (double)stats->count : -1.0;
-}
-
-static double gap_stats_std(const gap_stats_t *stats) {
-    double mean, var;
-    if (!stats || stats->count <= 0) return -1.0;
-    mean = gap_stats_mean(stats);
-    var = (stats->sum_sq / (double)stats->count) - mean * mean;
-    return (var > 0.0) ? sqrt(var) : 0.0;
+static void runtime_stats_add(runtime_stats_t *stats, double runtime_seconds) {
+    double *tmp;
+    if (!stats || runtime_seconds < 0.0 || isnan(runtime_seconds)) return;
+    if (stats->count >= stats->capacity) {
+        int new_capacity = (stats->capacity <= 0) ? 16 : (stats->capacity * 2);
+        tmp = (double*)realloc(stats->values, (size_t)new_capacity * sizeof(double));
+        if (!tmp) return;
+        stats->values = tmp;
+        stats->capacity = new_capacity;
+    }
+    stats->values[stats->count] = runtime_seconds;
+    if (stats->count == 0 || runtime_seconds < stats->min) stats->min = runtime_seconds;
+    if (stats->count == 0 || runtime_seconds > stats->max) stats->max = runtime_seconds;
+    stats->count++;
+    stats->sum += runtime_seconds;
+    stats->sum_sq += runtime_seconds * runtime_seconds;
 }
 
 static void write_json_double_or_null(FILE *fp, double value) {
@@ -267,6 +333,10 @@ fail:
 static void free_snapshot_array(sweep_snapshot_t *snapshots, int n_snapshots) {
     if (!snapshots) return;
     for (int i = 0; i < n_snapshots; i++) {
+        free(snapshots[i].boundary_port_ids);
+        free(snapshots[i].boundary_improvement_gain_nm);
+        free(snapshots[i].mip_gap_values);
+        free(snapshots[i].mip_runtime_values);
         free_solution(&snapshots[i].solution);
     }
     free(snapshots);
@@ -400,6 +470,39 @@ static const char *find_key_in_object(const char *object_start, const char *key)
     return skip_ws(key_pos + 1);
 }
 
+static int parse_waypoint_path_json_local(const char *json_text, int **out_ids) {
+    int *ids = NULL;
+    int count = 0;
+    const char *p;
+
+    if (out_ids) *out_ids = NULL;
+    if (!json_text || !out_ids) return 0;
+
+    p = json_text;
+    while (*p) {
+        char *endptr;
+        long val;
+        while (*p && !((*p >= '0' && *p <= '9') || *p == '-')) p++;
+        if (!*p) break;
+        val = strtol(p, &endptr, 10);
+        if (endptr == p) break;
+        {
+            int *tmp = (int*)realloc(ids, (size_t)(count + 1) * sizeof(int));
+            if (!tmp) {
+                free(ids);
+                *out_ids = NULL;
+                return 0;
+            }
+            ids = tmp;
+            ids[count++] = (int)val;
+        }
+        p = endptr;
+    }
+
+    *out_ids = ids;
+    return count;
+}
+
 static int parse_json_int(const char **pp, int *out_value) {
     char *endptr;
     long value;
@@ -408,6 +511,18 @@ static int parse_json_int(const char **pp, int *out_value) {
     value = strtol(p, &endptr, 10);
     if (endptr == p) return 0;
     *out_value = (int)value;
+    *pp = endptr;
+    return 1;
+}
+
+static int parse_json_double(const char **pp, double *out_value) {
+    char *endptr;
+    double value;
+    const char *p = skip_ws(*pp);
+    if (!p || !*p) return 0;
+    value = strtod(p, &endptr);
+    if (endptr == p) return 0;
+    *out_value = value;
     *pp = endptr;
     return 1;
 }
@@ -450,6 +565,49 @@ static int parse_int_array(const char **pp, int **out_arr, int *out_count) {
     *pp = p + 1;
     *out_arr = arr;
     *out_count = count;
+    return 1;
+}
+
+static int lookup_waypoint_path(sqlite3 *db, int from_loc_id, int to_loc_id,
+                                int **out_ids, int *out_count, int *out_reversed) {
+    sqlite3_stmt *stmt = NULL;
+    const unsigned char *txt = NULL;
+    int rc;
+
+    if (out_ids) *out_ids = NULL;
+    if (out_count) *out_count = 0;
+    if (out_reversed) *out_reversed = 0;
+    if (!db || !out_ids || !out_count) return 0;
+
+    rc = sqlite3_prepare_v2(db,
+        "SELECT waypoint_path FROM distances WHERE from_location_id = ? AND to_location_id = ?;",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return 0;
+
+    sqlite3_bind_int(stmt, 1, from_loc_id);
+    sqlite3_bind_int(stmt, 2, to_loc_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        txt = sqlite3_column_text(stmt, 0);
+        *out_count = txt ? parse_waypoint_path_json_local((const char*)txt, out_ids) : 0;
+        sqlite3_finalize(stmt);
+        return 1;
+    }
+    sqlite3_finalize(stmt);
+
+    rc = sqlite3_prepare_v2(db,
+        "SELECT waypoint_path FROM distances WHERE from_location_id = ? AND to_location_id = ?;",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return 0;
+    sqlite3_bind_int(stmt, 1, to_loc_id);
+    sqlite3_bind_int(stmt, 2, from_loc_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        txt = sqlite3_column_text(stmt, 0);
+        *out_count = txt ? parse_waypoint_path_json_local((const char*)txt, out_ids) : 0;
+        if (out_reversed) *out_reversed = 1;
+        sqlite3_finalize(stmt);
+        return 1;
+    }
+    sqlite3_finalize(stmt);
     return 1;
 }
 
@@ -513,6 +671,15 @@ fail:
     free(arrays);
     free(sizes);
     return 0;
+}
+
+static int parse_named_double_value(const char *text, const char *key, double *out_value) {
+    const char *p = find_json_key(text, key);
+    if (!p || !out_value) return 0;
+    p = strchr(p, ':');
+    if (!p) return 0;
+    p = skip_ws(p + 1);
+    return parse_json_double(&p, out_value);
 }
 
 static int load_nodes(sqlite3 *db, nn_instance_t *inst) {
@@ -695,7 +862,8 @@ static int extract_segment_arrays_from_input(const char *json_text,
 static int load_segments_from_json(const char *input_path, const nn_instance_t *inst,
                                    const sweep_boat_t *boat,
                                    sweep_segment_t **out_segments, int *out_count,
-                                   nn_solution_t *initial_solution) {
+                                   nn_solution_t *initial_solution,
+                                   double *input_total_distance_nm) {
     char *json_text = read_text_file(input_path);
     int **segment_arrays = NULL;
     int *segment_sizes = NULL;
@@ -703,6 +871,7 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
     sweep_segment_t *segments = NULL;
     int rc = 0;
 
+    if (input_total_distance_nm) *input_total_distance_nm = 0.0;
     if (!json_text) return 0;
     if (!extract_segment_arrays_from_input(json_text, &segment_arrays, &segment_sizes, &segment_count)) goto cleanup;
     if (segment_count <= 0) goto cleanup;
@@ -731,6 +900,9 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
     }
 
     memset(initial_solution, 0, sizeof(*initial_solution));
+    if (input_total_distance_nm) {
+        (void)parse_named_double_value(json_text, "final_total_distance_nm", input_total_distance_nm);
+    }
     rc = 1;
 
 cleanup:
@@ -757,7 +929,9 @@ static int solve_segment_tsp(GRBenv *env, const nn_instance_t *inst,
                              int *out_catch, double *out_distance,
                              int **out_signed_station_ids,
                              gap_stats_t *gap_stats,
-                             int *solve_count) {
+                             runtime_stats_t *runtime_stats,
+                             int *solve_count,
+                             double time_limit_seconds) {
     mip_endpaired_instance_t mip_instance;
     mip_endpaired_solution_t mip_solution;
     mip_params_t mip_params;
@@ -796,6 +970,7 @@ static int solve_segment_tsp(GRBenv *env, const nn_instance_t *inst,
 
     mip_params.verbose = 0;
     mip_params.shared_env = env;
+    mip_params.time_limit_seconds = time_limit_seconds;
 
     if (solve_mip_endpaired_tsp(&mip_instance, &mip_params,
                                 start_loc_id, end_loc_id, &mip_solution) != 0) {
@@ -804,6 +979,7 @@ static int solve_segment_tsp(GRBenv *env, const nn_instance_t *inst,
 
     if (solve_count) (*solve_count)++;
     if (gap_stats) gap_stats_add(gap_stats, mip_solution.gap * 100.0);
+    if (runtime_stats) runtime_stats_add(runtime_stats, mip_solution.runtime_seconds);
 
     *out_catch = mip_solution.catch_amount;
     *out_distance = mip_solution.total_distance_nm;
@@ -1014,7 +1190,8 @@ static void write_station_mutation_ids(FILE *fp,
 }
 
 #ifdef HAVE_GUROBI
-static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, sweep_segment_t *segment) {
+static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, sweep_segment_t *segment,
+                              double time_limit_seconds) {
     int *station_ids = NULL;
     int catch_amount = 0;
     double distance_nm = 0.0;
@@ -1027,7 +1204,7 @@ static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, sweep_segm
 
     if (!solve_segment_tsp(env, inst, segment->start_loc_id, segment->end_loc_id,
                            station_ids, segment->count,
-                           &catch_amount, &distance_nm, &signed_ids, NULL, NULL)) {
+                           &catch_amount, &distance_nm, &signed_ids, NULL, NULL, NULL, time_limit_seconds)) {
         free(station_ids);
         return 0;
     }
@@ -1041,16 +1218,18 @@ static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, sweep_segm
 }
 
 static int reoptimize_all_segments(GRBenv *env, const nn_instance_t *inst,
-                                   sweep_segment_t *segments, int n_segments) {
+                                   sweep_segment_t *segments, int n_segments,
+                                   double time_limit_seconds) {
     for (int i = 0; i < n_segments; i++) {
-        if (!reoptimize_segment(env, inst, &segments[i])) return 0;
+        if (!reoptimize_segment(env, inst, &segments[i], time_limit_seconds)) return 0;
     }
     return 1;
 }
 
 static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const sweep_boat_t *boat,
                              sweep_segment_t *left, sweep_segment_t *right,
-                             gap_stats_t *gap_stats, int *solve_count) {
+                             gap_stats_t *gap_stats, runtime_stats_t *runtime_stats,
+                             int *solve_count, double time_limit_seconds) {
     int total = left->count + right->count;
     int *merged = (int*)malloc((size_t)total * sizeof(int));
     double current_total = left->distance_nm + right->distance_nm;
@@ -1079,12 +1258,12 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const sweep
 
         if (!solve_segment_tsp(env, inst, left->start_loc_id, left->end_loc_id,
                                merged, k, &left_catch, &left_dist, &left_ids,
-                               gap_stats, solve_count)) {
+                               gap_stats, runtime_stats, solve_count, time_limit_seconds)) {
             continue;
         }
         if (!solve_segment_tsp(env, inst, right->start_loc_id, right->end_loc_id,
                                merged + k, total - k, &right_catch, &right_dist, &right_ids,
-                               gap_stats, solve_count)) {
+                               gap_stats, runtime_stats, solve_count, time_limit_seconds)) {
             free(left_ids);
             continue;
         }
@@ -1155,15 +1334,72 @@ static int count_segment_station_changes(const sweep_segment_t *before,
     return changes;
 }
 
-static void write_solution_json(FILE *fp, const nn_solution_t *sol,
+static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst,
+                                const nn_solution_t *sol,
                                 const sweep_boat_t *boat, int feasible) {
+    int *unique_waypoint_location_ids = NULL;
+    int unique_waypoint_count = 0;
+    int unique_waypoint_capacity = 0;
+    unsigned char *seen_waypoint_location_ids = NULL;
+
+    if (!fp || !db || !inst || !sol || !boat) return;
+    seen_waypoint_location_ids = (unsigned char*)calloc((size_t)inst->max_loc_id, sizeof(unsigned char));
+    if (!seen_waypoint_location_ids) return;
+
     fprintf(fp, "      \"tour_segments_location_ids\": [\n");
     for (int s = 0; s < sol->segment_count; s++) {
+        int start = sol->segment_starts[s];
+        int end = sol->segment_ends[s];
+        int base_cap = (end - start + 1) + 2;
+        int base_n = 0;
+        int *base = (int*)malloc((size_t)base_cap * sizeof(int));
         fprintf(fp, "        [");
-        for (int i = sol->segment_starts[s]; i <= sol->segment_ends[s]; i++) {
-            fprintf(fp, "%d", sol->tour[i]);
-            if (i < sol->segment_ends[s]) fprintf(fp, ", ");
+        if (!base) {
+            fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
+            continue;
         }
+        base[base_n++] = (s == 0) ? boat->boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
+        for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
+        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat->boat_end_loc_id)) {
+            base[base_n++] = boat->boat_end_loc_id;
+        }
+        if (base_n > 0) {
+            fprintf(fp, "%d", base[0]);
+            for (int i = 0; i < base_n - 1; i++) {
+                int *waypoint_ids = NULL;
+                int waypoint_count = 0;
+                int reversed = 0;
+                (void)lookup_waypoint_path(db, base[i], base[i + 1], &waypoint_ids, &waypoint_count, &reversed);
+                if (waypoint_ids && waypoint_count > 0) {
+                    if (reversed) {
+                        for (int k = waypoint_count - 1; k >= 0; k--) {
+                            int waypoint_id = waypoint_ids[k];
+                            fprintf(fp, ", %d", waypoint_id);
+                            if (waypoint_id >= 0 && waypoint_id < inst->max_loc_id &&
+                                !seen_waypoint_location_ids[waypoint_id]) {
+                                seen_waypoint_location_ids[waypoint_id] = 1;
+                                (void)append_int(&unique_waypoint_location_ids, &unique_waypoint_count,
+                                                 &unique_waypoint_capacity, waypoint_id);
+                            }
+                        }
+                    } else {
+                        for (int k = 0; k < waypoint_count; k++) {
+                            int waypoint_id = waypoint_ids[k];
+                            fprintf(fp, ", %d", waypoint_id);
+                            if (waypoint_id >= 0 && waypoint_id < inst->max_loc_id &&
+                                !seen_waypoint_location_ids[waypoint_id]) {
+                                seen_waypoint_location_ids[waypoint_id] = 1;
+                                (void)append_int(&unique_waypoint_location_ids, &unique_waypoint_count,
+                                                 &unique_waypoint_capacity, waypoint_id);
+                            }
+                        }
+                    }
+                }
+                free(waypoint_ids);
+                fprintf(fp, ", %d", base[i + 1]);
+            }
+        }
+        free(base);
         fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
     }
     fprintf(fp, "      ],\n");
@@ -1175,7 +1411,12 @@ static void write_solution_json(FILE *fp, const nn_solution_t *sol,
     }
     fprintf(fp, ", %d],\n", boat->boat_end_loc_id);
 
-    fprintf(fp, "      \"unique_waypoint_location_ids\": [],\n");
+    fprintf(fp, "      \"unique_waypoint_location_ids\": [");
+    for (int i = 0; i < unique_waypoint_count; i++) {
+        fprintf(fp, "%d", unique_waypoint_location_ids[i]);
+        if (i + 1 < unique_waypoint_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
 
     fprintf(fp, "      \"tour_segments_station_ids\": [\n");
     for (int s = 0; s < sol->segment_count; s++) {
@@ -1217,9 +1458,13 @@ static void write_solution_json(FILE *fp, const nn_solution_t *sol,
 
     fprintf(fp, "      \"total_distance_nm\": %.2f,\n", sol->total_distance);
     fprintf(fp, "      \"feasible\": %s\n", feasible ? "true" : "false");
+    free(seen_waypoint_location_ids);
+    free(unique_waypoint_location_ids);
 }
 
 static void write_pass_entry(FILE *fp,
+                             sqlite3 *db,
+                             const nn_instance_t *inst,
                              const char *pass_name,
                              const nn_solution_t *prev_solution,
                              const sweep_snapshot_t *snapshot,
@@ -1227,30 +1472,44 @@ static void write_pass_entry(FILE *fp,
     int moved_stations = count_station_moves_between_solutions(prev_solution, &snapshot->solution);
     fprintf(fp, "    \"%s\": {\n", pass_name);
     fprintf(fp, "      \"pass\": %d,\n", snapshot->pass_index);
-    fprintf(fp, "      \"changed\": %d,\n", snapshot->changed);
+    fprintf(fp, "      \"changed\": %s,\n", snapshot->changed ? "true" : "false");
     fprintf(fp, "      \"stations_moved\": %d,\n", moved_stations);
+    fprintf(fp, "      \"boundary_port_ids\": [");
+    for (int i = 0; i < snapshot->boundary_count; i++) {
+        fprintf(fp, "%d", snapshot->boundary_port_ids ? snapshot->boundary_port_ids[i] : 0);
+        if (i + 1 < snapshot->boundary_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "      \"boundary_improvement_gain_nm\": [");
+    for (int i = 0; i < snapshot->boundary_count; i++) {
+        fprintf(fp, "%.6f", snapshot->boundary_improvement_gain_nm ? snapshot->boundary_improvement_gain_nm[i] : 0.0);
+        if (i + 1 < snapshot->boundary_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
     fprintf(fp, "      \"boundary_attempts\": %d,\n", snapshot->boundary_attempts);
     fprintf(fp, "      \"boundary_changes\": %d,\n", snapshot->boundary_changes);
     fprintf(fp, "      \"accepted_capacity_solves\": %d,\n", snapshot->boundary_changes);
     fprintf(fp, "      \"total_capacity_solves\": %d,\n", snapshot->boundary_attempts);
     fprintf(fp, "      \"capacity_mip_solves\": %d,\n", snapshot->mip_solve_count);
-    fprintf(fp, "      \"capacity_mip_gap_percent\": {\"count\": %d, \"min\": ", snapshot->mip_gap_count);
-    write_json_double_or_null(fp, (snapshot->mip_gap_count > 0) ? snapshot->mip_gap_min : -1.0);
-    fprintf(fp, ", \"mean\": ");
-    write_json_double_or_null(fp, (snapshot->mip_gap_count > 0) ? (snapshot->mip_gap_sum / (double)snapshot->mip_gap_count) : -1.0);
-    fprintf(fp, ", \"max\": ");
-    write_json_double_or_null(fp, (snapshot->mip_gap_count > 0) ? snapshot->mip_gap_max : -1.0);
-    fprintf(fp, ", \"std\": ");
-    write_json_double_or_null(fp, (snapshot->mip_gap_count > 0) ? sqrt(fmax(0.0,
-        (snapshot->mip_gap_sum_sq / (double)snapshot->mip_gap_count) -
-        (snapshot->mip_gap_sum / (double)snapshot->mip_gap_count) * (snapshot->mip_gap_sum / (double)snapshot->mip_gap_count))) : -1.0);
-    fprintf(fp, "},\n");
+    fprintf(fp, "      \"capacity_mip_gap_percent_values\": [");
+    for (int i = 0; i < snapshot->mip_gap_count; i++) {
+        fprintf(fp, "%.6f", snapshot->mip_gap_values[i]);
+        if (i + 1 < snapshot->mip_gap_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "      \"capacity_mip_runtime_seconds_values\": [");
+    for (int i = 0; i < snapshot->mip_runtime_count; i++) {
+        fprintf(fp, "%.6f", snapshot->mip_runtime_values[i]);
+        if (i + 1 < snapshot->mip_runtime_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
     write_station_mutation_ids(fp, prev_solution, &snapshot->solution);
-    write_solution_json(fp, &snapshot->solution, boat, snapshot->feasible);
+    write_solution_json(fp, db, inst, &snapshot->solution, boat, snapshot->feasible);
     fprintf(fp, "\n    }");
 }
 
 static int write_sweep_json(const char *output_path,
+                            sqlite3 *db,
                             const sweep_boat_t *boat,
                             const nn_instance_t *inst,
                             const sweep_config_t *cfg,
@@ -1260,8 +1519,10 @@ static int write_sweep_json(const char *output_path,
                             int total_boundary_changes,
                             int total_capacity_mip_solves,
                             const gap_stats_t *total_gap_stats,
+                            const runtime_stats_t *total_runtime_stats,
                             double total_runtime_seconds,
-                            const char *strategy_name) {
+                            const char *strategy_name,
+                            int is_final_write) {
     FILE *fp = fopen(output_path, "w");
     char final_pass_name[32];
     int station_move_pass_count = 0;
@@ -1302,7 +1563,8 @@ static int write_sweep_json(const char *output_path,
         char pass_name[32];
         if (snapshots[i].pass_index == 0) snprintf(pass_name, sizeof(pass_name), "init");
         else snprintf(pass_name, sizeof(pass_name), "pass%d", snapshots[i].pass_index);
-        write_pass_entry(fp, pass_name, (i > 0) ? &snapshots[i - 1].solution : NULL, &snapshots[i], boat);
+        write_pass_entry(fp, db, inst, pass_name,
+                         (i > 0) ? &snapshots[i - 1].solution : NULL, &snapshots[i], boat);
         fprintf(fp, "%s\n", (i + 1 < snapshot_count) ? "," : "");
     }
     fprintf(fp, "  },\n");
@@ -1311,7 +1573,7 @@ static int write_sweep_json(const char *output_path,
     else snprintf(final_pass_name, sizeof(final_pass_name), "pass%d", snapshots[snapshot_count - 1].pass_index);
     fprintf(fp, "  \"summary\": {\n");
     fprintf(fp, "    \"final\": \"%s\",\n", final_pass_name);
-    fprintf(fp, "    \"status\": \"sweep_complete\",\n");
+    fprintf(fp, "    \"status\": \"%s\",\n", is_final_write ? "sweep_complete" : "sweep_running");
     fprintf(fp, "    \"feasible\": %s,\n", snapshots[snapshot_count - 1].feasible ? "true" : "false");
     fprintf(fp, "    \"total_distance_nm\": [");
     for (int i = 0; i < snapshot_count; i++) {
@@ -1340,16 +1602,22 @@ static int write_sweep_json(const char *output_path,
     fprintf(fp, "    \"accepted_capacity_solves\": %d,\n", total_boundary_changes);
     fprintf(fp, "    \"total_capacity_solves\": %d,\n", total_boundary_attempts);
     fprintf(fp, "    \"total_capacity_mip_solves\": %d,\n", total_capacity_mip_solves);
-    fprintf(fp, "    \"capacity_mip_gap_percent\": {\"count\": %d, \"min\": ",
-            (total_gap_stats ? total_gap_stats->count : 0));
-    write_json_double_or_null(fp, (total_gap_stats && total_gap_stats->count > 0) ? total_gap_stats->min : -1.0);
-    fprintf(fp, ", \"mean\": ");
-    write_json_double_or_null(fp, (total_gap_stats && total_gap_stats->count > 0) ? gap_stats_mean(total_gap_stats) : -1.0);
-    fprintf(fp, ", \"max\": ");
-    write_json_double_or_null(fp, (total_gap_stats && total_gap_stats->count > 0) ? total_gap_stats->max : -1.0);
-    fprintf(fp, ", \"std\": ");
-    write_json_double_or_null(fp, (total_gap_stats && total_gap_stats->count > 0) ? gap_stats_std(total_gap_stats) : -1.0);
-    fprintf(fp, "},\n");
+    fprintf(fp, "    \"capacity_mip_gap_percent_values\": [");
+    if (total_gap_stats && total_gap_stats->count > 0) {
+        for (int i = 0; i < total_gap_stats->count; i++) {
+            fprintf(fp, "%.6f", total_gap_stats->values[i]);
+            if (i + 1 < total_gap_stats->count) fprintf(fp, ", ");
+        }
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "    \"capacity_mip_runtime_seconds_values\": [");
+    if (total_runtime_stats && total_runtime_stats->count > 0) {
+        for (int i = 0; i < total_runtime_stats->count; i++) {
+            fprintf(fp, "%.6f", total_runtime_stats->values[i]);
+            if (i + 1 < total_runtime_stats->count) fprintf(fp, ", ");
+        }
+    }
+    fprintf(fp, "],\n");
     fprintf(fp, "    \"total_boundary_changes\": %d,\n", total_boundary_changes);
     fprintf(fp, "    \"method\": \"%s\"\n", strategy_name ? strategy_name : "sweep");
     fprintf(fp, "  }\n");
@@ -1391,6 +1659,7 @@ int mode_sweep(int argc, char **argv) {
     sweep_config_t sweep_cfg;
     sweep_segment_t *segments = NULL;
     int segment_count = 0;
+    double input_total_distance_nm = 0.0;
     nn_solution_t current_solution = {0};
     sweep_snapshot_t *snapshots = NULL;
     int snapshot_count = 0, snapshot_capacity = 0;
@@ -1398,6 +1667,7 @@ int mode_sweep(int argc, char **argv) {
     int total_boundary_changes = 0;
     int total_capacity_mip_solves = 0;
     gap_stats_t total_gap_stats;
+    runtime_stats_t total_mip_runtime_stats;
     int rc = 1;
     struct timespec t_start, t_pass_start, t_pass_end, t_now;
 
@@ -1405,6 +1675,7 @@ int mode_sweep(int argc, char **argv) {
     printf("GSP Solver - Phase 1: Sweep\n");
     printf("============================================================\n\n");
     gap_stats_init(&total_gap_stats);
+    runtime_stats_init(&total_mip_runtime_stats);
 
     parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output, &time_limit, &cli_l2seg);
     if (!strategy || !database || !config || !input || !output) {
@@ -1431,12 +1702,13 @@ int mode_sweep(int argc, char **argv) {
         fprintf(stderr, "ERROR: Failed to load boat from config/database\n");
         goto cleanup;
     }
-    if (!load_segments_from_json(input, &inst, &boat, &segments, &segment_count, &current_solution)) {
+    if (!load_segments_from_json(input, &inst, &boat, &segments, &segment_count,
+                                 &current_solution, &input_total_distance_nm)) {
         fprintf(stderr, "ERROR: Failed to load segmented solution from %s\n", input);
         goto cleanup;
     }
     printf("Loaded segmented input: %d segments, %.2f nm total\n",
-           segment_count, current_solution.total_distance);
+           segment_count, input_total_distance_nm);
     printf("Sweep parameters: l1seg=%d l2seg=%d max_iterations=%d time_limit=%d\n",
            sweep_cfg.l1seg, sweep_cfg.l2seg, sweep_cfg.max_iterations, time_limit);
     fflush(stdout);
@@ -1454,7 +1726,7 @@ int mode_sweep(int argc, char **argv) {
         GRBsetintparam(env, "OutputFlag", 0);
         GRBsetintparam(env, "LogToConsole", 0);
 
-        if (!reoptimize_all_segments(env, &inst, segments, segment_count)) {
+        if (!reoptimize_all_segments(env, &inst, segments, segment_count, (double)sweep_cfg.l1seg)) {
             fprintf(stderr, "ERROR: Failed to reoptimize sweep segments\n");
             GRBfreeenv(env);
             goto cleanup;
@@ -1469,35 +1741,42 @@ int mode_sweep(int argc, char **argv) {
             memset(&snapshot, 0, sizeof(snapshot));
             clock_gettime(CLOCK_MONOTONIC, &t_now);
             snapshot.pass_index = 0;
-            snapshot.changed = 1;
+            snapshot.changed = 0;
+            snapshot.boundary_count = current_solution.segment_count;
+            snapshot.boundary_port_ids = (int*)calloc((size_t)((snapshot.boundary_count > 0) ? snapshot.boundary_count : 1), sizeof(int));
+            snapshot.boundary_improvement_gain_nm = (double*)calloc((size_t)((snapshot.boundary_count > 0) ? snapshot.boundary_count : 1), sizeof(double));
             snapshot.boundary_attempts = 0;
             snapshot.boundary_changes = 0;
             snapshot.mip_solve_count = 0;
             snapshot.mip_gap_count = 0;
-            snapshot.mip_gap_min = -1.0;
-            snapshot.mip_gap_max = -1.0;
-            snapshot.mip_gap_sum = 0.0;
-            snapshot.mip_gap_sum_sq = 0.0;
+            snapshot.mip_gap_values = NULL;
+            snapshot.mip_runtime_count = 0;
+            snapshot.mip_runtime_values = NULL;
             snapshot.pass_runtime_seconds = 0.0;
             snapshot.total_runtime_seconds = elapsed_seconds(t_start, t_now);
             snapshot.feasible = solution_is_feasible(&inst, &boat, &current_solution);
-            if (!copy_solution(&snapshot.solution, &current_solution)) {
+            if (!snapshot.boundary_port_ids || !snapshot.boundary_improvement_gain_nm ||
+                !copy_solution(&snapshot.solution, &current_solution)) {
+                free(snapshot.boundary_port_ids);
+                free(snapshot.boundary_improvement_gain_nm);
                 GRBfreeenv(env);
                 goto cleanup;
             }
             if (!append_snapshot(&snapshots, &snapshot_count, &snapshot_capacity, &snapshot)) {
+                free(snapshot.boundary_port_ids);
+                free(snapshot.boundary_improvement_gain_nm);
                 free_solution(&snapshot.solution);
                 GRBfreeenv(env);
                 goto cleanup;
             }
-            if (!write_sweep_json(output, &boat, &inst,
+            if (!write_sweep_json(output, db, &boat, &inst,
                                   &sweep_cfg,
                                   snapshots, snapshot_count,
                                   total_boundary_attempts,
                                   total_boundary_changes,
-                                  total_capacity_mip_solves, &total_gap_stats,
+                                  total_capacity_mip_solves, &total_gap_stats, &total_mip_runtime_stats,
                                   snapshot.total_runtime_seconds,
-                                  strategy)) {
+                                  strategy, 0)) {
                 fprintf(stderr, "ERROR: Failed to persist initial sweep snapshot JSON\n");
                 GRBfreeenv(env);
                 goto cleanup;
@@ -1520,7 +1799,10 @@ int mode_sweep(int argc, char **argv) {
             int changed = 0;
             int pass_mip_solve_count = 0;
             gap_stats_t pass_gap_stats;
+            runtime_stats_t pass_runtime_stats;
             sweep_snapshot_t snapshot;
+            int *boundary_port_ids = NULL;
+            double *boundary_gain_nm = NULL;
 
             if (sweep_cfg.max_iterations > 0 && pass_index > sweep_cfg.max_iterations) {
                 keep_running = 0;
@@ -1530,6 +1812,18 @@ int mode_sweep(int argc, char **argv) {
             clock_gettime(CLOCK_MONOTONIC, &t_pass_start);
             memset(&snapshot, 0, sizeof(snapshot));
             gap_stats_init(&pass_gap_stats);
+            runtime_stats_init(&pass_runtime_stats);
+            boundary_port_ids = (int*)calloc((size_t)((segment_count > 0) ? segment_count : 1), sizeof(int));
+            boundary_gain_nm = (double*)calloc((size_t)((segment_count > 0) ? segment_count : 1), sizeof(double));
+            if (!boundary_port_ids || !boundary_gain_nm) {
+                free(boundary_port_ids);
+                free(boundary_gain_nm);
+                gap_stats_free(&pass_gap_stats);
+                runtime_stats_free(&pass_runtime_stats);
+                free(active);
+                GRBfreeenv(env);
+                goto cleanup;
+            }
             printf("Starting sweep pass%d across %d boundaries\n",
                    pass_index, (segment_count > 1) ? segment_count : 0);
             fflush(stdout);
@@ -1566,16 +1860,19 @@ int mode_sweep(int argc, char **argv) {
                 if (!lookup_port_info(db, boundary_loc_id, &boundary_port_id, boundary_port_name, sizeof(boundary_port_name))) {
                     snprintf(boundary_port_name, sizeof(boundary_port_name), "loc%d", boundary_loc_id);
                 }
+                boundary_port_ids[b] = boundary_port_id;
                 printf("  pass%d boundary %d/%d: seg%d=%d stations -> seg%d=%d stations via port_id=%d name=%s loc_id=%d\n",
                        pass_index, b + 1, segment_count, b + 1, segments[b].count, right_idx + 1, segments[right_idx].count,
                        boundary_port_id, boundary_port_name, boundary_loc_id);
                 fflush(stdout);
                 if (optimize_boundary(env, &inst, &boat, &segments[b], &segments[right_idx],
-                                      &pass_gap_stats, &pass_mip_solve_count)) {
+                                      &pass_gap_stats, &pass_runtime_stats,
+                                      &pass_mip_solve_count, (double)sweep_cfg.l1seg)) {
                     int station_changes = count_segment_station_changes(&left_before, &segments[b]) +
                                           count_segment_station_changes(&right_before, &segments[right_idx]);
                     double after_total = segments[b].distance_nm + segments[right_idx].distance_nm;
                     double improvement_nm = before_total - after_total;
+                    boundary_gain_nm[b] = improvement_nm;
                     changed = 1;
                     boundary_changes++;
                     total_boundary_changes++;
@@ -1594,6 +1891,10 @@ int mode_sweep(int argc, char **argv) {
 
             free_solution(&current_solution);
             if (!segment_to_solution(&inst, &boat, segments, segment_count, &current_solution)) {
+                free(boundary_port_ids);
+                free(boundary_gain_nm);
+                gap_stats_free(&pass_gap_stats);
+                runtime_stats_free(&pass_runtime_stats);
                 free(active);
                 GRBfreeenv(env);
                 goto cleanup;
@@ -1603,49 +1904,74 @@ int mode_sweep(int argc, char **argv) {
             clock_gettime(CLOCK_MONOTONIC, &t_now);
             snapshot.pass_index = pass_index;
             snapshot.changed = changed;
+            snapshot.boundary_count = segment_count;
+            snapshot.boundary_port_ids = boundary_port_ids;
+            boundary_port_ids = NULL;
+            snapshot.boundary_improvement_gain_nm = boundary_gain_nm;
+            boundary_gain_nm = NULL;
             snapshot.boundary_attempts = boundary_attempts;
             snapshot.boundary_changes = boundary_changes;
             snapshot.mip_solve_count = pass_mip_solve_count;
             snapshot.mip_gap_count = pass_gap_stats.count;
-            snapshot.mip_gap_min = (pass_gap_stats.count > 0) ? pass_gap_stats.min : -1.0;
-            snapshot.mip_gap_max = (pass_gap_stats.count > 0) ? pass_gap_stats.max : -1.0;
-            snapshot.mip_gap_sum = pass_gap_stats.sum;
-            snapshot.mip_gap_sum_sq = pass_gap_stats.sum_sq;
+            snapshot.mip_gap_values = pass_gap_stats.values;
+            pass_gap_stats.values = NULL;
+            pass_gap_stats.capacity = 0;
+            snapshot.mip_runtime_count = pass_runtime_stats.count;
+            snapshot.mip_runtime_values = pass_runtime_stats.values;
+            pass_runtime_stats.values = NULL;
+            pass_runtime_stats.capacity = 0;
             snapshot.pass_runtime_seconds = elapsed_seconds(t_pass_start, t_pass_end);
             snapshot.total_runtime_seconds = elapsed_seconds(t_start, t_now);
             snapshot.feasible = solution_is_feasible(&inst, &boat, &current_solution);
             if (!copy_solution(&snapshot.solution, &current_solution)) {
+                free(snapshot.mip_gap_values);
+                free(snapshot.mip_runtime_values);
+                free(snapshot.boundary_port_ids);
+                free(snapshot.boundary_improvement_gain_nm);
+                gap_stats_free(&pass_gap_stats);
+                runtime_stats_free(&pass_runtime_stats);
                 free(active);
                 GRBfreeenv(env);
                 goto cleanup;
             }
             if (!append_snapshot(&snapshots, &snapshot_count, &snapshot_capacity, &snapshot)) {
+                free(snapshot.mip_gap_values);
+                free(snapshot.mip_runtime_values);
+                free(snapshot.boundary_port_ids);
+                free(snapshot.boundary_improvement_gain_nm);
                 free_solution(&snapshot.solution);
+                gap_stats_free(&pass_gap_stats);
+                runtime_stats_free(&pass_runtime_stats);
                 free(active);
                 GRBfreeenv(env);
                 goto cleanup;
             }
             total_capacity_mip_solves += pass_mip_solve_count;
-            if (pass_gap_stats.count > 0) {
-                if (total_gap_stats.count == 0 || pass_gap_stats.min < total_gap_stats.min) total_gap_stats.min = pass_gap_stats.min;
-                if (total_gap_stats.count == 0 || pass_gap_stats.max > total_gap_stats.max) total_gap_stats.max = pass_gap_stats.max;
-                total_gap_stats.count += pass_gap_stats.count;
-                total_gap_stats.sum += pass_gap_stats.sum;
-                total_gap_stats.sum_sq += pass_gap_stats.sum_sq;
+            for (int i = 0; i < snapshot.mip_gap_count; i++) {
+                gap_stats_add(&total_gap_stats, snapshot.mip_gap_values[i]);
             }
-            if (!write_sweep_json(output, &boat, &inst,
+            for (int i = 0; i < snapshot.mip_runtime_count; i++) {
+                runtime_stats_add(&total_mip_runtime_stats, snapshot.mip_runtime_values[i]);
+            }
+            if (!write_sweep_json(output, db, &boat, &inst,
                                   &sweep_cfg,
                                   snapshots, snapshot_count,
                                   total_boundary_attempts,
                                   total_boundary_changes,
-                                  total_capacity_mip_solves, &total_gap_stats,
+                                  total_capacity_mip_solves, &total_gap_stats, &total_mip_runtime_stats,
                                   snapshot.total_runtime_seconds,
-                                  strategy)) {
+                                  strategy, 0)) {
                 fprintf(stderr, "ERROR: Failed to persist sweep snapshot JSON\n");
+                gap_stats_free(&pass_gap_stats);
+                runtime_stats_free(&pass_runtime_stats);
+                free(boundary_port_ids);
+                free(boundary_gain_nm);
                 free(active);
                 GRBfreeenv(env);
                 goto cleanup;
             }
+            gap_stats_free(&pass_gap_stats);
+            runtime_stats_free(&pass_runtime_stats);
             printf("Completed pass%d: changed=%d boundary_changes=%d total_distance=%.2f runtime=%.2fs total=%.2fs\n",
                    pass_index, changed, boundary_changes, snapshot.solution.total_distance,
                    snapshot.pass_runtime_seconds, snapshot.total_runtime_seconds);
@@ -1660,6 +1986,21 @@ int mode_sweep(int argc, char **argv) {
         GRBfreeenv(env);
     }
 
+    if (snapshot_count > 0) {
+        clock_gettime(CLOCK_MONOTONIC, &t_now);
+        if (!write_sweep_json(output, db, &boat, &inst,
+                              &sweep_cfg,
+                              snapshots, snapshot_count,
+                              total_boundary_attempts,
+                              total_boundary_changes,
+                              total_capacity_mip_solves, &total_gap_stats, &total_mip_runtime_stats,
+                              elapsed_seconds(t_start, t_now),
+                              strategy, 1)) {
+            fprintf(stderr, "ERROR: Failed to persist final sweep snapshot JSON\n");
+            goto cleanup;
+        }
+    }
+
     rc = 0;
     if (segments && segment_count > 0) {
         print_segment_station_order(segments, segment_count);
@@ -1667,6 +2008,8 @@ int mode_sweep(int argc, char **argv) {
 #endif
 
 cleanup:
+    gap_stats_free(&total_gap_stats);
+    runtime_stats_free(&total_mip_runtime_stats);
     if (db) sqlite3_close(db);
     free_instance(&inst);
     free_segments(segments, segment_count);
