@@ -3,6 +3,9 @@
 
 BUILD_DIR = ../build
 CONFIG_YAML = ../config/gsp_solver.yaml
+CONFIG_L2SEG_VALUES = $(shell sed -n 's/^[[:space:]]*l2seg_values:[[:space:]]*\[\(.*\)\][[:space:]]*.*/\1/p' $(CONFIG_YAML) | tr ',' ' ')
+ROUTE_JSONS = $(shell find ../sol -name "*.json")
+ROUTE_PNGS = $(patsubst %.json,%.png,$(ROUTE_JSONS))
 
 COUNTRY_DB ?= ../dat/gsp.db
 COUNTRY_ISLAND ?= ../dat/island.tsv
@@ -12,7 +15,6 @@ COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
 NN_INIT_JSON = ../sol/nn/init.json
-NN_SWEEP_JSON = ../sol/nn/sweep.json
 L2SEG ?=
 
 .PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep_nn plot plot-country plot-overview plot-routes help
@@ -65,13 +67,15 @@ sweep_nn: build
 		init_json="$(NN_INIT_JSON)"; \
 		db="$(COUNTRY_DB)"; \
 		l2seg="$(L2SEG)"; \
-		output="$(NN_SWEEP_JSON)"; \
-		log="../sol/nn/sweep.log"; \
-		l2seg_arg=""; \
+		configured_l2seg="$(CONFIG_L2SEG_VALUES)"; \
 		if [ -n "$$l2seg" ]; then \
-			output="../sol/nn/sweep_l2seg$${l2seg}.json"; \
-			log="../sol/nn/sweep_l2seg$${l2seg}.log"; \
-			l2seg_arg="--l2seg $$l2seg"; \
+			run_values="$$l2seg"; \
+		else \
+			run_values="$$configured_l2seg"; \
+		fi; \
+		if [ -z "$$run_values" ]; then \
+			echo "No L2SEG values configured in $(CONFIG_YAML)"; \
+			exit 1; \
 		fi; \
 		if [ ! -f "$$init_json" ]; then \
 			echo "NN init missing -> generating $$init_json"; \
@@ -82,18 +86,18 @@ sweep_nn: build
 		else \
 			echo "Reusing existing $$init_json"; \
 		fi; \
-		cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy nn --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$$output" $$l2seg_arg 2>&1 | tee "$$log"'
+		for value in $$run_values; do \
+			value=$$(echo "$$value" | xargs); \
+			output="../sol/nn/sweep_$${value}.json"; \
+			log="../sol/nn/sweep_$${value}.log"; \
+			echo "Running NN sweep for L2SEG=$$value -> $$output"; \
+			cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy nn --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$$output" --l2seg "$$value" 2>&1 | tee "$$log"; \
+		done'
 
-plot-routes:
-	@bash -lc 'set -euo pipefail; cd ..; \
-	for f in $$(find sol -name "*.json"); do \
-		png="$${f%.json}.png"; \
-		if [ -f "$$png" ] && [ "$$png" -nt "$$f" ]; then \
-			echo "Skipping $$f (png is up to date)"; \
-		else \
-			Rscript R/plot_survey_route.R "$$f"; \
-		fi; \
-	done'
+plot-routes: $(ROUTE_PNGS)
+
+../sol/%.png: ../sol/%.json
+	@cd .. && Rscript R/plot_survey_route.R "$(patsubst ../%,%,$<)" "$(patsubst ../%,%,$@)"
 
 plot-country:
 	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp.db dat/coastline_waypoints_ports.png'
@@ -131,7 +135,8 @@ help:
 	@echo "  make init_opt"
 	@echo ""
 	@echo "Phase 1: Sweep"
-	@echo "  make sweep_nn"
+	@echo "  make sweep_nn           # run all L2SEG values from config"
+	@echo "  make sweep_nn L2SEG=120 # run one configured L2SEG value"
 	@echo ""
 	@echo "Other targets:"
 	@echo "  make build"
