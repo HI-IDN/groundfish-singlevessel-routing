@@ -1574,14 +1574,16 @@ int mode_sweep(int argc, char **argv) {
                                       &pass_gap_stats, &pass_mip_solve_count)) {
                     int station_changes = count_segment_station_changes(&left_before, &segments[b]) +
                                           count_segment_station_changes(&right_before, &segments[right_idx]);
+                    double after_total = segments[b].distance_nm + segments[right_idx].distance_nm;
+                    double improvement_nm = before_total - after_total;
                     changed = 1;
                     boundary_changes++;
                     total_boundary_changes++;
                     if (segment_count > 1) active[(b - 1 + segment_count) % segment_count] = 1;
                     active[b] = 1;
                     if (segment_count > 1) active[right_idx] = 1;
-                    printf("    improved: %.2f -> %.2f nm, moved_station_marks=%d\n",
-                           before_total, segments[b].distance_nm + segments[right_idx].distance_nm, station_changes);
+                    printf("    improved: %.2f -> %.2f nm, gain=%.2f nm, moved_station_marks=%d\n",
+                           before_total, after_total, improvement_nm, station_changes);
                 } else {
                     printf("    no change\n");
                 }

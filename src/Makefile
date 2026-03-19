@@ -16,8 +16,12 @@ COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
 NN_INIT_JSON = ../sol/nn/init.json
 L2SEG ?=
+METHOD ?= nn
+TABLE_FORMAT ?= tex
+TABLE_OUTPUT ?=
+L2SEG_UNIT ?= stations
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep_nn plot plot-country plot-overview plot-routes help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep_nn sweep_table plot plot-country plot-overview plot-routes help
 
 all: build
 
@@ -94,6 +98,14 @@ sweep_nn: build
 			cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy nn --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$$output" --l2seg "$$value" 2>&1 | tee "$$log"; \
 		done'
 
+sweep_table:
+	@bash -lc 'set -euo pipefail; cd ..; \
+		args=(R/make_sweep_table.R --input-dir "sol/$(METHOD)" --format "$(TABLE_FORMAT)" --l2seg-unit "$(L2SEG_UNIT)" --warn-missing); \
+		if [ -n "$(TABLE_OUTPUT)" ]; then \
+			args+=(--output "$(TABLE_OUTPUT)"); \
+		fi; \
+		Rscript "$${args[@]}"'
+
 plot-routes: $(ROUTE_PNGS)
 
 ../sol/%.png: ../sol/%.json
@@ -137,6 +149,8 @@ help:
 	@echo "Phase 1: Sweep"
 	@echo "  make sweep_nn           # run all L2SEG values from config"
 	@echo "  make sweep_nn L2SEG=120 # run one configured L2SEG value"
+	@echo "  make sweep_table METHOD=nn TABLE_FORMAT=tex"
+	@echo "  make sweep_table METHOD=nn TABLE_FORMAT=tex TABLE_OUTPUT=../Paper/tables/tbl_mh_init_ci.tex"
 	@echo ""
 	@echo "Other targets:"
 	@echo "  make build"
