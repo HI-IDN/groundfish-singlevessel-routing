@@ -54,7 +54,10 @@ collect_passes <- function(doc) {
   if (is.null(sol) || !is.list(sol)) return(list())
   keys <- names(sol)
   keys <- keys[grepl("^(init|pass[0-9]+)$", keys)]
-  ord <- order(ifelse(keys == "init", 0L, as.integer(sub("^pass", "", keys))))
+  key_order <- integer(length(keys))
+  key_order[keys == "init"] <- 0L
+  key_order[keys != "init"] <- as.integer(sub("^pass", "", keys[keys != "init"]))
+  ord <- order(key_order)
   sol[keys[ord]]
 }
 
@@ -94,6 +97,48 @@ extract_station_move_stats <- function(doc, passes) {
   )
 }
 
+collect_gap_values <- function(doc, passes) {
+  summary <- doc$summary %||% list()
+  vals <- summary$capacity_mip_gap_percent_values
+  if (!is.null(vals) && length(vals) > 0) {
+    return(as.numeric(unlist(vals, recursive = TRUE, use.names = FALSE)))
+  }
+
+  out <- numeric(0)
+  for (pass_entry in passes) {
+    pass_vals <- pass_entry$capacity_mip_gap_percent_values
+    if (!is.null(pass_vals) && length(pass_vals) > 0) {
+      out <- c(out, as.numeric(unlist(pass_vals, recursive = TRUE, use.names = FALSE)))
+    }
+  }
+  out
+}
+
+compute_gap_stats <- function(doc, passes) {
+  summary <- doc$summary %||% list()
+  gap_stats <- summary$capacity_mip_gap_percent
+  if (!is.null(gap_stats)) {
+    return(list(
+      min = as.numeric(gap_stats$min %||% NA_real_),
+      mean = as.numeric(gap_stats$mean %||% NA_real_),
+      max = as.numeric(gap_stats$max %||% NA_real_),
+      std = as.numeric(gap_stats$std %||% NA_real_)
+    ))
+  }
+
+  vals <- collect_gap_values(doc, passes)
+  if (length(vals) == 0) {
+    return(list(min = NA_real_, mean = NA_real_, max = NA_real_, std = NA_real_))
+  }
+
+  list(
+    min = min(vals),
+    mean = mean(vals),
+    max = max(vals),
+    std = stats::sd(vals)
+  )
+}
+
 extract_value <- function(x, name, default = NA) {
   val <- x[[name]]
   if (is.null(val) || length(val) == 0) default else val
@@ -114,7 +159,7 @@ load_row <- function(path) {
   }
 
   move_stats <- extract_station_move_stats(doc, passes)
-  gap_stats <- summary$capacity_mip_gap_percent %||% list()
+  gap_stats <- compute_gap_stats(doc, passes)
   final_distance <- extract_value(summary, "final_total_distance_nm", NA_real_)
   if (is.na(final_distance) && !is.null(final_pass)) {
     final_distance <- extract_value(final_pass, "total_distance_nm", NA_real_)
@@ -145,10 +190,10 @@ load_row <- function(path) {
     moved_max = as.numeric(move_stats$max),
     accepted_solves = as.integer(accepted_solves),
     total_solves = as.integer(total_solves),
-    gap_min = as.numeric(extract_value(gap_stats, "min", NA_real_)),
-    gap_mean = as.numeric(extract_value(gap_stats, "mean", NA_real_)),
-    gap_max = as.numeric(extract_value(gap_stats, "max", NA_real_)),
-    gap_std = as.numeric(extract_value(gap_stats, "std", NA_real_)),
+    gap_min = as.numeric(gap_stats$min %||% NA_real_),
+    gap_mean = as.numeric(gap_stats$mean %||% NA_real_),
+    gap_max = as.numeric(gap_stats$max %||% NA_real_),
+    gap_std = as.numeric(gap_stats$std %||% NA_real_),
     runtime_min = as.numeric(total_runtime_seconds) / 60.0,
     stringsAsFactors = FALSE
   )
@@ -168,7 +213,7 @@ render_tex <- function(rows, l2seg_label) {
   for (i in seq_len(nrow(rows))) {
     cat(sprintf(
       "%s & %s & %s & %s/%s/%s & %s/%s & %s & %s \\\\\n",
-      fmt_int(rows$l2seg[[i]]),
+      trim_num(rows$l2seg_display[[i]], 3),
       fmt_int(rows$sweeps[[i]]),
       trim_num(rows$final_distance[[i]], 3),
       fmt_one_decimal(rows$moved_mean[[i]]),
@@ -192,7 +237,7 @@ render_markdown <- function(rows, l2seg_label) {
   for (i in seq_len(nrow(rows))) {
     cat(sprintf(
       "| %s | %s | %s | %s/%s/%s | %s/%s | %s | %s |\n",
-      fmt_int(rows$l2seg[[i]]),
+      trim_num(rows$l2seg_display[[i]], 3),
       fmt_int(rows$sweeps[[i]]),
       trim_num(rows$final_distance[[i]], 3),
       fmt_one_decimal(rows$moved_mean[[i]]),
@@ -211,9 +256,11 @@ pattern <- get_arg_value("--pattern", "^sweep_[0-9]+\\.json$")
 format_name <- tolower(get_arg_value("--format", "tex"))
 output_path <- get_arg_value("--output", "")
 l2seg_label <- get_arg_value("--l2seg-label", "$L_{\\text{2seg}}$")
-header_unit <- tolower(get_arg_value("--l2seg-unit", "stations"))
+header_unit <- tolower(get_arg_value("--l2seg-unit", "seconds"))
+l2seg_scale <- 1.0
 
 if (header_unit == "minutes") {
+  l2seg_scale <- 1.0 / 60.0
   l2seg_label <- paste0(l2seg_label, " (min)")
 } else if (header_unit == "seconds") {
   l2seg_label <- paste0(l2seg_label, " (s)")
@@ -228,6 +275,7 @@ if (length(paths) == 0) {
 
 rows <- do.call(rbind, lapply(paths, load_row))
 rows <- rows[order(rows$l2seg), , drop = FALSE]
+rows$l2seg_display <- rows$l2seg * l2seg_scale
 
 missing_cols <- c()
 if (any(is.na(rows$total_solves))) missing_cols <- c(missing_cols, "total_capacity_solves")

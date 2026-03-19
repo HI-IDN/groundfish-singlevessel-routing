@@ -19,7 +19,7 @@ L2SEG ?=
 METHOD ?= nn
 TABLE_FORMAT ?= tex
 TABLE_OUTPUT ?=
-L2SEG_UNIT ?= stations
+L2SEG_UNIT ?= seconds
 
 .PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep_nn sweep_table plot plot-country plot-overview plot-routes help
 
@@ -151,6 +151,7 @@ help:
 	@echo "  make sweep_nn L2SEG=120 # run one configured L2SEG value"
 	@echo "  make sweep_table METHOD=nn TABLE_FORMAT=tex"
 	@echo "  make sweep_table METHOD=nn TABLE_FORMAT=tex TABLE_OUTPUT=../Paper/tables/tbl_mh_init_ci.tex"
+	@echo "  make sweep_table METHOD=nn TABLE_FORMAT=md L2SEG_UNIT=minutes"
 	@echo ""
 	@echo "Other targets:"
 	@echo "  make build"
