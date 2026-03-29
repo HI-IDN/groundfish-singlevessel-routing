@@ -20,6 +20,7 @@ typedef struct {
     double total_distance_nm;
     double objective_value;
     int status;
+    int solver_error;
     double gap;
     double runtime_seconds;
 } mip_endpaired_solution_t;

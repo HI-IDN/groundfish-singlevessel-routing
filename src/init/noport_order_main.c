@@ -19,6 +19,14 @@ typedef struct {
     double boat_start_lon;
 } app_instance_t;
 
+typedef struct {
+    int *signed_station_ids;
+    int order_length;
+    double cumulative_runtime_seconds;
+    double cumulative_elapsed_seconds;
+    int loaded;
+} resume_state_t;
+
 static char *dupstr_local(const char *src) {
     size_t len;
     char *copy;
@@ -32,6 +40,12 @@ static char *dupstr_local(const char *src) {
 
 static double elapsed_seconds(clock_t start_clock, clock_t end_clock) {
     return (double)(end_clock - start_clock) / (double)CLOCKS_PER_SEC;
+}
+
+static void free_resume_state(resume_state_t *state) {
+    if (!state) return;
+    free(state->signed_station_ids);
+    memset(state, 0, sizeof(*state));
 }
 
 static void free_app_instance(app_instance_t *app) {
@@ -60,7 +74,131 @@ static void trim_right(char *s) {
     }
 }
 
-static int read_opt_config(const char *yaml_path, int *boat_id_out, double *time_limit_out) {
+static char *read_text_file(const char *path) {
+    FILE *fp = NULL;
+    long size = 0;
+    char *buffer = NULL;
+
+    fp = fopen(path, "rb");
+    if (!fp) return NULL;
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+    size = ftell(fp);
+    if (size < 0 || fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    buffer = (char*)malloc((size_t)size + 1);
+    if (!buffer) {
+        fclose(fp);
+        return NULL;
+    }
+    if (size > 0 && fread(buffer, 1, (size_t)size, fp) != (size_t)size) {
+        fclose(fp);
+        free(buffer);
+        return NULL;
+    }
+    buffer[size] = '\0';
+    fclose(fp);
+    return buffer;
+}
+
+static int parse_json_int_array(const char *json_text, const char *key, int **values_out, int *count_out) {
+    const char *cursor;
+    int *values = NULL;
+    int count = 0;
+
+    *values_out = NULL;
+    *count_out = 0;
+    if (!json_text || !key) return 0;
+
+    cursor = strstr(json_text, key);
+    if (!cursor) return 0;
+    cursor = strchr(cursor, '[');
+    if (!cursor) return 0;
+    cursor++;
+
+    while (*cursor && *cursor != ']') {
+        char *endptr = NULL;
+        long value;
+        int *tmp;
+
+        while (*cursor && *cursor != ']' &&
+               !((*cursor >= '0' && *cursor <= '9') || *cursor == '-')) cursor++;
+        if (!*cursor || *cursor == ']') break;
+
+        value = strtol(cursor, &endptr, 10);
+        if (endptr == cursor) break;
+
+        tmp = (int*)realloc(values, (size_t)(count + 1) * sizeof(int));
+        if (!tmp) {
+            free(values);
+            return 0;
+        }
+        values = tmp;
+        values[count++] = (int)value;
+        cursor = endptr;
+    }
+
+    if (count == 0) {
+        free(values);
+        return 0;
+    }
+
+    *values_out = values;
+    *count_out = count;
+    return 1;
+}
+
+static int parse_json_double_value(const char *json_text, const char *key, double *value_out) {
+    const char *cursor;
+    char *endptr = NULL;
+
+    if (!json_text || !key || !value_out) return 0;
+    cursor = strstr(json_text, key);
+    if (!cursor) return 0;
+    cursor = strchr(cursor, ':');
+    if (!cursor) return 0;
+    cursor++;
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\n' || *cursor == '\r') cursor++;
+
+    *value_out = strtod(cursor, &endptr);
+    return endptr != cursor;
+}
+
+static int load_resume_state(const char *output_path, resume_state_t *state) {
+    char *json_text = NULL;
+
+    if (!state) return 0;
+    memset(state, 0, sizeof(*state));
+    json_text = read_text_file(output_path);
+    if (!json_text) return 0;
+
+    if (!parse_json_int_array(json_text, "\"signed_station_ids\"", &state->signed_station_ids, &state->order_length)) {
+        parse_json_int_array(json_text, "\"tour_segments_station_ids\"", &state->signed_station_ids, &state->order_length);
+    }
+
+    if (!parse_json_double_value(json_text, "\"cumulative_runtime_seconds\"", &state->cumulative_runtime_seconds)) {
+        parse_json_double_value(json_text, "\"runtime_seconds\"", &state->cumulative_runtime_seconds);
+    }
+    if (!parse_json_double_value(json_text, "\"cumulative_elapsed_seconds\"", &state->cumulative_elapsed_seconds)) {
+        double previous_preprocessing = 0.0;
+        if (parse_json_double_value(json_text, "\"preprocessing_seconds\"", &previous_preprocessing)) {
+            state->cumulative_elapsed_seconds = previous_preprocessing + state->cumulative_runtime_seconds;
+        } else {
+            state->cumulative_elapsed_seconds = state->cumulative_runtime_seconds;
+        }
+    }
+
+    state->loaded = (state->order_length > 0) || (state->cumulative_runtime_seconds > 0.0) || (state->cumulative_elapsed_seconds > 0.0);
+    free(json_text);
+    return state->loaded;
+}
+
+static int read_opt_config(const char *yaml_path, int *boat_id_out, double *time_limit_out, int *thread_count_out) {
     FILE *fp = NULL;
     char line[1024];
     int section = 0;
@@ -68,10 +206,11 @@ static int read_opt_config(const char *yaml_path, int *boat_id_out, double *time
 
     if (boat_id_out) *boat_id_out = 2;
     if (time_limit_out) *time_limit_out = 7200.0;
+    if (thread_count_out) *thread_count_out = 0;
 
     fp = fopen(yaml_path, "r");
     if (!fp) {
-        fprintf(stderr, "Warning: cannot open %s, using defaults boat_id=2 and time_limit=7200\n", yaml_path);
+        fprintf(stderr, "Warning: cannot open %s, using defaults boat_id=2 time_limit=7200 threads=0\n", yaml_path);
         return 0;
     }
 
@@ -87,6 +226,7 @@ static int read_opt_config(const char *yaml_path, int *boat_id_out, double *time
             subsection = 0;
             if (strncmp(trimmed, "boat:", 5) == 0) section = 1;
             else if (strncmp(trimmed, "init:", 5) == 0) section = 2;
+            else if (strncmp(trimmed, "gurobi:", 7) == 0) section = 3;
             else section = 0;
             continue;
         }
@@ -106,6 +246,10 @@ static int read_opt_config(const char *yaml_path, int *boat_id_out, double *time
                 *time_limit_out = atof(trimmed + 19);
                 continue;
             }
+        }
+        if (section == 3 && strncmp(trimmed, "threads:", 8) == 0 && thread_count_out) {
+            *thread_count_out = atoi(trimmed + 8);
+            continue;
         }
     }
 
@@ -352,7 +496,10 @@ static int write_noport_json(sqlite3 *db,
                              const app_instance_t *app,
                              const mip_noport_solution_t *solution,
                              double preprocessing_seconds,
-                             double fixed_total_distance) {
+                             double fixed_total_distance,
+                             double cumulative_runtime_seconds,
+                             double cumulative_elapsed_seconds) {
+    const char *final_variant_name = "capacity-infeasible";
     FILE *fp = NULL;
     int *route = NULL;
     int route_len = 0;
@@ -406,6 +553,8 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"solution\": {\n");
+    fprintf(fp, "    \"%s\": {\n", final_variant_name);
+    fprintf(fp, "    \"variant\": \"%s\",\n", final_variant_name);
     fprintf(fp, "    \"tour_segments_location_ids\": [\n");
     fprintf(fp, "      [");
     if (route_len > 0) {
@@ -443,12 +592,36 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "]\n");
     fprintf(fp, "    ],\n");
 
+    fprintf(fp, "    \"signed_station_ids\": [");
+    for (int i = 0; i < solution->order_length; i++) {
+        if (i) fprintf(fp, ", ");
+        fprintf(fp, "%d", solution->signed_station_ids[i]);
+    }
+    fprintf(fp, "],\n");
+
     fprintf(fp, "    \"tour_length\": [%d],\n", solution->order_length);
     fprintf(fp, "    \"segment_count\": 1,\n");
     fprintf(fp, "    \"segment_catch_amount\": [%d],\n", total_catch);
     fprintf(fp, "    \"segment_distance_nm\": [%.2f],\n", fixed_total_distance);
     fprintf(fp, "    \"total_distance_nm\": %.2f,\n", fixed_total_distance);
     fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
+    fprintf(fp, "    }\n");
+    fprintf(fp, "  },\n");
+
+    fprintf(fp, "  \"summary\": {\n");
+    fprintf(fp, "    \"final\": \"%s\",\n", final_variant_name);
+    fprintf(fp, "    \"status\": \"%s\",\n",
+            (solution->status == MIP_STATUS_OPTIMAL) ? "noport_complete" :
+            (solution->status == MIP_STATUS_TIME_LIMIT) ? "time_limit" :
+            (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed");
+    fprintf(fp, "    \"feasible\": %s,\n", is_feasible ? "true" : "false");
+    fprintf(fp, "    \"total_distance_nm\": [%.2f],\n", fixed_total_distance);
+    fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", fixed_total_distance);
+    fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
+    fprintf(fp, "    \"solution_runtime_seconds\": [%.6f],\n", solution->runtime_seconds);
+    fprintf(fp, "    \"postprocessing_seconds\": 0.0,\n");
+    fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n", cumulative_elapsed_seconds);
+    fprintf(fp, "    \"method\": \"noport_mip\"\n");
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"solver_stats\": {\n");
@@ -458,6 +631,8 @@ static int write_noport_json(sqlite3 *db,
             (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed");
     fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
     fprintf(fp, "    \"runtime_seconds\": %.6f,\n", solution->runtime_seconds);
+    fprintf(fp, "    \"cumulative_runtime_seconds\": %.6f,\n", cumulative_runtime_seconds);
+    fprintf(fp, "    \"cumulative_elapsed_seconds\": %.6f,\n", cumulative_elapsed_seconds);
     fprintf(fp, "    \"method\": \"noport_mip\",\n");
     fprintf(fp, "    \"mip_gap\": %.6f\n", solution->gap);
     fprintf(fp, "  }\n");
@@ -476,16 +651,22 @@ int main(int argc, char **argv) {
     const char *output_path = NULL;
     sqlite3 *db = NULL;
     app_instance_t app;
+    resume_state_t resume_state;
     mip_noport_instance_t mip_instance;
     mip_noport_params_t mip_params;
     mip_noport_solution_t mip_solution;
     int boat_id = 2;
     double time_limit_seconds = 7200.0;
+    int thread_count = 0;
     double fixed_total_distance = 0.0;
+    double preprocessing_seconds = 0.0;
+    double cumulative_runtime_seconds = 0.0;
+    double cumulative_elapsed_seconds = 0.0;
     clock_t preprocess_start;
     clock_t preprocess_end;
 
     memset(&app, 0, sizeof(app));
+    memset(&resume_state, 0, sizeof(resume_state));
     memset(&mip_instance, 0, sizeof(mip_instance));
     memset(&mip_params, 0, sizeof(mip_params));
     memset(&mip_solution, 0, sizeof(mip_solution));
@@ -501,8 +682,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    load_resume_state(output_path, &resume_state);
     preprocess_start = clock();
-    read_opt_config(config_path, &boat_id, &time_limit_seconds);
+    read_opt_config(config_path, &boat_id, &time_limit_seconds, &thread_count);
 
     if (sqlite3_open(db_path, &db) != SQLITE_OK) {
         fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
@@ -527,33 +709,58 @@ int main(int argc, char **argv) {
 
     memset(&mip_params, 0, sizeof(mip_params));
     mip_params.time_limit_seconds = time_limit_seconds;
-    mip_params.thread_count = 4;
+    mip_params.thread_count = thread_count;
     mip_params.verbose = 1;
     mip_params.mip_gap = 0.0;
+    if (resume_state.order_length == app.n_stations) {
+        mip_params.warm_start_station_ids = resume_state.signed_station_ids;
+        mip_params.warm_start_order_length = resume_state.order_length;
+    } else if (resume_state.order_length > 0) {
+        fprintf(stderr,
+                "Ignoring stored no-port incumbent: station count mismatch (stored=%d current=%d)\n",
+                resume_state.order_length,
+                app.n_stations);
+        free_resume_state(&resume_state);
+    }
 
     preprocess_end = clock();
+    preprocessing_seconds = elapsed_seconds(preprocess_start, preprocess_end);
 
     printf("No-port OPT instance\n");
     printf("  boat: %s (id=%d)\n", app.boat.name ? app.boat.name : "Unknown", app.boat.boat_id);
     printf("  stations: %d\n", app.n_stations);
     printf("  time limit: %.0f s\n", time_limit_seconds);
+    printf("  threads: %d\n", thread_count);
+    if (mip_params.warm_start_station_ids) {
+        printf("  warm start: yes (%d stations)\n", mip_params.warm_start_order_length);
+        printf("  prior cumulative runtime: %.2f s\n", resume_state.cumulative_runtime_seconds);
+        printf("  prior cumulative elapsed: %.2f s\n", resume_state.cumulative_elapsed_seconds);
+    } else {
+        printf("  warm start: no\n");
+    }
 
     if (solve_mip_noport(&mip_instance, &mip_params, &mip_solution) != 0) {
         fprintf(stderr, "Gurobi no-port solve failed\n");
         sqlite3_close(db);
         free_app_instance(&app);
+        free_resume_state(&resume_state);
         free_mip_noport_solution(&mip_solution);
         return 1;
     }
 
     fixed_total_distance = mip_solution.total_distance_nm;
+    cumulative_runtime_seconds = resume_state.cumulative_runtime_seconds + mip_solution.runtime_seconds;
+    cumulative_elapsed_seconds = resume_state.cumulative_elapsed_seconds + preprocessing_seconds + mip_solution.runtime_seconds;
 
     if (write_noport_json(db, output_path, &app, &mip_solution,
-                          elapsed_seconds(preprocess_start, preprocess_end),
-                          fixed_total_distance) != 0) {
+                          preprocessing_seconds,
+                          fixed_total_distance,
+                          cumulative_runtime_seconds,
+                          cumulative_elapsed_seconds) != 0) {
         fprintf(stderr, "Failed to write %s\n", output_path);
         sqlite3_close(db);
         free_app_instance(&app);
+        free_resume_state(&resume_state);
         free_mip_noport_solution(&mip_solution);
         return 1;
     }
@@ -562,9 +769,13 @@ int main(int argc, char **argv) {
     printf("  tsp loop distance: %.2f nm\n", mip_solution.total_distance_nm);
     printf("  full route distance: %.2f nm\n", fixed_total_distance);
     printf("  stations visited: %d\n", mip_solution.order_length);
+    printf("  runtime this attempt: %.2f s\n", mip_solution.runtime_seconds);
+    printf("  cumulative runtime: %.2f s\n", cumulative_runtime_seconds);
+    printf("  cumulative elapsed: %.2f s\n", cumulative_elapsed_seconds);
 
     sqlite3_close(db);
     free_app_instance(&app);
+    free_resume_state(&resume_state);
     free_mip_noport_solution(&mip_solution);
     return 0;
 }

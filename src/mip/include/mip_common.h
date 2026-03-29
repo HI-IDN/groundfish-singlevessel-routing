@@ -12,6 +12,8 @@ typedef struct {
     int verbose;
     double mip_gap;
     int heuristic_only;
+    const int *warm_start_station_ids;
+    int warm_start_order_length;
     GRBenv *shared_env;
 } mip_params_t;
 

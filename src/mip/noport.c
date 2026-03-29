@@ -49,13 +49,15 @@ int solve_mip_noport(const mip_noport_instance_t *instance,
                                     instance->boat->location_id,
                                     &endpaired_solution);
     if (error) {
-        solution->status = MIP_STATUS_INFEASIBLE;
+        solution->status = endpaired_solution.status;
+        solution->solver_error = endpaired_solution.solver_error;
     } else {
         solution->signed_station_ids = endpaired_solution.signed_station_ids;
         solution->order_length = endpaired_solution.order_length;
         solution->total_distance_nm = endpaired_solution.total_distance_nm;
         solution->objective_value = endpaired_solution.objective_value;
         solution->status = endpaired_solution.status;
+        solution->solver_error = endpaired_solution.solver_error;
         solution->gap = endpaired_solution.gap;
         solution->runtime_seconds = endpaired_solution.runtime_seconds;
         endpaired_solution.signed_station_ids = NULL;
@@ -63,9 +65,10 @@ int solve_mip_noport(const mip_noport_instance_t *instance,
 
     if (params && params->verbose) {
         fprintf(stderr,
-                "No-port solve summary: status=%s(%d) runtime=%.2f s gap=%.6f order_length=%d\n",
+                "No-port solve summary: status=%s(%d) solver_error=%d runtime=%.2f s gap=%.6f order_length=%d\n",
                 mip_gurobi_status_name(solution->status),
                 solution->status,
+                solution->solver_error,
                 solution->runtime_seconds,
                 solution->gap,
                 solution->order_length);
@@ -76,7 +79,7 @@ int solve_mip_noport(const mip_noport_instance_t *instance,
     free(start_loc_ids);
     free(end_loc_ids);
     free(amounts);
-    return error;
+    return (solution->order_length > 0) ? 0 : error;
 }
 
 void free_mip_noport_solution(mip_noport_solution_t *solution) {

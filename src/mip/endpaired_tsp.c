@@ -4,6 +4,75 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int find_station_local_index(const mip_endpaired_instance_t *instance, int station_id) {
+    if (!instance || !instance->station_ids) return -1;
+    for (int i = 0; i < instance->num_stations; i++) {
+        if (instance->station_ids[i] == station_id) return i;
+    }
+    return -1;
+}
+
+static int apply_warm_start(GRBmodel *model,
+                            const mip_endpaired_instance_t *instance,
+                            int size,
+                            const mip_params_t *params) {
+    int n;
+    double *start = NULL;
+    int *seen = NULL;
+    int prev_out = 1;
+    int error = 0;
+
+    if (!model || !instance || !params || !params->warm_start_station_ids) return 0;
+    if (params->warm_start_order_length != instance->num_stations) return 0;
+
+    n = 2 * size;
+    start = (double*)mip_xcalloc((size_t)n * (size_t)n, sizeof(double));
+    seen = (int*)mip_xcalloc((size_t)instance->num_stations, sizeof(int));
+
+    start[0 * n + 1] = 1.0;
+
+    for (int i = 0; i < params->warm_start_order_length; i++) {
+        int signed_station_id = params->warm_start_station_ids[i];
+        int local_idx = find_station_local_index(instance, abs(signed_station_id));
+        int seg_idx;
+        int entry_node;
+        int exit_node;
+        int next_in;
+
+        if (local_idx < 0 || seen[local_idx]) {
+            error = 1;
+            goto quit;
+        }
+        seen[local_idx] = 1;
+
+        seg_idx = local_idx + 1;
+        entry_node = 2 * seg_idx;
+        exit_node = 2 * seg_idx + 1;
+        if (signed_station_id < 0) {
+            next_in = exit_node;
+            exit_node = entry_node;
+        } else {
+            next_in = entry_node;
+        }
+
+        start[prev_out * n + next_in] = 1.0;
+        start[next_in * n + exit_node] = 1.0;
+        prev_out = exit_node;
+    }
+
+    start[prev_out * n + 0] = 1.0;
+
+    for (int i = 0; i < n * n; i++) {
+        error = GRBsetdblattrelement(model, GRB_DBL_ATTR_START, i, start[i]);
+        if (error) goto quit;
+    }
+
+quit:
+    free(start);
+    free(seen);
+    return error;
+}
+
 static double lookup_distance_nm(const mip_endpaired_instance_t *instance, int from_loc_id, int to_loc_id) {
     if (!instance || !instance->distances) return 1e12;
     if (from_loc_id < 0 || from_loc_id >= instance->max_location_id) return 1e12;
@@ -18,6 +87,7 @@ static double lookup_distance_nm(const mip_endpaired_instance_t *instance, int f
 }
 
 static int solve_tsp_distance(GRBenv *env,
+                              const mip_endpaired_instance_t *instance,
                               const double *dist,
                               int size,
                               const mip_params_t *params,
@@ -25,11 +95,13 @@ static int solve_tsp_distance(GRBenv *env,
                               int **out_tour,
                               int *out_len,
                               int *out_status,
+                              int *out_solver_error,
                               double *out_runtime,
                               double *out_gap) {
     int n = 2 * size;
     GRBmodel *model = NULL;
     int error = 0;
+    int optimize_error = 0;
     int *ind = NULL;
     double *val = NULL;
     int solcount = 0;
@@ -80,6 +152,9 @@ static int solve_tsp_distance(GRBenv *env,
         if (error) goto quit;
     }
 
+    error = apply_warm_start(model, instance, size, params);
+    if (error) goto quit;
+
     {
         mip_callback_data_t cb;
         cb.n = n;
@@ -88,16 +163,16 @@ static int solve_tsp_distance(GRBenv *env,
         if (error) goto quit;
         error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_LAZYCONSTRAINTS, 1);
         if (error) goto quit;
-        error = GRBoptimize(model);
-        if (error) goto quit;
+        optimize_error = GRBoptimize(model);
     }
 
-    GRBgetintattr(model, GRB_INT_ATTR_STATUS, &status);
-    GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount);
-    GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME, &runtime);
+    if (GRBgetintattr(model, GRB_INT_ATTR_STATUS, &status) != 0) status = 0;
+    if (GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount) != 0) solcount = 0;
+    if (GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME, &runtime) != 0) runtime = 0.0;
     if (GRBgetdblattr(model, GRB_DBL_ATTR_MIPGAP, &gap) != 0) gap = 0.0;
 
     if (out_status) *out_status = status;
+    if (out_solver_error) *out_solver_error = optimize_error;
     if (out_runtime) *out_runtime = runtime;
     if (out_gap) *out_gap = gap;
 
@@ -116,8 +191,9 @@ static int solve_tsp_distance(GRBenv *env,
             mip_findsubtour_directed(n, sol, out_len, *out_tour);
             free(sol);
         }
+        error = 0;
     } else {
-        error = 1;
+        error = optimize_error ? optimize_error : 1;
     }
 
 quit:
@@ -186,11 +262,12 @@ int solve_mip_endpaired_tsp(const mip_endpaired_instance_t *instance,
         owns_env = 1;
     }
 
-    error = solve_tsp_distance(env, dist, seg_size, &local_params,
+    error = solve_tsp_distance(env, instance, dist, seg_size, &local_params,
                                &solution->objective_value,
                                &node_tour,
                                &node_len,
                                &solution->status,
+                               &solution->solver_error,
                                &solution->runtime_seconds,
                                &solution->gap);
     if (error) goto quit;
@@ -223,7 +300,8 @@ int solve_mip_endpaired_tsp(const mip_endpaired_instance_t *instance,
 quit:
     if (error) {
         free_mip_endpaired_solution(solution);
-        solution->status = MIP_STATUS_INFEASIBLE;
+        solution->status = 0;
+        solution->solver_error = error;
     }
     free(node_tour);
     free(dist);
