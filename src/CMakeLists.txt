@@ -33,6 +33,20 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SQLITE3 REQUIRED sqlite3)
 pkg_check_modules(GEOS REQUIRED geos)
+pkg_get_variable(SQLITE3_PREFIX sqlite3 prefix)
+
+find_file(SQLITE3_RUNTIME_DLL
+    NAMES libsqlite3-0.dll
+    PATHS
+        "${SQLITE3_PREFIX}/bin"
+        "/mingw64/bin"
+)
+
+find_file(MINGW_WINPTHREAD_DLL
+    NAMES libwinpthread-1.dll
+    PATHS
+        "/mingw64/bin"
+)
 
 if(DEFINED ENV{GUROBI_HOME})
     file(TO_CMAKE_PATH "$ENV{GUROBI_HOME}" GUROBI_HOME_CMAKE)
@@ -40,6 +54,12 @@ if(DEFINED ENV{GUROBI_HOME})
     set(GUROBI_LIBRARY_DIR "${GUROBI_HOME_CMAKE}/lib")
     set(GUROBI_BIN_DIR "${GUROBI_HOME_CMAKE}/bin")
 endif()
+
+find_file(GUROBI_RUNTIME_DLL
+    NAMES gurobi130.dll
+    PATHS
+        "${GUROBI_BIN_DIR}"
+)
 
 if(GUROBI_INCLUDE_DIR AND EXISTS "${GUROBI_INCLUDE_DIR}/gurobi_c.h" AND
    GUROBI_LIBRARY_DIR AND EXISTS "${GUROBI_LIBRARY_DIR}")
@@ -56,6 +76,18 @@ include_directories(
     ${SQLITE3_INCLUDE_DIRS}
     ${GEOS_INCLUDE_DIRS}
 )
+
+set(RUNTIME_STAGE_COMMANDS)
+
+macro(stage_runtime_file runtime_file)
+    if(${runtime_file})
+        list(APPEND RUNTIME_STAGE_COMMANDS
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${${runtime_file}}"
+                "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+    endif()
+endmacro()
 
 # ============================================================
 # 1. Data Preprocessing (common/)
@@ -325,6 +357,17 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     )
     install(TARGETS gsp_gurobi
         RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
+    )
+endif()
+
+stage_runtime_file(SQLITE3_RUNTIME_DLL)
+stage_runtime_file(MINGW_WINPTHREAD_DLL)
+stage_runtime_file(GUROBI_RUNTIME_DLL)
+
+if(RUNTIME_STAGE_COMMANDS)
+    add_custom_target(stage_runtime_deps ALL
+        ${RUNTIME_STAGE_COMMANDS}
+        COMMENT "Stage runtime DLLs into build directory"
     )
 endif()
 

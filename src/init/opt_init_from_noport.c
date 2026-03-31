@@ -238,10 +238,12 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                        double solve_runtime_seconds,
                        double local_postopt_runtime_seconds) {
     const char *final_variant_name = "capacity-feasible";
-    const char *pre_local_postopt_variant_name = "pre-local-postopt";
+    const char *pre_local_postopt_variant_name = "baseline-capacity-feasible";
     FILE *fp = fopen(output_path, "w");
     int *unique_waypoint_location_ids = NULL;
     int uniq_wp_n = 0, uniq_wp_cap = 0;
+    int *baseline_unique_waypoint_location_ids = NULL;
+    int baseline_uniq_wp_n = 0, baseline_uniq_wp_cap = 0;
     int *dock_location_ids = NULL;
     int dock_n = 0, dock_cap = 0;
     int has_pre_local_postopt = pre_local_postopt_sol &&
@@ -314,7 +316,13 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                     int *wps = NULL;
                     int n_wps = lookup_waypoint_path_local(db, from_loc, to_loc, &wps);
                     if (n_wps > 0) {
-                        for (int k = 0; k < n_wps; k++) fprintf(fp, ", %d", wps[k]);
+                        for (int k = 0; k < n_wps; k++) {
+                            fprintf(fp, ", %d", wps[k]);
+                            (void)append_unique_int_local(&baseline_unique_waypoint_location_ids,
+                                                          &baseline_uniq_wp_n,
+                                                          &baseline_uniq_wp_cap,
+                                                          wps[k]);
+                        }
                     }
                     fprintf(fp, ", %d", to_loc);
                     free(wps);
@@ -329,6 +337,13 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         for (int i = 0; i < dock_n; i++) {
             if (i) fprintf(fp, ", ");
             fprintf(fp, "%d", dock_location_ids[i]);
+        }
+        fprintf(fp, "],\n");
+
+        fprintf(fp, "    \"unique_waypoint_location_ids\": [");
+        for (int i = 0; i < baseline_uniq_wp_n; i++) {
+            if (i) fprintf(fp, ", ");
+            fprintf(fp, "%d", baseline_unique_waypoint_location_ids[i]);
         }
         fprintf(fp, "],\n");
 
@@ -489,7 +504,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     if (has_pre_local_postopt) {
         fprintf(fp, "    \"total_distance_nm\": [%.2f, %.2f],\n",
                 pre_local_postopt_sol->total_distance, sol->total_distance);
-        fprintf(fp, "    \"pre_local_postopt_total_distance_nm\": %.2f,\n",
+        fprintf(fp, "    \"baseline_total_distance_nm\": %.2f,\n",
                 pre_local_postopt_sol->total_distance);
     } else {
         fprintf(fp, "    \"total_distance_nm\": %.2f,\n", sol->total_distance);
@@ -509,6 +524,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
 
     fclose(fp);
     free(unique_waypoint_location_ids);
+    free(baseline_unique_waypoint_location_ids);
     free(dock_location_ids);
 }
 
@@ -805,7 +821,7 @@ int main(int argc, char **argv) {
     double local_postopt_time_limit_seconds = 0.0;
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
-    struct timespec t0, t1, t2;
+    struct timespec t0, t1, t_seg_end, t_postopt_end;
 
     for (int i = 1; i < argc - 1; i++) {
         if (strcmp(argv[i], "--database") == 0) database = argv[i + 1];
@@ -873,6 +889,8 @@ int main(int argc, char **argv) {
     printf("  boat:     %s (id=%d)\n", boat_name, boat_id);
     printf("  stations: %d\n", station_order_n);
     printf("  capacity: %.0f\n", boat_capacity);
+    printf("[INIT] Building capacity-feasible segmentation from no-port order\n");
+    fflush(stdout);
 
     if (opt_segment_from_order(&inst, station_order, station_order_n, &sol,
                                boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
@@ -883,6 +901,7 @@ int main(int argc, char **argv) {
         free_instance(&inst);
         return 1;
     }
+    clock_gettime(CLOCK_MONOTONIC, &t_seg_end);
 
     if (!init_copy_solution(&sol, &pre_local_postopt_sol)) {
         fprintf(stderr, "Failed to copy pre-local-postopt OPT init solution\n");
@@ -892,6 +911,10 @@ int main(int argc, char **argv) {
         free_instance(&inst);
         return 1;
     }
+
+    printf("[INIT] Pre-postopt baseline: %d segments, %.2f nm\n",
+           pre_local_postopt_sol.segment_count, pre_local_postopt_sol.total_distance);
+    fflush(stdout);
 
     local_postopt_time_limit_seconds = read_init_local_postopt_time_limit_from_yaml(config);
     if (!init_apply_local_postopt(&inst, &pre_local_postopt_sol,
@@ -909,7 +932,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    clock_gettime(CLOCK_MONOTONIC, &t2);
+    clock_gettime(CLOCK_MONOTONIC, &t_postopt_end);
 
     if (!stations_have_no_duplicates(sol.visit_station_ids, sol.visit_station_count)) is_feasible = 0;
     if (!segments_within_capacity(sol.segment_catches, sol.segment_count, boat_capacity)) is_feasible = 0;
@@ -920,7 +943,7 @@ int main(int argc, char **argv) {
                "opt", "segment_from_noport",
                boat_start_loc_id, boat_end_loc_id, boat_capacity,
                boat_start_lat, boat_start_lon, is_feasible,
-               elapsed_seconds(t0, t1), elapsed_seconds(t1, t2),
+               elapsed_seconds(t0, t1), elapsed_seconds(t1, t_seg_end),
                local_postopt_runtime_seconds);
 
     printf("[OK] Wrote %s\n", output);

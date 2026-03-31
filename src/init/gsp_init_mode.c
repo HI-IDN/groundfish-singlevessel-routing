@@ -772,7 +772,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     int has_presolve;
     int has_pre_local_postopt;
     const char *final_variant_name;
-    const char *pre_local_postopt_variant_name = "pre-local-postopt";
+    const char *pre_local_postopt_variant_name = "baseline-capacity-feasible";
 
     FILE *fp = fopen(output_path, "w");
     if (!fp) {
@@ -871,7 +871,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     }
     fprintf(fp, "],\n");
     if (has_pre_local_postopt) {
-        fprintf(fp, "    \"pre_local_postopt_total_distance_nm\": %.2f,\n", pre_local_postopt_sol->total_distance);
+        fprintf(fp, "    \"baseline_total_distance_nm\": %.2f,\n", pre_local_postopt_sol->total_distance);
         fprintf(fp, "    \"local_postopt_runtime_seconds\": %.6f,\n", local_postopt_runtime_seconds);
     }
     fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", sol->total_distance);

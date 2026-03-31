@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "init_utils.h"
 
@@ -210,6 +211,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
     return init_copy_solution(input, output);
 #else
     GRBenv *env = NULL;
+    struct timespec t_postopt_start;
     int *tour = NULL, tour_cap = 0, tour_len = 0;
     int *visit_ids = NULL, visit_ids_cap = 0, visit_count = 0;
     int *visit_seg = NULL, visit_seg_cap = 0;
@@ -220,6 +222,13 @@ int init_apply_local_postopt(const nn_instance_t *inst,
     double *segment_dists = NULL; int seg_dists_cap = 0;
     double total_distance = 0.0;
     int total_catch = 0;
+
+    clock_gettime(CLOCK_MONOTONIC, &t_postopt_start);
+    printf("[POSTOPT] Starting local segment post-opt for %d segments (time_limit=%s%.0f)\n",
+           input->segment_count,
+           (time_limit_seconds > 0.0) ? "" : "uncapped ",
+           (time_limit_seconds > 0.0) ? time_limit_seconds : 0.0);
+    fflush(stdout);
 
     if (GRBloadenv(&env, NULL) != 0) return 0;
     GRBsetintparam(env, "OutputFlag", 0);
@@ -233,6 +242,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
         int *signed_station_ids = NULL;
         double segment_runtime = 0.0;
         double segment_distance = 0.0;
+        double input_segment_distance = 0.0;
         int current_loc_id;
         int segment_start_idx = tour_len;
 
@@ -252,6 +262,16 @@ int init_apply_local_postopt(const nn_instance_t *inst,
 
         start_loc_id = (s == 0) ? boat_start_loc_id : input->tour[input->segment_ends[s - 1]];
         end_loc_id = (s == input->segment_count - 1) ? boat_end_loc_id : input->tour[input->segment_ends[s]];
+        input_segment_distance = input->segment_dists[s];
+        if (s == input->segment_count - 1 && input->tour_length > 0) {
+            double return_dist = get_distance(inst, input->tour[input->tour_length - 1], boat_end_loc_id);
+            if (return_dist > 0.0) input_segment_distance += return_dist;
+        }
+
+        printf("[POSTOPT] Segment %d/%d: %d stations, dock %d -> %d, baseline %.2f nm\n",
+               s + 1, input->segment_count, station_count,
+               start_loc_id, end_loc_id, input_segment_distance);
+        fflush(stdout);
 
         if (!solve_segment_order(inst, station_ids, station_count, start_loc_id, end_loc_id,
                                  time_limit_seconds, env, &signed_station_ids, &segment_runtime)) {
@@ -329,6 +349,14 @@ int init_apply_local_postopt(const nn_instance_t *inst,
         if (runtime_seconds_out) *runtime_seconds_out += segment_runtime;
         if (segment_solve_count_out) (*segment_solve_count_out)++;
 
+        printf("[POSTOPT] Segment %d/%d done: %.2f -> %.2f nm (improvement %.2f nm) in %.2f s\n",
+               s + 1, input->segment_count,
+               input_segment_distance,
+               segment_distance,
+               input_segment_distance - segment_distance,
+               segment_runtime);
+        fflush(stdout);
+
         if (s == input->segment_count - 1) {
             double return_dist = get_distance(inst, current_loc_id, boat_end_loc_id);
             if (return_dist > 0.0) total_distance += return_dist;
@@ -349,6 +377,16 @@ int init_apply_local_postopt(const nn_instance_t *inst,
     output->segment_dists = segment_dists;
     output->total_distance = total_distance;
     output->total_catch = total_catch;
+
+    {
+        struct timespec t_postopt_end;
+        clock_gettime(CLOCK_MONOTONIC, &t_postopt_end);
+        printf("[POSTOPT] Completed local post-opt: %.2f nm total in %.2f s wall time\n",
+               total_distance,
+               (double)(t_postopt_end.tv_sec - t_postopt_start.tv_sec) +
+               (double)(t_postopt_end.tv_nsec - t_postopt_start.tv_nsec) / 1e9);
+        fflush(stdout);
+    }
 
     GRBfreeenv(env);
     return 1;
