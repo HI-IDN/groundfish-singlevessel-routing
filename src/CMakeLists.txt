@@ -83,6 +83,7 @@ add_custom_target(survey
 add_executable(gsp
     gsp.c
     init/gsp_init_mode.c
+    init/local_postopt.c
     init/nearest_neighbor.c
     init/greedy_insertion.c
     init/cheapest_insertion.c
@@ -100,6 +101,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     add_executable(gsp_gurobi
         gsp.c
         init/gsp_init_mode.c
+        init/local_postopt.c
         init/nearest_neighbor.c
         init/greedy_insertion.c
         init/cheapest_insertion.c
@@ -129,6 +131,7 @@ endif()
 
 add_executable(gsp_init_opt
     init/opt_init_from_noport.c
+    init/local_postopt.c
     common/feasibility.c
     common/sql_utils.c
 )
@@ -137,6 +140,23 @@ target_link_libraries(gsp_init_opt
     ${SQLITE3_LIBRARIES}
     m
 )
+
+if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
+    target_include_directories(gsp_init_opt PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/mip/include
+        ${GUROBI_INCLUDE_DIR}
+    )
+    target_compile_definitions(gsp_init_opt PRIVATE HAVE_GUROBI=1)
+    target_sources(gsp_init_opt PRIVATE
+        mip/endpaired_tsp.c
+        mip/mip_common.c
+        mip/mip_paired_tour.c
+    )
+    target_link_libraries(gsp_init_opt
+        -L${GUROBI_LIBRARY_DIR}
+        gurobi130
+    )
+endif()
 
 # ============================================================
 # Run targets for Phase 0 strategies
@@ -156,26 +176,49 @@ file(MAKE_DIRECTORY ${SOL_GE_DIR})
 file(MAKE_DIRECTORY ${SOL_CI_DIR})
 file(MAKE_DIRECTORY ${SOL_OPT_DIR})
 
-add_custom_target(run_init_nn
-    COMMAND gsp --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/init.json --config ${CONFIG_YAML}
-    DEPENDS gsp
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Phase 0: NN (Nearest Neighbor)"
-)
+if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
+    add_custom_target(run_init_nn
+        COMMAND gsp_gurobi --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/init.json --config ${CONFIG_YAML}
+        DEPENDS gsp_gurobi
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Phase 0: NN (Nearest Neighbor)"
+    )
 
-add_custom_target(run_init_ge
-    COMMAND gsp --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/init.json --config ${CONFIG_YAML}
-    DEPENDS gsp
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Phase 0: GE (Greedy Edge)"
-)
+    add_custom_target(run_init_ge
+        COMMAND gsp_gurobi --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/init.json --config ${CONFIG_YAML}
+        DEPENDS gsp_gurobi
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Phase 0: GE (Greedy Edge)"
+    )
 
-add_custom_target(run_init_ci
-    COMMAND gsp --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/init.json --config ${CONFIG_YAML}
-    DEPENDS gsp
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Phase 0: CI (Cheapest Insertion)"
-)
+    add_custom_target(run_init_ci
+        COMMAND gsp_gurobi --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/init.json --config ${CONFIG_YAML}
+        DEPENDS gsp_gurobi
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Phase 0: CI (Cheapest Insertion)"
+    )
+else()
+    add_custom_target(run_init_nn
+        COMMAND gsp --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/init.json --config ${CONFIG_YAML}
+        DEPENDS gsp
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Phase 0: NN (Nearest Neighbor)"
+    )
+
+    add_custom_target(run_init_ge
+        COMMAND gsp --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/init.json --config ${CONFIG_YAML}
+        DEPENDS gsp
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Phase 0: GE (Greedy Edge)"
+    )
+
+    add_custom_target(run_init_ci
+        COMMAND gsp --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/init.json --config ${CONFIG_YAML}
+        DEPENDS gsp
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Phase 0: CI (Cheapest Insertion)"
+    )
+endif()
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     set(GSP_MIP_SHARED_SOURCES

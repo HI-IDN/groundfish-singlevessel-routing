@@ -8,6 +8,8 @@ boat:
 # Phase 0: Initialization Strategies
 init:
   target_catch_slack_kg: 1000            # Reserve slack so target capacity stays below raw capacity
+  local_post_opt:
+    time_limit_seconds: 0                # 0 = uncapped per-segment post-opt for all init methods
   strategies:
     - opt                                # OPT: Optimal NP-MIP (expensive)
     - nn                                 # NN: Nearest Neighbor (fast)

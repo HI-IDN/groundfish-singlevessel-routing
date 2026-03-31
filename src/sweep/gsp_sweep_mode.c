@@ -682,6 +682,15 @@ static int parse_named_double_value(const char *text, const char *key, double *o
     return parse_json_double(&p, out_value);
 }
 
+static int parse_named_int_array_value(const char *text, const char *key, int **out_arr, int *out_count) {
+    const char *p = find_json_key(text, key);
+    if (!p || !out_arr || !out_count) return 0;
+    p = strchr(p, ':');
+    if (!p) return 0;
+    p = skip_ws(p + 1);
+    return parse_int_array(&p, out_arr, out_count);
+}
+
 static int load_nodes(sqlite3 *db, nn_instance_t *inst) {
     sqlite3_stmt *stmt = NULL;
     const char *count_sql =
@@ -859,6 +868,39 @@ static int extract_segment_arrays_from_input(const char *json_text,
                                    segment_arrays, segment_sizes, segment_count);
 }
 
+static int extract_int_array_from_input(const char *json_text,
+                                        const char *key,
+                                        int **out_arr,
+                                        int *out_count) {
+    const char *summary_pos = find_json_key(json_text, "summary");
+    if (summary_pos) {
+        const char *final_value = find_key_in_object(summary_pos, "final");
+        if (final_value && *final_value == '"') {
+            char variant_name[64];
+            int len = 0;
+            final_value++;
+            while (final_value[len] && final_value[len] != '"' && len < (int)sizeof(variant_name) - 1) {
+                variant_name[len] = final_value[len];
+                len++;
+            }
+            variant_name[len] = '\0';
+            if (len > 0) {
+                const char *solution_pos = find_json_key(json_text, "solution");
+                if (solution_pos) {
+                    const char *variant_pos = find_json_key(solution_pos, variant_name);
+                    if (variant_pos) {
+                        const char *candidate = find_json_key(variant_pos, key);
+                        if (candidate && parse_named_int_array_value(candidate, key, out_arr, out_count)) {
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return parse_named_int_array_value(json_text, key, out_arr, out_count);
+}
+
 static int load_segments_from_json(const char *input_path, const nn_instance_t *inst,
                                    const sweep_boat_t *boat,
                                    sweep_segment_t **out_segments, int *out_count,
@@ -868,6 +910,8 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
     int **segment_arrays = NULL;
     int *segment_sizes = NULL;
     int segment_count = 0;
+    int *dock_location_ids = NULL;
+    int dock_count = 0;
     sweep_segment_t *segments = NULL;
     int rc = 0;
 
@@ -875,6 +919,10 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
     if (!json_text) return 0;
     if (!extract_segment_arrays_from_input(json_text, &segment_arrays, &segment_sizes, &segment_count)) goto cleanup;
     if (segment_count <= 0) goto cleanup;
+    if (!extract_int_array_from_input(json_text, "dock_location_ids", &dock_location_ids, &dock_count)) goto cleanup;
+    if (dock_count != segment_count + 1) goto cleanup;
+    if (dock_location_ids[0] != boat->boat_start_loc_id ||
+        dock_location_ids[dock_count - 1] != boat->boat_end_loc_id) goto cleanup;
 
     segments = (sweep_segment_t*)calloc((size_t)segment_count, sizeof(sweep_segment_t));
     if (!segments) goto cleanup;
@@ -885,23 +933,40 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
         seg->capacity = segment_sizes[i];
         seg->signed_station_ids = segment_arrays[i];
         segment_arrays[i] = NULL;
-        seg->start_loc_id = (i == 0) ? boat->boat_start_loc_id : 0;
-        seg->end_loc_id = (i == segment_count - 1) ? boat->boat_end_loc_id : 0;
+        seg->start_loc_id = dock_location_ids[i];
+        seg->end_loc_id = dock_location_ids[i + 1];
         seg->catch_amount = compute_segment_catch(inst, seg->signed_station_ids, seg->count);
-    }
-
-    for (int i = 0; i < segment_count - 1; i++) {
-        int last_station_id = abs(segments[i].signed_station_ids[segments[i].count - 1]);
-        int last_station_idx = find_station_index(inst, last_station_id);
-        int nearest_port_idx = find_nearest_port_from_node_pair(inst, last_station_idx);
-        if (nearest_port_idx < 0) goto cleanup;
-        segments[i].end_loc_id = inst->nodes[nearest_port_idx].start_loc_id;
-        segments[i + 1].start_loc_id = inst->nodes[nearest_port_idx].start_loc_id;
     }
 
     memset(initial_solution, 0, sizeof(*initial_solution));
     if (input_total_distance_nm) {
-        (void)parse_named_double_value(json_text, "final_total_distance_nm", input_total_distance_nm);
+        if (!parse_named_double_value(json_text, "final_total_distance_nm", input_total_distance_nm)) {
+            const char *summary_pos = find_json_key(json_text, "summary");
+            if (summary_pos) {
+                const char *final_value = find_key_in_object(summary_pos, "final");
+                if (final_value && *final_value == '"') {
+                    char variant_name[64];
+                    int len = 0;
+                    final_value++;
+                    while (final_value[len] && final_value[len] != '"' &&
+                           len < (int)sizeof(variant_name) - 1) {
+                        variant_name[len] = final_value[len];
+                        len++;
+                    }
+                    variant_name[len] = '\0';
+                    if (len > 0) {
+                        const char *solution_pos = find_json_key(json_text, "solution");
+                        if (solution_pos) {
+                            const char *variant_pos = find_json_key(solution_pos, variant_name);
+                            if (variant_pos) {
+                                (void)parse_named_double_value(variant_pos, "total_distance_nm",
+                                                               input_total_distance_nm);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     rc = 1;
 
@@ -914,6 +979,7 @@ cleanup:
     }
     free(segment_arrays);
     free(segment_sizes);
+    free(dock_location_ids);
     free(json_text);
     if (rc) {
         *out_segments = segments;
@@ -1726,11 +1792,6 @@ int mode_sweep(int argc, char **argv) {
         GRBsetintparam(env, "OutputFlag", 0);
         GRBsetintparam(env, "LogToConsole", 0);
 
-        if (!reoptimize_all_segments(env, &inst, segments, segment_count, (double)sweep_cfg.l1seg)) {
-            fprintf(stderr, "ERROR: Failed to reoptimize sweep segments\n");
-            GRBfreeenv(env);
-            goto cleanup;
-        }
         if (!segment_to_solution(&inst, &boat, segments, segment_count, &current_solution)) {
             GRBfreeenv(env);
             goto cleanup;

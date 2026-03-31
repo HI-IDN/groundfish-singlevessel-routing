@@ -15,13 +15,15 @@ COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
 NN_INIT_JSON = ../sol/nn/init.json
+OPT_NOPORT_JSON = ../sol/opt/noport.json
+OPT_INIT_JSON = ../sol/opt/init.json
 L2SEG ?=
 METHOD ?= nn
 TABLE_FORMAT ?= tex
 TABLE_OUTPUT ?=
 L2SEG_UNIT ?= seconds
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep_nn sweep_table plot plot-country plot-overview plot-routes help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep_nn sweep_opt sweep_table plot plot-country plot-overview plot-routes help
 
 all: build
 
@@ -96,6 +98,48 @@ sweep_nn: build
 			log="../sol/nn/sweep_$${value}.log"; \
 			echo "Running NN sweep for L2SEG=$$value -> $$output"; \
 			cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy nn --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$$output" --l2seg "$$value" 2>&1 | tee "$$log"; \
+		done'
+
+sweep_opt: build
+	@mkdir -p ../sol/opt
+	@bash -lc 'set -euo pipefail; \
+		noport_json="$(OPT_NOPORT_JSON)"; \
+		init_json="$(OPT_INIT_JSON)"; \
+		db="$(COUNTRY_DB)"; \
+		l2seg="$(L2SEG)"; \
+		configured_l2seg="$(CONFIG_L2SEG_VALUES)"; \
+		if [ -n "$$l2seg" ]; then \
+			run_values="$$l2seg"; \
+		else \
+			run_values="$$configured_l2seg"; \
+		fi; \
+		if [ -z "$$run_values" ]; then \
+			echo "No L2SEG values configured in $(CONFIG_YAML)"; \
+			exit 1; \
+		fi; \
+		if [ ! -f "$$noport_json" ]; then \
+			echo "OPT no-port seed missing: $$noport_json"; \
+			echo "Run make -C src noport-opt first."; \
+			exit 1; \
+		fi; \
+		if [ ! -f "$$init_json" ]; then \
+			echo "OPT init missing -> generating $$init_json from $$noport_json"; \
+			cd "$(BUILD_DIR)" && $(MAKE) run_init_opt; \
+		elif [ "$$noport_json" -nt "$$init_json" ]; then \
+			echo "No-port seed newer than $$init_json -> regenerating OPT init"; \
+			cd "$(BUILD_DIR)" && $(MAKE) run_init_opt; \
+		elif [ "$$db" -nt "$$init_json" ]; then \
+			echo "Database newer than $$init_json -> regenerating OPT init"; \
+			cd "$(BUILD_DIR)" && $(MAKE) run_init_opt; \
+		else \
+			echo "Reusing existing $$init_json"; \
+		fi; \
+		for value in $$run_values; do \
+			value=$$(echo "$$value" | xargs); \
+			output="../sol/opt/sweep_$${value}.json"; \
+			log="../sol/opt/sweep_$${value}.log"; \
+			echo "Running OPT sweep for L2SEG=$$value -> $$output"; \
+			cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy opt --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$$output" --l2seg "$$value" 2>&1 | tee "$$log"; \
 		done'
 
 sweep_table:

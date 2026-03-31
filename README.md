@@ -118,6 +118,19 @@ approach:
 All 4 initialization strategies must be run once. Results are cached in the database and reused by
 Phase 1.
 
+Each initialization method now ends with a shared local post-optimization step that re-solves each
+capacity-feasible segment while keeping the imported segment boundaries fixed. The pre-postopt and
+post-postopt distances are both reported in `init.json`, and sweep assumes this post-optimization
+has already been done.
+
+Configure that step in `config/gsp_solver.yaml`:
+
+```yaml
+init:
+  local_post_opt:
+    time_limit_seconds: 0   # 0 = uncapped
+```
+
 #### Single Strategy
 
 ```bash

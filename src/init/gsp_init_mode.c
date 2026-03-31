@@ -28,6 +28,7 @@ static double elapsed_seconds(struct timespec start, struct timespec end) {
 #include "nearest_neighbor.h"
 #include "greedy_insertion.h"
 #include "cheapest_insertion.h"
+#include "local_postopt.h"
 #include "../include/feasibility.h"
 
 #define MAX_LINE 1024
@@ -748,6 +749,7 @@ static void write_solution_section(FILE *fp, const char *label,
 static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
                        const nn_solution_t *sol, int boat_id,
                        const nn_solution_t *pre_capacity_sol,
+                       const nn_solution_t *pre_local_postopt_sol,
                        const char *boat_name,
                        const char *strategy_name,
                        const char *method_name,
@@ -760,6 +762,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                        struct timespec mode_start_time,
                        double preprocessing_seconds,
                        double solve_runtime_seconds,
+                       double local_postopt_runtime_seconds,
                        double check_runtime_seconds,
                        double *output_runtime_seconds) {
     waypoint_cache_t cache;
@@ -767,7 +770,9 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     int leg_query_count = 0;
     int total_waypoint_ids = 0;
     int has_presolve;
+    int has_pre_local_postopt;
     const char *final_variant_name;
+    const char *pre_local_postopt_variant_name = "pre-local-postopt";
 
     FILE *fp = fopen(output_path, "w");
     if (!fp) {
@@ -813,6 +818,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                    pre_capacity_sol->visit_station_count > 0 &&
                    (strcmp(strategy_name ? strategy_name : "", "ci") == 0 ||
                     strcmp(strategy_name ? strategy_name : "", "ge") == 0);
+    has_pre_local_postopt = pre_local_postopt_sol &&
+                            pre_local_postopt_sol->visit_station_count > 0;
     final_variant_name = "capacity-feasible";
 
     fprintf(fp, "  \"solution\": {\n");
@@ -826,16 +833,22 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                                before_feasible, &cache, &leg_query_count, &total_waypoint_ids,
                                "presolve", 1);
         fprintf(fp, ",\n");
-        write_solution_section(fp, final_variant_name, inst, sol, boat_start_loc_id, boat_end_loc_id,
-                               is_feasible, &cache, &leg_query_count, &total_waypoint_ids,
-                               final_variant_name, 0);
-        fprintf(fp, "\n");
-    } else {
-        write_solution_section(fp, final_variant_name, inst, sol, boat_start_loc_id, boat_end_loc_id,
-                               is_feasible, &cache, &leg_query_count, &total_waypoint_ids,
-                               final_variant_name, 0);
-        fprintf(fp, "\n");
     }
+    if (has_pre_local_postopt) {
+        int pre_local_postopt_feasible = init_solution_is_capacity_feasible(pre_local_postopt_sol, boat_capacity) &&
+                                         stations_are_unique_and_complete(pre_local_postopt_sol->visit_station_ids,
+                                                                          pre_local_postopt_sol->visit_station_count,
+                                                                          inst->num_stations);
+        write_solution_section(fp, pre_local_postopt_variant_name, inst, pre_local_postopt_sol,
+                               boat_start_loc_id, boat_end_loc_id,
+                               pre_local_postopt_feasible, &cache, &leg_query_count, &total_waypoint_ids,
+                               pre_local_postopt_variant_name, 0);
+        fprintf(fp, ",\n");
+    }
+    write_solution_section(fp, final_variant_name, inst, sol, boat_start_loc_id, boat_end_loc_id,
+                           is_feasible, &cache, &leg_query_count, &total_waypoint_ids,
+                           final_variant_name, 0);
+    fprintf(fp, "\n");
     fprintf(fp, "  },\n");
     clock_gettime(CLOCK_MONOTONIC, &t_output_expand_end);
     printf("[OUTPUT] Waypoint expansion: %d legs, %d waypoint IDs, direct=%d reverse=%d miss=%d, %.3f s\n",
@@ -848,16 +861,24 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    \"feasible\": %s,\n", is_feasible ? "true" : "false");
     fprintf(fp, "    \"total_distance_nm\": [");
     if (has_presolve) {
-        fprintf(fp, "%.2f, %.2f", pre_capacity_sol->total_distance, sol->total_distance);
+        fprintf(fp, "%.2f", pre_capacity_sol->total_distance);
+        if (has_pre_local_postopt) fprintf(fp, ", %.2f", pre_local_postopt_sol->total_distance);
+        fprintf(fp, ", %.2f", sol->total_distance);
+    } else if (has_pre_local_postopt) {
+        fprintf(fp, "%.2f, %.2f", pre_local_postopt_sol->total_distance, sol->total_distance);
     } else {
         fprintf(fp, "%.2f", sol->total_distance);
     }
     fprintf(fp, "],\n");
+    if (has_pre_local_postopt) {
+        fprintf(fp, "    \"pre_local_postopt_total_distance_nm\": %.2f,\n", pre_local_postopt_sol->total_distance);
+        fprintf(fp, "    \"local_postopt_runtime_seconds\": %.6f,\n", local_postopt_runtime_seconds);
+    }
     fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", sol->total_distance);
     fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
     fprintf(fp, "    \"solution_runtime_seconds\": [");
-    if (has_presolve) {
-        fprintf(fp, "%.6f, %.6f", solve_runtime_seconds, check_runtime_seconds);
+    if (has_pre_local_postopt) {
+        fprintf(fp, "%.6f, %.6f", solve_runtime_seconds, local_postopt_runtime_seconds);
     } else {
         fprintf(fp, "%.6f", solve_runtime_seconds);
     }
@@ -865,7 +886,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    \"postprocessing_seconds\": %.6f,\n",
             elapsed_seconds(t_output_start, t_output_expand_end));
     fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n",
-            preprocessing_seconds + solve_runtime_seconds + check_runtime_seconds +
+            preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds + check_runtime_seconds +
             elapsed_seconds(t_output_start, t_output_expand_end));
     fprintf(fp, "    \"method\": \"%s\"\n", method_name ? method_name : "unknown");
     fprintf(fp, "  }\n");
@@ -1074,6 +1095,7 @@ int mode_init(int argc, char **argv) {
     /* Solve selected init heuristic */
     nn_solution_t sol = {0};
     nn_solution_t pre_capacity_sol = {0};
+    nn_solution_t pre_local_postopt_sol = {0};
     const char *method_name = NULL;
     struct timespec t_solve_start;
     clock_gettime(CLOCK_MONOTONIC, &t_solve_start);
@@ -1104,6 +1126,33 @@ int mode_init(int argc, char **argv) {
     double solve_runtime_seconds = elapsed_seconds(t_solve_start, t_solve_end);
     printf("[NN] Done in %.4f s\n", solve_runtime_seconds);
 
+    double local_postopt_time_limit_seconds = read_init_local_postopt_time_limit_from_yaml(config);
+    double local_postopt_runtime_seconds = 0.0;
+    int local_postopt_segment_solve_count = 0;
+    if (!init_copy_solution(&sol, &pre_local_postopt_sol)) {
+        fprintf(stderr, "ERROR: Failed to copy pre-local-postopt init solution\n");
+        sqlite3_close(db);
+        return 1;
+    }
+    if (!init_apply_local_postopt(&inst, &pre_local_postopt_sol,
+                                  boat_start_loc_id, boat_end_loc_id,
+                                  local_postopt_time_limit_seconds,
+                                  &sol,
+                                  &local_postopt_runtime_seconds,
+                                  &local_postopt_segment_solve_count)) {
+        fprintf(stderr, "ERROR: Failed to apply local post optimization to init solution\n");
+        sqlite3_close(db);
+        return 1;
+    }
+    printf("[POSTOPT] Segment local post-opt: solves=%d runtime=%.4f s time_limit=%s%.0f\n",
+           local_postopt_segment_solve_count,
+           local_postopt_runtime_seconds,
+           (local_postopt_time_limit_seconds > 0.0) ? "" : "uncapped ",
+           (local_postopt_time_limit_seconds > 0.0) ? local_postopt_time_limit_seconds : 0.0);
+    printf("[POSTOPT] Distance: %.2f -> %.2f nm\n",
+           pre_local_postopt_sol.total_distance,
+           sol.total_distance);
+
     /* Write JSON output (feasibility check NOT included in runtime) */
     printf("\n[CHECK] Feasibility check starting\n");
     printf("[CHECK] Rules: segment weight <= %.0f, unique+complete station set, boat at start/end, ports only as segment boundaries\n",
@@ -1127,11 +1176,12 @@ int mode_init(int argc, char **argv) {
         double output_runtime_seconds = 0.0;
         write_json(db, output, &inst, &sol, boat_id,
                    ((strcmp(strategy, "ci") == 0) || (strcmp(strategy, "ge") == 0)) ? &pre_capacity_sol : NULL,
+                   &pre_local_postopt_sol,
                    boat_name, strategy, method_name,
                    boat_start_loc_id, boat_end_loc_id, boat_capacity, target_capacity, target_catch_slack_kg,
                    boat_start_lat, boat_start_lon, is_feasible,
                    t_mode_start,
-                   preprocessing_seconds, solve_runtime_seconds,
+                   preprocessing_seconds, solve_runtime_seconds, local_postopt_runtime_seconds,
                    elapsed_seconds(t_check_start, t_check_end),
                    &output_runtime_seconds);
     }
@@ -1141,22 +1191,9 @@ int mode_init(int argc, char **argv) {
 
     /* Cleanup */
     sqlite3_close(db);
-    free(sol.tour);
-    free(sol.segment_starts);
-    free(sol.segment_ends);
-    free(sol.segment_catches);
-    free(sol.segment_dists);
-    free(sol.visit_station_ids);
-    free(sol.visit_station_segment);
-    free(sol.visit_station_direction);
-    free(pre_capacity_sol.tour);
-    free(pre_capacity_sol.segment_starts);
-    free(pre_capacity_sol.segment_ends);
-    free(pre_capacity_sol.segment_catches);
-    free(pre_capacity_sol.segment_dists);
-    free(pre_capacity_sol.visit_station_ids);
-    free(pre_capacity_sol.visit_station_segment);
-    free(pre_capacity_sol.visit_station_direction);
+    init_free_solution(&sol);
+    init_free_solution(&pre_capacity_sol);
+    init_free_solution(&pre_local_postopt_sol);
     free(inst.nodes);
     for (int i = 0; i < inst.max_loc_id; i++) {
         free(inst.distances[i]);
