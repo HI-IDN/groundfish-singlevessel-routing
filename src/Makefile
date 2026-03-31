@@ -14,16 +14,17 @@ COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
-NN_INIT_JSON = ../sol/nn/init.json
-OPT_NOPORT_JSON = ../sol/opt/noport.json
-OPT_INIT_JSON = ../sol/opt/init.json
 L2SEG ?=
+INIT ?=
 METHOD ?= nn
 TABLE_FORMAT ?= tex
 TABLE_OUTPUT ?=
 L2SEG_UNIT ?= seconds
+SWEEP_INIT_RAW := $(or $(INIT),$(init),nn)
+SWEEP_INIT := $(if $(filter gi,$(SWEEP_INIT_RAW)),ge,$(SWEEP_INIT_RAW))
+VALID_INIT_TYPES := nn ge ci opt
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep_nn sweep_opt sweep_table plot plot-country plot-overview plot-routes help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_gi init_ci init_opt noport-opt sweep sweep_table plot plot-routes help
 
 all: build
 
@@ -34,7 +35,7 @@ config:
 build: config
 	@cd $(BUILD_DIR) && $(MAKE)
 
-init: build
+init: init_nn init_ge init_ci init_opt
 
 prepare-routing-data: config
 	@cd $(BUILD_DIR) && $(MAKE) gsp_prepare_routing_data
@@ -51,61 +52,52 @@ preprocessing: prepare-routing-data survey
 survey: build
 	@cd $(BUILD_DIR) && $(MAKE) survey
 
-init_nn: build
-	@cd $(BUILD_DIR) && $(MAKE) run_init_nn
+init_nn: ../sol/nn/init.json
 
-init_ge: build
-	@cd $(BUILD_DIR) && $(MAKE) run_init_ge
+init_ge: ../sol/ge/init.json
 
-init_ci: build
-	@cd $(BUILD_DIR) && $(MAKE) run_init_ci
+init_gi: init_ge
 
-noport-opt: build
+init_ci: ../sol/ci/init.json
+
+noport-opt: ../sol/opt/noport.json
+
+init_opt: ../sol/opt/init.json
+
+../sol/opt/noport.json: $(COUNTRY_DB)
 	@mkdir -p ../sol/opt
 	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" $(MAKE) run_noport_opt 2>&1 | tee -a ../sol/opt/noport.log'
 
-init_opt: build
+../sol/opt/init.json: ../sol/opt/noport.json
+	@mkdir -p ../sol/opt
+	@echo "Generating OPT init -> $@"
 	@cd $(BUILD_DIR) && $(MAKE) run_init_opt
 
-sweep_nn: build
-	@mkdir -p ../sol/nn
-	@bash -lc 'set -euo pipefail; \
-		init_json="$(NN_INIT_JSON)"; \
-		db="$(COUNTRY_DB)"; \
-		l2seg="$(L2SEG)"; \
-		configured_l2seg="$(CONFIG_L2SEG_VALUES)"; \
-		if [ -n "$$l2seg" ]; then \
-			run_values="$$l2seg"; \
-		else \
-			run_values="$$configured_l2seg"; \
-		fi; \
-		if [ -z "$$run_values" ]; then \
-			echo "No L2SEG values configured in $(CONFIG_YAML)"; \
-			exit 1; \
-		fi; \
-		if [ ! -f "$$init_json" ]; then \
-			echo "NN init missing -> generating $$init_json"; \
-			cd "$(BUILD_DIR)" && $(MAKE) run_init_nn; \
-		elif [ "$$db" -nt "$$init_json" ]; then \
-			echo "Database newer than $$init_json -> regenerating NN init"; \
-			cd "$(BUILD_DIR)" && $(MAKE) run_init_nn; \
-		else \
-			echo "Reusing existing $$init_json"; \
-		fi; \
-		for value in $$run_values; do \
-			value=$$(echo "$$value" | xargs); \
-			output="../sol/nn/sweep_$${value}.json"; \
-			log="../sol/nn/sweep_$${value}.log"; \
-			echo "Running NN sweep for L2SEG=$$value -> $$output"; \
-			cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy nn --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$$output" --l2seg "$$value" 2>&1 | tee "$$log"; \
-		done'
+define init_rule
+../sol/$(1)/init.json: $(COUNTRY_DB)
+	@mkdir -p ../sol/$(1)
+	@echo "Generating $(2) init -> $$@"
+	@cd $(BUILD_DIR) && $(MAKE) run_init_$(1)
+endef
 
-sweep_opt: build
-	@mkdir -p ../sol/opt
+define sweep_rule
+../sol/$(1)/sweep_%.json: ../sol/$(1)/init.json
+	@mkdir -p ../sol/$(1)
+	@echo "Running $(2) sweep for L2SEG=$$* -> $$@"
+	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/init.json" --output "$$@" --l2seg "$$*" 2>&1 | tee "../sol/$(1)/sweep_$$*.log"'
+endef
+
+$(eval $(call init_rule,nn,NN))
+$(eval $(call init_rule,ge,GE))
+$(eval $(call init_rule,ci,CI))
+
+$(eval $(call sweep_rule,nn,NN))
+$(eval $(call sweep_rule,ge,GE))
+$(eval $(call sweep_rule,ci,CI))
+$(eval $(call sweep_rule,opt,OPT))
+
+define run_sweep_template
 	@bash -lc 'set -euo pipefail; \
-		noport_json="$(OPT_NOPORT_JSON)"; \
-		init_json="$(OPT_INIT_JSON)"; \
-		db="$(COUNTRY_DB)"; \
 		l2seg="$(L2SEG)"; \
 		configured_l2seg="$(CONFIG_L2SEG_VALUES)"; \
 		if [ -n "$$l2seg" ]; then \
@@ -117,30 +109,20 @@ sweep_opt: build
 			echo "No L2SEG values configured in $(CONFIG_YAML)"; \
 			exit 1; \
 		fi; \
-		if [ ! -f "$$noport_json" ]; then \
-			echo "OPT no-port seed missing: $$noport_json"; \
-			echo "Run make -C src noport-opt first."; \
-			exit 1; \
-		fi; \
-		if [ ! -f "$$init_json" ]; then \
-			echo "OPT init missing -> generating $$init_json from $$noport_json"; \
-			cd "$(BUILD_DIR)" && $(MAKE) run_init_opt; \
-		elif [ "$$noport_json" -nt "$$init_json" ]; then \
-			echo "No-port seed newer than $$init_json -> regenerating OPT init"; \
-			cd "$(BUILD_DIR)" && $(MAKE) run_init_opt; \
-		elif [ "$$db" -nt "$$init_json" ]; then \
-			echo "Database newer than $$init_json -> regenerating OPT init"; \
-			cd "$(BUILD_DIR)" && $(MAKE) run_init_opt; \
-		else \
-			echo "Reusing existing $$init_json"; \
-		fi; \
 		for value in $$run_values; do \
 			value=$$(echo "$$value" | xargs); \
-			output="../sol/opt/sweep_$${value}.json"; \
-			log="../sol/opt/sweep_$${value}.log"; \
-			echo "Running OPT sweep for L2SEG=$$value -> $$output"; \
-			cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy opt --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "$$init_json" --output "$$output" --l2seg "$$value" 2>&1 | tee "$$log"; \
+			$(MAKE) "../sol/$(1)/sweep_$${value}.json"; \
 		done'
+endef
+
+sweep:
+ifeq ($(filter $(SWEEP_INIT),$(VALID_INIT_TYPES)),)
+	@echo "Unsupported init type: $(SWEEP_INIT_RAW)"
+	@echo "Use INIT=nn|ge|ci|opt (or init=nn|ge|ci|opt)."
+	@exit 1
+else
+	$(call run_sweep_template,$(SWEEP_INIT))
+endif
 
 sweep_table:
 	@bash -lc 'set -euo pipefail; cd ..; \
@@ -155,13 +137,13 @@ plot-routes: $(ROUTE_PNGS)
 ../sol/%.png: ../sol/%.json
 	@cd .. && Rscript R/plot_survey_route.R "$(patsubst ../%,%,$<)" "$(patsubst ../%,%,$@)"
 
-plot-country:
+../dat/coastline_waypoints_ports.png:
 	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp.db dat/coastline_waypoints_ports.png'
 
-plot-overview:
+../sol/survey_overview.png:
 	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R'
 
-plot: plot-country plot-overview plot-routes
+plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png plot-routes
 
 clean:
 	@echo "Cleaning build directory..."
@@ -179,30 +161,31 @@ help:
 	@echo "=================================="
 	@echo ""
 	@echo "Build directory: ../build (root level)"
+	@echo "Run from repo root with: make -C src <target> ..."
 	@echo ""
 	@echo "Data Preparation:"
-	@echo "  make prepare-routing-data"
+	@echo "  make -C src prepare-routing-data"
 	@echo ""
 	@echo "Phase 0: Initilization"
-	@echo "  make init_nn"
-	@echo "  make init_ge"
-	@echo "  make init_ci"
-	@echo "  make noport-opt"
-	@echo "  make init_opt"
+	@echo "  make -C src init_nn"
+	@echo "  make -C src init_gi      # alias for init_ge"
+	@echo "  make -C src init_ci"
+	@echo "  make -C src noport-opt"
+	@echo "  make -C src init_opt"
 	@echo ""
 	@echo "Phase 1: Sweep"
-	@echo "  make sweep_nn           # run all L2SEG values from config"
-	@echo "  make sweep_nn L2SEG=120 # run one configured L2SEG value"
-	@echo "  make sweep_table METHOD=nn TABLE_FORMAT=tex"
-	@echo "  make sweep_table METHOD=nn TABLE_FORMAT=tex TABLE_OUTPUT=../Paper/tables/tbl_mh_init_ci.tex"
-	@echo "  make sweep_table METHOD=nn TABLE_FORMAT=md L2SEG_UNIT=minutes"
+	@echo "  make -C src sweep INIT=nn      # run all L2SEG values from config"
+	@echo "  make -C src sweep init=opt     # lowercase variable also works"
+	@echo "  make -C src sweep INIT=gi      # gi maps to ge"
+	@echo "  make -C src sweep INIT=ci L2SEG=120"
+	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex"
+	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex TABLE_OUTPUT=../Paper/tables/tbl_mh_init_ci.tex"
+	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=md L2SEG_UNIT=minutes"
 	@echo ""
 	@echo "Other targets:"
-	@echo "  make build"
-	@echo "  make survey"
-	@echo "  make plot"
-	@echo "  make plot-country"
-	@echo "  make plot-overview"
-	@echo "  make plot-routes"
-	@echo "  make clean"
-	@echo "  make reconfigure"
+	@echo "  make -C src build"
+	@echo "  make -C src survey"
+	@echo "  make -C src plot"
+	@echo "  make -C src plot-routes"
+	@echo "  make -C src clean"
+	@echo "  make -C src reconfigure"
