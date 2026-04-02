@@ -1,4 +1,5 @@
 #include <sqlite3.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,12 @@
 #include "local_postopt.h"
 
 #define MAX_LINE 1024
+
+static const char *skip_ws(const char *p);
+static const char *find_matching_brace(const char *p);
+static int extract_final_solution_variant_from_json(const char *json_path,
+                                                    char **out_variant_name,
+                                                    char **out_variant_object);
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
@@ -227,6 +234,7 @@ static int lookup_waypoint_path_local(sqlite3 *db, int from_loc_id, int to_loc_i
 static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
                        const nn_solution_t *sol, int boat_id,
                        const nn_solution_t *pre_local_postopt_sol,
+                       const char *noport_input_path,
                        const char *boat_name,
                        const char *strategy_name,
                        const char *method_name,
@@ -244,10 +252,11 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     int uniq_wp_n = 0, uniq_wp_cap = 0;
     int *baseline_unique_waypoint_location_ids = NULL;
     int baseline_uniq_wp_n = 0, baseline_uniq_wp_cap = 0;
-    int *dock_location_ids = NULL;
-    int dock_n = 0, dock_cap = 0;
     int has_pre_local_postopt = pre_local_postopt_sol &&
                                 pre_local_postopt_sol->visit_station_count > 0;
+    char *original_noport_variant_name = NULL;
+    char *original_noport_variant_object = NULL;
+    int has_original_noport = 0;
 
     if (!fp) {
         perror("Cannot open output file");
@@ -272,23 +281,16 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    \"capacity\": %.0f\n", boat_capacity);
     fprintf(fp, "  },\n");
 
-    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_start_loc_id);
-    for (int i = 0; i < sol->tour_length; i++) {
-        int loc_id = sol->tour[i];
-        for (int j = inst->num_stations; j < inst->num_stations + inst->num_ports; j++) {
-            if (inst->nodes[j].start_loc_id == loc_id) {
-                if (dock_n == 0 || dock_location_ids[dock_n - 1] != loc_id) {
-                    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, loc_id);
-                }
-                break;
-            }
-        }
-    }
-    if (dock_n == 0 || dock_location_ids[dock_n - 1] != boat_end_loc_id) {
-        (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id);
-    }
+    has_original_noport = extract_final_solution_variant_from_json(noport_input_path,
+                                                                   &original_noport_variant_name,
+                                                                   &original_noport_variant_object);
 
     fprintf(fp, "  \"solution\": {\n");
+    if (has_original_noport) {
+        fprintf(fp, "    \"%s\": %s,\n",
+                original_noport_variant_name,
+                original_noport_variant_object);
+    }
     if (has_pre_local_postopt) {
         fprintf(fp, "    \"%s\": {\n", pre_local_postopt_variant_name);
         fprintf(fp, "    \"variant\": \"%s\",\n", pre_local_postopt_variant_name);
@@ -334,11 +336,11 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         fprintf(fp, "    ],\n");
 
         fprintf(fp, "    \"dock_location_ids\": [");
-        for (int i = 0; i < dock_n; i++) {
-            if (i) fprintf(fp, ", ");
-            fprintf(fp, "%d", dock_location_ids[i]);
+        fprintf(fp, "%d", boat_start_loc_id);
+        for (int s = 0; s < pre_local_postopt_sol->segment_count - 1; s++) {
+            fprintf(fp, ", %d", pre_local_postopt_sol->tour[pre_local_postopt_sol->segment_ends[s]]);
         }
-        fprintf(fp, "],\n");
+        fprintf(fp, ", %d],\n", boat_end_loc_id);
 
         fprintf(fp, "    \"unique_waypoint_location_ids\": [");
         for (int i = 0; i < baseline_uniq_wp_n; i++) {
@@ -436,11 +438,11 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    ],\n");
 
     fprintf(fp, "    \"dock_location_ids\": [");
-    for (int i = 0; i < dock_n; i++) {
-        if (i) fprintf(fp, ", ");
-        fprintf(fp, "%d", dock_location_ids[i]);
+    fprintf(fp, "%d", boat_start_loc_id);
+    for (int s = 0; s < sol->segment_count - 1; s++) {
+        fprintf(fp, ", %d", sol->tour[sol->segment_ends[s]]);
     }
-    fprintf(fp, "],\n");
+    fprintf(fp, ", %d],\n", boat_end_loc_id);
 
     fprintf(fp, "    \"unique_waypoint_location_ids\": [");
     for (int i = 0; i < uniq_wp_n; i++) {
@@ -525,7 +527,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fclose(fp);
     free(unique_waypoint_location_ids);
     free(baseline_unique_waypoint_location_ids);
-    free(dock_location_ids);
+    free(original_noport_variant_name);
+    free(original_noport_variant_object);
 }
 
 static int read_file_text(const char *path, char **out_text) {
@@ -558,6 +561,109 @@ static int read_file_text(const char *path, char **out_text) {
     fclose(fp);
     *out_text = buf;
     return 1;
+}
+
+static const char *skip_ws(const char *p) {
+    while (p && *p && isspace((unsigned char)*p)) p++;
+    return p;
+}
+
+static const char *find_matching_brace(const char *p) {
+    int depth = 0;
+    int in_string = 0;
+    int escape = 0;
+
+    if (!p || *p != '{') return NULL;
+
+    for (; *p; p++) {
+        if (in_string) {
+            if (escape) escape = 0;
+            else if (*p == '\\') escape = 1;
+            else if (*p == '"') in_string = 0;
+            continue;
+        }
+        if (*p == '"') in_string = 1;
+        else if (*p == '{') depth++;
+        else if (*p == '}') {
+            depth--;
+            if (depth == 0) return p;
+        }
+    }
+
+    return NULL;
+}
+
+static int extract_final_solution_variant_from_json(const char *json_path,
+                                                    char **out_variant_name,
+                                                    char **out_variant_object) {
+    char *text = NULL;
+    char *summary = NULL;
+    char *final_key = NULL;
+    char *final_value = NULL;
+    char *final_end = NULL;
+    char *solution = NULL;
+    char *variant_key = NULL;
+    char *colon = NULL;
+    const char *object_start = NULL;
+    const char *object_end = NULL;
+    char *name_copy = NULL;
+    char *object_copy = NULL;
+    size_t name_len;
+    size_t object_len;
+
+    if (out_variant_name) *out_variant_name = NULL;
+    if (out_variant_object) *out_variant_object = NULL;
+    if (!json_path || !out_variant_name || !out_variant_object) return 0;
+    if (!read_file_text(json_path, &text)) return 0;
+
+    summary = strstr(text, "\"summary\"");
+    if (!summary) goto cleanup;
+    final_key = strstr(summary, "\"final\"");
+    if (!final_key) goto cleanup;
+    final_value = strchr(final_key + strlen("\"final\""), '"');
+    if (!final_value) goto cleanup;
+    final_value++;
+    final_end = strchr(final_value, '"');
+    if (!final_end || final_end == final_value) goto cleanup;
+
+    name_len = (size_t)(final_end - final_value);
+    name_copy = (char*)malloc(name_len + 1);
+    if (!name_copy) goto cleanup;
+    memcpy(name_copy, final_value, name_len);
+    name_copy[name_len] = '\0';
+
+    solution = strstr(text, "\"solution\"");
+    if (!solution) goto cleanup;
+    {
+        char variant_pattern[128];
+        snprintf(variant_pattern, sizeof(variant_pattern), "\"%s\"", name_copy);
+        variant_key = strstr(solution, variant_pattern);
+    }
+    if (!variant_key) goto cleanup;
+
+    colon = strchr(variant_key, ':');
+    if (!colon) goto cleanup;
+    object_start = skip_ws(colon + 1);
+    if (!object_start || *object_start != '{') goto cleanup;
+    object_end = find_matching_brace(object_start);
+    if (!object_end) goto cleanup;
+
+    object_len = (size_t)(object_end - object_start + 1);
+    object_copy = (char*)malloc(object_len + 1);
+    if (!object_copy) goto cleanup;
+    memcpy(object_copy, object_start, object_len);
+    object_copy[object_len] = '\0';
+
+    *out_variant_name = name_copy;
+    *out_variant_object = object_copy;
+    free(text);
+    return 1;
+
+cleanup:
+    free(name_copy);
+    free(object_copy);
+    free(text);
+    return 0;
 }
 
 static int parse_station_order_from_noport_json(const char *json_path, int **out_ids, int *out_n) {
@@ -939,6 +1045,7 @@ int main(int argc, char **argv) {
 
     write_json(db, output, &inst, &sol, boat_id,
                &pre_local_postopt_sol,
+               input,
                boat_name,
                "opt", "segment_from_noport",
                boat_start_loc_id, boat_end_loc_id, boat_capacity,

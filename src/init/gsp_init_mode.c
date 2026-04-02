@@ -595,20 +595,11 @@ static void write_solution_section(FILE *fp, const char *label,
     fprintf(fp, "  \"%s\": {\n", label);
 
     (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_start_loc_id);
-    for (int i = 0; i < sol->tour_length; i++) {
-        int loc_id = sol->tour[i];
-        for (int j = inst->num_stations; j < inst->num_stations + inst->num_ports; j++) {
-            if (inst->nodes[j].start_loc_id == loc_id) {
-                if (dock_n == 0 || dock_location_ids[dock_n - 1] != loc_id) {
-                    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, loc_id);
-                }
-                break;
-            }
-        }
+    for (int s = 0; s < sol->segment_count - 1; s++) {
+        (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap,
+                               sol->tour[sol->segment_ends[s]]);
     }
-    if (dock_n == 0 || dock_location_ids[dock_n - 1] != boat_end_loc_id) {
-        (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id);
-    }
+    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id);
 
     fprintf(fp, "    \"variant\": \"%s\",\n", variant_name ? variant_name : label);
     fprintf(fp, "    \"tour_segments_location_ids\": [\n");
