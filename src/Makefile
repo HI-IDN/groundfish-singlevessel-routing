@@ -132,7 +132,7 @@ plot-routes: $(ROUTE_PNGS)
 	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp.db dat/coastline_waypoints_ports.png'
 
 ../sol/survey_overview.png:
-	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R'
+	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R dat/gsp.db sol/survey_overview.png'
 
 plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png plot-routes
 

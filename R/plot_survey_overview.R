@@ -1,6 +1,9 @@
 #!/usr/bin/env Rscript
 
 required_packages <- c("tidyverse", "DBI", "RSQLite")
+args <- commandArgs(trailingOnly = TRUE)
+db_path <- if (length(args) >= 1) args[1] else "dat/gsp.db"
+output_file <- if (length(args) >= 2) args[2] else "sol/survey_overview.png"
 
 script_file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_dir <- if (length(script_file_arg) > 0) {
@@ -15,14 +18,14 @@ load_required_packages(required_packages)
 cat("=== Survey Overview Plotter ===\n\n")
 
 cat("Loading coastline data...\n")
-coastline <- read_db_table("dat/gsp_data.db", "SELECT lat, lon FROM coastline")
+coastline <- read_db_table(db_path, "SELECT lat, lon FROM coastline")
 
 cat("\nPlotting coastline...\n")
 p <- base_coastline_plot(coastline)
 
 cat("\nLoading locations...\n")
 locations <- read_db_table(
-  "dat/gsp_data.db",
+  db_path,
   "SELECT p.name, l.lat, l.lon, 'Port' as type
    FROM ports p
    INNER JOIN locations l ON p.location_id = l.id
@@ -35,7 +38,7 @@ locations <- read_db_table(
 
 cat("\nLoading trawl station locations...\n")
 stations <- read_db_table(
-  "dat/gsp_data.db",
+  db_path,
   "SELECT s.id, s.amount,
           start.lat as start_lat, start.lon as start_lon,
           end.lat as end_lat, end.lon as end_lon
@@ -96,7 +99,6 @@ final_plot <- final_plot + gsp_common_theme(
   legend_direction = "horizontal"
 )
 
-output_file <- "dat/survey_overview.png"
 cat(sprintf("\nSaving plot to %s...\n", output_file))
 
 ggsave(
