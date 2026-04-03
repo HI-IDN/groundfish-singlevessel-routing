@@ -834,6 +834,7 @@ static int compute_segment_catch(const nn_instance_t *inst, const int *signed_st
 }
 
 static int extract_segment_arrays_from_input(const char *json_text,
+                                             const char *key,
                                              int ***segment_arrays,
                                              int **segment_sizes,
                                              int *segment_count) {
@@ -854,9 +855,9 @@ static int extract_segment_arrays_from_input(const char *json_text,
                 if (solution_pos) {
                     const char *variant_pos = find_json_key(solution_pos, variant_name);
                     if (variant_pos) {
-                        const char *candidate = find_json_key(variant_pos, "tour_segments_station_ids");
+                        const char *candidate = find_json_key(variant_pos, key);
                         if (candidate) {
-                            return parse_nested_int_arrays(candidate, "tour_segments_station_ids",
+                            return parse_nested_int_arrays(candidate, key,
                                                            segment_arrays, segment_sizes, segment_count);
                         }
                     }
@@ -864,7 +865,7 @@ static int extract_segment_arrays_from_input(const char *json_text,
             }
         }
     }
-    return parse_nested_int_arrays(json_text, "tour_segments_station_ids",
+    return parse_nested_int_arrays(json_text, key,
                                    segment_arrays, segment_sizes, segment_count);
 }
 
@@ -909,7 +910,10 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
     char *json_text = read_text_file(input_path);
     int **segment_arrays = NULL;
     int *segment_sizes = NULL;
+    int **segment_location_arrays = NULL;
+    int *segment_location_sizes = NULL;
     int segment_count = 0;
+    int location_segment_count = 0;
     int *dock_location_ids = NULL;
     int dock_count = 0;
     sweep_segment_t *segments = NULL;
@@ -917,8 +921,12 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
 
     if (input_total_distance_nm) *input_total_distance_nm = 0.0;
     if (!json_text) return 0;
-    if (!extract_segment_arrays_from_input(json_text, &segment_arrays, &segment_sizes, &segment_count)) goto cleanup;
+    if (!extract_segment_arrays_from_input(json_text, "tour_segments_station_ids",
+                                           &segment_arrays, &segment_sizes, &segment_count)) goto cleanup;
+    if (!extract_segment_arrays_from_input(json_text, "tour_segments_location_ids",
+                                           &segment_location_arrays, &segment_location_sizes, &location_segment_count)) goto cleanup;
     if (segment_count <= 0) goto cleanup;
+    if (location_segment_count != segment_count) goto cleanup;
     if (!extract_int_array_from_input(json_text, "dock_location_ids", &dock_location_ids, &dock_count)) goto cleanup;
     if (dock_count != segment_count + 1) goto cleanup;
     if (dock_location_ids[0] != boat->boat_start_loc_id ||
@@ -936,6 +944,19 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
         seg->start_loc_id = dock_location_ids[i];
         seg->end_loc_id = dock_location_ids[i + 1];
         seg->catch_amount = compute_segment_catch(inst, seg->signed_station_ids, seg->count);
+        seg->distance_nm = 0.0;
+        if (!segment_location_arrays || !segment_location_sizes || segment_location_sizes[i] <= 1) goto cleanup;
+        for (int j = 0; j < segment_location_sizes[i] - 1; j++) {
+            int from_loc = segment_location_arrays[i][j];
+            int to_loc = segment_location_arrays[i][j + 1];
+            if (from_loc < 0 || from_loc >= inst->max_loc_id ||
+                to_loc < 0 || to_loc >= inst->max_loc_id ||
+                !inst->distances || !inst->distances[from_loc] ||
+                inst->distances[from_loc][to_loc] < 0.0) {
+                goto cleanup;
+            }
+            seg->distance_nm += inst->distances[from_loc][to_loc];
+        }
     }
 
     memset(initial_solution, 0, sizeof(*initial_solution));
@@ -977,8 +998,13 @@ cleanup:
     if (segment_arrays) {
         for (int i = 0; i < segment_count; i++) free(segment_arrays[i]);
     }
+    if (segment_location_arrays) {
+        for (int i = 0; i < segment_count; i++) free(segment_location_arrays[i]);
+    }
     free(segment_arrays);
     free(segment_sizes);
+    free(segment_location_arrays);
+    free(segment_location_sizes);
     free(dock_location_ids);
     free(json_text);
     if (rc) {
