@@ -96,12 +96,14 @@ The corresponding PNG is written next to the JSON file, for example:
 
 |    ID     | Boat              | Segments |   Nodes | Stations | Total Catch | Distance (nm) | Feasible  |
 |:---------:|-------------------|---------:|--------:|---------:|------------:|--------------:|-----------|
-|     1     | Bjarni Sæmundsson |        4 |     119 |      111 |       63881 |       1747.87 | false[^1] |
-|     2     | Árni Friðriksson  |        6 |     176 |      164 |      144115 |       2218.98 | true      |
-|     3     | Gullver           |        2 |     155 |      151 |       72755 |       1818.73 | true      |
+|     1     | Bjarni Sæmundsson |        4 |     120 |      111 |       63881 |       1747.87 | false[^1] |
+|     2     | Árni Friðriksson  |        6 |     177 |      164 |      144115 |       2218.98 | true      |
+|     3     | Gullver           |        2 |     156 |      151 |       72755 |       1815.73 | true      |
 |     4     | Breki             |        2 |     157 |      154 |      247314 |       1808.48 | true      |
-| **Total** |                   |   **14** | **607** |  **580** |  **528065** |   **7401.42** |           |
+| **Total** |                   |   **14** | **610** |  **580** |  **528065** |   **7591.06** |           |
 
 [^1]: Capacity violations: segment 1 and segment 3 exceed capacity `14000`.
+
+![Combined Route](routes_combined.png)
 
 -----

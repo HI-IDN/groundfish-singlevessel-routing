@@ -24,7 +24,7 @@ SWEEP_INIT_RAW := $(or $(INIT),$(init),nn)
 SWEEP_INIT := $(if $(filter gi,$(SWEEP_INIT_RAW)),ge,$(SWEEP_INIT_RAW))
 VALID_INIT_TYPES := nn ge ci opt
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep sweep_table plot plot-routes help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep sweep_table plot plot-routes plot-survey-routes help
 
 all: build
 
@@ -134,7 +134,12 @@ plot-routes: $(ROUTE_PNGS)
 ../sol/survey_overview.png:
 	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R dat/gsp.db sol/survey_overview.png'
 
+../sol/survey/routes_combined.png:
+	@bash -lc 'cd .. && Rscript R/plot_survey_routes_combined.R "sol/survey/boat*.json" "sol/survey/routes_combined.png" "dat/gsp.db"'
+
 plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png plot-routes
+
+plot-survey-routes: ../sol/survey/routes_combined.png
 
 clean:
 	@echo "Cleaning build directory..."
@@ -178,5 +183,6 @@ help:
 	@echo "  make -C src survey"
 	@echo "  make -C src plot"
 	@echo "  make -C src plot-routes"
+	@echo "  make -C src plot-survey-routes"
 	@echo "  make -C src clean"
 	@echo "  make -C src reconfigure"
