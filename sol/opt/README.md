@@ -24,6 +24,7 @@ than NN, GE, or CI. In return, it provides the strongest station-order baseline 
 repair and matheuristic refinement.
 
 ![OPT Initialization](init.png)
+![OPT Sweep Adjustment](sweep_60.png)
 
 ## Segment Summary
 
