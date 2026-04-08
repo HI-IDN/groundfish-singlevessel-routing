@@ -8,7 +8,7 @@ Mode: sweep
 GSP Solver - Phase 1: Sweep
 ============================================================
 
-Loaded segmented input: 13 segments, 9219.15 nm total
+Loaded segmented input: 13 segments, 8507.42 nm total
 Sweep parameters: l1seg=0 l2seg=60 max_iterations=100 time_limit=0
 Set parameter Username
 Set parameter LicenseID to value 2769518
@@ -41,7 +41,7 @@ Starting sweep pass1 across 13 boundaries
     improved: 481.11 -> 427.99 nm, gain=53.13 nm, moved_station_marks=4
   pass1 boundary 13/13: seg13=3 stations -> seg1=47 stations via port_id=5 name=Hafnarfjörður loc_id=5
     improved: 670.21 -> 664.02 nm, gain=6.19 nm, moved_station_marks=4
-Completed pass1: changed=1 boundary_changes=10 total_distance=8233.10 runtime=1351.74s total=1508.71s
+Completed pass1: changed=1 boundary_changes=10 total_distance=8233.10 runtime=1485.07s total=1533.61s
 Starting sweep pass2 across 13 boundaries
   pass2 boundary 1/13: seg1=45 stations -> seg2=60 stations via port_id=19 name=Ísafjörður loc_id=19
     improved: 1039.85 -> 1023.52 nm, gain=16.33 nm, moved_station_marks=22
@@ -69,7 +69,7 @@ Starting sweep pass2 across 13 boundaries
     no change
   pass2 boundary 13/13: seg13=5 stations -> seg1=56 stations via port_id=5 name=Hafnarfjörður loc_id=5
     no change
-Completed pass2: changed=1 boundary_changes=2 total_distance=8182.90 runtime=3042.14s total=4642.28s
+Completed pass2: changed=1 boundary_changes=2 total_distance=8182.90 runtime=2585.06s total=4207.60s
 Starting sweep pass3 across 13 boundaries
   pass3 boundary 1/13: seg1=56 stations -> seg2=71 stations via port_id=19 name=Ísafjörður loc_id=19
     improved: 1220.46 -> 1219.82 nm, gain=0.64 nm, moved_station_marks=4
@@ -79,13 +79,13 @@ Starting sweep pass3 across 13 boundaries
     no change
   pass3 boundary 13/13: seg13=5 stations -> seg1=54 stations via port_id=5 name=Hafnarfjörður loc_id=5
     no change
-Completed pass3: changed=1 boundary_changes=2 total_distance=8176.45 runtime=2408.36s total=7188.25s
+Completed pass3: changed=1 boundary_changes=2 total_distance=8176.45 runtime=2344.48s total=6678.57s
 Starting sweep pass4 across 13 boundaries
   pass4 boundary 1/13: seg1=54 stations -> seg2=72 stations via port_id=19 name=Ísafjörður loc_id=19
     no change
   pass4 boundary 2/13: seg2=72 stations -> seg3=63 stations via port_id=15 name=Sauðárkrókur loc_id=15
     no change
-Completed pass4: changed=0 boundary_changes=0 total_distance=8176.45 runtime=1005.44s total=8360.92s
+Completed pass4: changed=0 boundary_changes=0 total_distance=8176.45 runtime=863.17s total=7712.81s
 Final segment station order:
   seg1: [499, 498, 497, 496, 495, 112, 113, 494, 114, 275, 111, 274, 107, 106, 105, 104, 103, 102, 101, 108, 109, 110, 273, 272, 271, 253, 252, 249, 248, 247, 245, 244, 243, 238, 237, 215, 214, 213, 192, 218, 191, 219, 190, 223, 222, 227, 231, 235, 234, 233, 232, 230, 181, 132]
   seg2: [133, 134, 180, 229, 228, 179, 135, 136, 152, 153, 154, 174, 175, 176, 177, 171, 170, 168, 165, 166, 164, 162, 161, 160, 159, 163, 167, 172, 173, 155, 156, 157, 158, 150, 149, 148, 147, 146, 145, 144, 142, 9, 8, 141, 140, 139, 151, 138, 137, 2, 95, 90, 91, 89, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 70, 76, 75, 71, 72, 73]

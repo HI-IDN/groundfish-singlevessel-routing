@@ -19,8 +19,11 @@ particularly in regions where many similar‑length edges compete.
 ## Route Plotting
 
 ![GE Initialization](init.png)
+![GE Sweep Adjustment](sweep_60.png)
 
 ## Segment Summary
+
+### Initialization (capacity feasible)
 
 |   Segment |   Length | Stations |      Catch | Distance (nm) |
 |----------:|---------:|---------:|-----------:|--------------:|
@@ -38,3 +41,22 @@ particularly in regions where many similar‑length edges compete.
 |        12 |      119 |       59 |      43785 |        518.68 |
 |        13 |       56 |       28 |      16554 |        497.83 |
 | **Total** | **1172** |  **580** | **528065** |   **7052.74** |
+
+### Sweep adjustment (capacity feasible)
+
+|   Segment |  Length | Stations |      Catch | Distance (nm) |
+|----------:|--------:|---------:|-----------:|--------------:|
+|         1 |      87 |       86 |      44492 |       1080.57 |
+|         2 |      63 |       62 |      44923 |        680.66 |
+|         3 |     113 |      112 |      44661 |       1269.50 |
+|         4 |      45 |       44 |      44101 |        559.48 |
+|         5 |      13 |       12 |      35747 |        202.50 |
+|         6 |      35 |       34 |      44460 |        378.30 |
+|         7 |      14 |       13 |      44841 |        242.05 |
+|         8 |      37 |       36 |      38524 |        449.00 |
+|         9 |      20 |       19 |      43509 |        293.50 |
+|        10 |      38 |       37 |      40980 |        431.74 |
+|        11 |      44 |       43 |      44128 |        366.98 |
+|        12 |      48 |       47 |      35245 |        417.74 |
+|        13 |      35 |       35 |      22454 |        514.47 |
+| **Total** | **592** |  **580** | **528065** |   **6886.50** |
