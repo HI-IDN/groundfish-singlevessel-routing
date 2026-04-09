@@ -3,7 +3,6 @@
 
 BUILD_DIR = ../build
 CONFIG_YAML = ../config/gsp_solver.yaml
-CONFIG_L2SEG_VALUES = $(shell sed -n 's/^[[:space:]]*l2seg_values:[[:space:]]*\[\(.*\)\][[:space:]]*.*/\1/p' $(CONFIG_YAML) | tr ',' ' ')
 ROUTE_JSONS = $(shell find ../sol -name "*.json")
 ROUTE_PNGS = $(patsubst %.json,%.png,$(ROUTE_JSONS))
 
@@ -14,17 +13,18 @@ COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
-L2SEG ?=
 INIT ?=
 METHOD ?= nn
 TABLE_FORMAT ?= tex
 TABLE_OUTPUT ?=
 L2SEG_UNIT ?= seconds
-SWEEP_INIT_RAW := $(or $(INIT),$(init),nn)
+INIT_TARGET_RAW := $(or $(INIT),$(init),opt)
+INIT_TARGET := $(if $(filter gi,$(INIT_TARGET_RAW)),ge,$(INIT_TARGET_RAW))
+SWEEP_INIT_RAW := $(or $(INIT),$(init),opt)
 SWEEP_INIT := $(if $(filter gi,$(SWEEP_INIT_RAW)),ge,$(SWEEP_INIT_RAW))
 VALID_INIT_TYPES := nn ge ci opt
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init init_nn init_ge init_ci init_opt noport-opt sweep sweep_table plot plot-routes plot-survey-routes help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init noport-opt sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary help
 
 all: build
 
@@ -37,7 +37,18 @@ config: $(BUILD_DIR)/CMakeCache.txt
 build: $(BUILD_DIR)/CMakeCache.txt
 	@cd $(BUILD_DIR) && $(MAKE)
 
-init: init_nn init_ge init_ci init_opt
+INIT_TARGET_JSON = ../sol/$(INIT_TARGET)/init.json
+
+init:
+ifeq ($(filter $(INIT_TARGET),$(VALID_INIT_TYPES)),)
+	@echo "Unsupported init type: $(INIT_TARGET_RAW)"
+	@echo "Use INIT=nn|ge|ci|opt (or init=nn|ge|ci|opt)."
+	@exit 1
+else
+	@:
+endif
+
+init: $(INIT_TARGET_JSON)
 
 prepare-routing-data: $(COUNTRY_DB)
 
@@ -59,15 +70,7 @@ preprocessing: prepare-routing-data survey
 survey: build
 	@cd $(BUILD_DIR) && $(MAKE) survey
 
-init_nn: ../sol/nn/init.json
-
-init_ge: ../sol/ge/init.json
-
-init_ci: ../sol/ci/init.json
-
 noport-opt: ../sol/opt/noport.json
-
-init_opt: ../sol/opt/init.json
 
 ../sol/opt/noport.json: $(COUNTRY_DB)
 	@mkdir -p ../sol/opt
@@ -85,24 +88,24 @@ define init_rule
 	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode init --strategy $(1) --database "$(COUNTRY_DB)" --output "../sol/$(1)/init.json" --config "$(CONFIG_YAML)"'
 endef
 
-define sweep_rule
-../sol/$(1)/sweep_%.json: ../sol/$(1)/init.json
+define sweep_config_rule
+../sol/$(1)/sweep.json: ../sol/$(1)/init.json
 	@mkdir -p ../sol/$(1)
-	@echo "Running $(2) sweep for L2SEG=$$* -> $$@"
-	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/init.json" --output "$$@" --l2seg "$$*" 2>&1 | tee "../sol/$(1)/sweep_$$*.log"'
+	@echo "Running $(2) sweep -> $$@"
+	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/init.json" --output "$$@" 2>&1 | tee "../sol/$(1)/sweep.log"'
 endef
 
 $(eval $(call init_rule,nn,NN))
 $(eval $(call init_rule,ge,GE))
 $(eval $(call init_rule,ci,CI))
 
-$(eval $(call sweep_rule,nn,NN))
-$(eval $(call sweep_rule,ge,GE))
-$(eval $(call sweep_rule,ci,CI))
-$(eval $(call sweep_rule,opt,OPT))
+$(eval $(call sweep_config_rule,nn,NN))
+$(eval $(call sweep_config_rule,ge,GE))
+$(eval $(call sweep_config_rule,ci,CI))
+$(eval $(call sweep_config_rule,opt,OPT))
 
-SWEEP_VALUES := $(if $(L2SEG),$(L2SEG),$(CONFIG_L2SEG_VALUES))
-SWEEP_TARGETS = $(foreach v,$(SWEEP_VALUES),../sol/$(SWEEP_INIT)/sweep_$(strip $(v)).json)
+SWEEP_TARGET = ../sol/$(SWEEP_INIT)/sweep.json
+
 
 sweep:
 ifeq ($(filter $(SWEEP_INIT),$(VALID_INIT_TYPES)),)
@@ -113,7 +116,7 @@ else
 	@:
 endif
 
-sweep: $(SWEEP_TARGETS)
+sweep: $(SWEEP_TARGET)
 
 sweep_table:
 	@bash -lc 'set -euo pipefail; cd ..; \
@@ -137,9 +140,14 @@ plot-routes: $(ROUTE_PNGS)
 ../sol/survey/routes_combined.png:
 	@bash -lc 'cd .. && Rscript R/plot_survey_routes_combined.R "sol/survey/boat*.json" "sol/survey/routes_combined.png" "dat/gsp.db"'
 
+../sol/sweep_summary_panels.png:
+	@bash -lc 'cd .. && Rscript R/plot_sweep_summary_panels.R sol sol/sweep_summary_panels.png'
+
 plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png plot-routes
 
 plot-survey-routes: ../sol/survey/routes_combined.png
+
+plot-sweep-summary: ../sol/sweep_summary_panels.png
 
 clean:
 	@echo "Cleaning build directory..."
@@ -163,17 +171,17 @@ help:
 	@echo "  make -C src prepare-routing-data"
 	@echo ""
 	@echo "Phase 0: Initilization"
-	@echo "  make -C src init_nn"
-	@echo "  make -C src init_ge"
-	@echo "  make -C src init_ci"
+	@echo "  make -C src init              # defaults to INIT=opt"
+	@echo "  make -C src init INIT=nn"
+	@echo "  make -C src init INIT=ge"
+	@echo "  make -C src init INIT=ci"
+	@echo "  make -C src init INIT=opt"
 	@echo "  make -C src noport-opt"
-	@echo "  make -C src init_opt"
 	@echo ""
 	@echo "Phase 1: Sweep"
-	@echo "  make -C src sweep INIT=nn      # run all L2SEG values from config"
+	@echo "  make -C src sweep INIT=nn      # run the single L2SEG value from config"
 	@echo "  make -C src sweep init=opt     # lowercase variable also works"
 	@echo "  make -C src sweep INIT=ge"
-	@echo "  make -C src sweep INIT=ci L2SEG=120"
 	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex"
 	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex TABLE_OUTPUT=../Paper/tables/tbl_mh_init_ci.tex"
 	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=md L2SEG_UNIT=minutes"
@@ -184,5 +192,6 @@ help:
 	@echo "  make -C src plot"
 	@echo "  make -C src plot-routes"
 	@echo "  make -C src plot-survey-routes"
+	@echo "  make -C src plot-sweep-summary"
 	@echo "  make -C src clean"
 	@echo "  make -C src reconfigure"

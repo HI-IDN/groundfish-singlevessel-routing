@@ -35,7 +35,7 @@ init:
 # Phase 1: Matheuristic Sweep Parameters
 sweep:
   # L2SEG: segment length in stations
-  l2seg_values: [60, 120, 180, 240, 300, 360, 420, 480]
+  l2seg: 0                               # 0 = no limit
 
   # L1SEG: time limit per segment MIP solve (in seconds)
   l1seg: 0                               # 0 = no time limit (per-segment TSP is pure TSP, no capacity)

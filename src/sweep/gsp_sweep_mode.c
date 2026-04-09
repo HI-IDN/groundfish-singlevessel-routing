@@ -1696,77 +1696,72 @@ static void write_pass_entry(FILE *fp,
     fprintf(fp, "      \"accepted_capacity_solves\": %d,\n", snapshot->boundary_changes);
     fprintf(fp, "      \"total_capacity_solves\": %d,\n", snapshot->boundary_attempts);
     fprintf(fp, "      \"capacity_mip_solves\": %d,\n", snapshot->mip_solve_count);
-    fprintf(fp, "      \"2seg_mip_solves\": %d,\n", snapshot->mip_solve_count);
-    fprintf(fp, "      \"capacity_mip_gap_percent_values\": [");
-    for (int i = 0; i < snapshot->mip_gap_count; i++) {
-        fprintf(fp, "%.6f", snapshot->mip_gap_values[i]);
-        if (i + 1 < snapshot->mip_gap_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-    fprintf(fp, "      \"2seg_mip_gap_percent_values\": [");
-    for (int i = 0; i < snapshot->mip_gap_count; i++) {
-        fprintf(fp, "%.6f", snapshot->mip_gap_values[i]);
-        if (i + 1 < snapshot->mip_gap_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-    fprintf(fp, "      \"capacity_mip_runtime_seconds_values\": [");
-    for (int i = 0; i < snapshot->mip_runtime_count; i++) {
-        fprintf(fp, "%.6f", snapshot->mip_runtime_values[i]);
-        if (i + 1 < snapshot->mip_runtime_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-    fprintf(fp, "      \"2seg_mip_runtime_seconds_values\": [");
-    for (int i = 0; i < snapshot->mip_runtime_count; i++) {
-        fprintf(fp, "%.6f", snapshot->mip_runtime_values[i]);
-        if (i + 1 < snapshot->mip_runtime_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
+    fprintf(fp, "      \"mip_solves\": %d,\n", snapshot->mip_solve_count);
     fprintf(fp, "      \"pass_runtime_seconds\": %.6f,\n", snapshot->pass_runtime_seconds);
-    fprintf(fp, "      \"capacity_mip_solves_detail\": [\n");
-    for (int i = 0; i < snapshot->mip_detail_count; i++) {
-        const sweep_mip_solve_detail_t *detail = &snapshot->mip_solve_details[i];
-        fprintf(fp, "        {\"boundary_index\": %d, \"candidate_split_index\": %d, \"segment_index\": %d, "
-                    "\"segment_role\": \"%s\", \"station_count\": %d, \"node_count\": %d, "
-                    "\"moved_stations\": %d, "
-                    "\"mip_size\": [%d, %d], \"runtime_seconds\": %.6f, \"gap_percent\": %.6f}%s\n",
-                detail->boundary_index,
-                detail->candidate_split_index,
-                detail->segment_index,
-                detail->segment_role == 0 ? "left" : "right",
-                detail->station_count,
-                detail->node_count,
-                detail->moved_stations,
-                detail->model_num_vars,
-                detail->model_num_constrs,
-                detail->runtime_seconds,
-                detail->gap_percent,
-                (i + 1 < snapshot->mip_detail_count) ? "," : "");
-    }
-    fprintf(fp, "      ],\n");
-    fprintf(fp, "      \"2seg_mip_solves_detail\": [\n");
-    for (int i = 0; i < snapshot->mip_detail_count; i++) {
-        const sweep_mip_solve_detail_t *detail = &snapshot->mip_solve_details[i];
-        fprintf(fp, "        {\"boundary_index\": %d, \"candidate_split_index\": %d, \"segment_index\": %d, "
-                    "\"segment_role\": \"%s\", \"station_count\": %d, \"node_count\": %d, "
-                    "\"moved_stations\": %d, "
-                    "\"mip_size\": [%d, %d], \"runtime_seconds\": %.6f, \"gap_percent\": %.6f}%s\n",
-                detail->boundary_index,
-                detail->candidate_split_index,
-                detail->segment_index,
-                detail->segment_role == 0 ? "left" : "right",
-                detail->station_count,
-                detail->node_count,
-                detail->moved_stations,
-                detail->model_num_vars,
-                detail->model_num_constrs,
-                detail->runtime_seconds,
-                detail->gap_percent,
-                (i + 1 < snapshot->mip_detail_count) ? "," : "");
-    }
-    fprintf(fp, "      ],\n");
     write_station_mutation_ids(fp, prev_solution, &snapshot->solution);
     write_solution_json(fp, db, inst, &snapshot->solution, boat, snapshot->feasible);
     fprintf(fp, "\n    }");
+}
+
+static void compute_sweep_mip_summary(const sweep_snapshot_t *snapshots,
+                                      int snapshot_count,
+                                      double *runtime_mean,
+                                      double *runtime_max,
+                                      double *gap_mean,
+                                      double *gap_max) {
+    int count = 0;
+    double runtime_sum = 0.0;
+    double gap_sum = 0.0;
+    if (runtime_mean) *runtime_mean = -1.0;
+    if (runtime_max) *runtime_max = -1.0;
+    if (gap_mean) *gap_mean = -1.0;
+    if (gap_max) *gap_max = -1.0;
+    if (!snapshots || snapshot_count <= 0) return;
+
+    for (int s = 0; s < snapshot_count; s++) {
+        for (int i = 0; i < snapshots[s].mip_detail_count; i++) {
+            const sweep_mip_solve_detail_t *detail = &snapshots[s].mip_solve_details[i];
+            runtime_sum += detail->runtime_seconds;
+            gap_sum += detail->gap_percent;
+            if (runtime_max && (count == 0 || detail->runtime_seconds > *runtime_max)) {
+                *runtime_max = detail->runtime_seconds;
+            }
+            if (gap_max && (count == 0 || detail->gap_percent > *gap_max)) {
+                *gap_max = detail->gap_percent;
+            }
+            count++;
+        }
+    }
+    if (count <= 0) return;
+    if (runtime_mean) *runtime_mean = runtime_sum / (double)count;
+    if (gap_mean) *gap_mean = gap_sum / (double)count;
+}
+
+static void write_sweep_mip_section(FILE *fp,
+                                    const sweep_config_t *cfg,
+                                    const sweep_snapshot_t *snapshots,
+                                    int snapshot_count) {
+    int first = 1;
+    fprintf(fp, "  \"mip\": {\n");
+    fprintf(fp, "    \"phase\": \"2seg\",\n");
+    fprintf(fp, "    \"timeout_seconds\": %.6f,\n", cfg ? (double)cfg->l1seg : 0.0);
+    fprintf(fp, "    \"solve_detail_tuple\": [\"node_count\", \"mip_size\", \"runtime_seconds\", \"gap_percent\"],\n");
+    fprintf(fp, "    \"solves\": [");
+    for (int s = 0; s < snapshot_count; s++) {
+        for (int i = 0; i < snapshots[s].mip_detail_count; i++) {
+            const sweep_mip_solve_detail_t *detail = &snapshots[s].mip_solve_details[i];
+            if (!first) fprintf(fp, ", ");
+            fprintf(fp, "[%d, [%d, %d], %.6f, %.6f]",
+                    detail->node_count,
+                    detail->model_num_vars,
+                    detail->model_num_constrs,
+                    detail->runtime_seconds,
+                    detail->gap_percent);
+            first = 0;
+        }
+    }
+    fprintf(fp, "]\n");
+    fprintf(fp, "  },\n");
 }
 
 static int write_sweep_json(const char *output_path,
@@ -1793,6 +1788,10 @@ static int write_sweep_json(const char *output_path,
     double station_move_median = -1.0;
     double pass_runtime_total_seconds = 0.0;
     double postprocessing_seconds = 0.0;
+    double mip_runtime_mean = -1.0;
+    double mip_runtime_max = -1.0;
+    double mip_gap_mean = -1.0;
+    double mip_gap_max = -1.0;
     if (!fp) return 0;
 
     compute_station_move_stats(snapshots, snapshot_count,
@@ -1805,6 +1804,9 @@ static int write_sweep_json(const char *output_path,
     }
     postprocessing_seconds = total_runtime_seconds - preprocessing_seconds - pass_runtime_total_seconds;
     if (postprocessing_seconds < 0.0) postprocessing_seconds = 0.0;
+    compute_sweep_mip_summary(snapshots, snapshot_count,
+                              &mip_runtime_mean, &mip_runtime_max,
+                              &mip_gap_mean, &mip_gap_max);
 
     fprintf(fp, "{\n");
     fprintf(fp, "  \"metadata\": {\n");
@@ -1837,6 +1839,7 @@ static int write_sweep_json(const char *output_path,
         fprintf(fp, "%s\n", (i + 1 < snapshot_count) ? "," : "");
     }
     fprintf(fp, "  },\n");
+    write_sweep_mip_section(fp, cfg, snapshots, snapshot_count);
 
     if (snapshots[snapshot_count - 1].pass_index == 0) snprintf(final_pass_name, sizeof(final_pass_name), "init");
     else snprintf(final_pass_name, sizeof(final_pass_name), "pass%d", snapshots[snapshot_count - 1].pass_index);
@@ -1877,22 +1880,16 @@ static int write_sweep_json(const char *output_path,
     fprintf(fp, "    \"accepted_capacity_solves\": %d,\n", total_boundary_changes);
     fprintf(fp, "    \"total_capacity_solves\": %d,\n", total_boundary_attempts);
     fprintf(fp, "    \"total_capacity_mip_solves\": %d,\n", total_capacity_mip_solves);
-    fprintf(fp, "    \"capacity_mip_gap_percent_values\": [");
-    if (total_gap_stats && total_gap_stats->count > 0) {
-        for (int i = 0; i < total_gap_stats->count; i++) {
-            fprintf(fp, "%.6f", total_gap_stats->values[i]);
-            if (i + 1 < total_gap_stats->count) fprintf(fp, ", ");
-        }
-    }
-    fprintf(fp, "],\n");
-    fprintf(fp, "    \"capacity_mip_runtime_seconds_values\": [");
-    if (total_runtime_stats && total_runtime_stats->count > 0) {
-        for (int i = 0; i < total_runtime_stats->count; i++) {
-            fprintf(fp, "%.6f", total_runtime_stats->values[i]);
-            if (i + 1 < total_runtime_stats->count) fprintf(fp, ", ");
-        }
-    }
-    fprintf(fp, "],\n");
+    fprintf(fp, "    \"mip_runtime_seconds\": {\"mean\": ");
+    write_json_double_or_null(fp, mip_runtime_mean);
+    fprintf(fp, ", \"max\": ");
+    write_json_double_or_null(fp, mip_runtime_max);
+    fprintf(fp, "},\n");
+    fprintf(fp, "    \"mip_gap_percent\": {\"mean\": ");
+    write_json_double_or_null(fp, mip_gap_mean);
+    fprintf(fp, ", \"max\": ");
+    write_json_double_or_null(fp, mip_gap_max);
+    fprintf(fp, "},\n");
     fprintf(fp, "    \"total_boundary_changes\": %d,\n", total_boundary_changes);
     fprintf(fp, "    \"method\": \"%s\"\n", strategy_name ? strategy_name : "sweep");
     fprintf(fp, "  }\n");
@@ -1905,7 +1902,8 @@ static int write_sweep_json(const char *output_path,
 static void parse_sweep_args(int argc, char **argv,
                              const char **strategy, const char **database,
                              const char **config, const char **input,
-                             const char **output, int *time_limit, int *l2seg) {
+                             const char **output, int *time_limit, int *l2seg,
+                             int *debug_mode) {
     *strategy = NULL;
     *database = NULL;
     *config = NULL;
@@ -1913,8 +1911,14 @@ static void parse_sweep_args(int argc, char **argv,
     *output = NULL;
     *time_limit = 0;
     *l2seg = 0;
+    *debug_mode = 0;
 
-    for (int i = 1; i < argc - 1; i++) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--debug") == 0) {
+            *debug_mode = 1;
+            continue;
+        }
+        if (i >= argc - 1) break;
         if (strcmp(argv[i], "--strategy") == 0) *strategy = argv[i + 1];
         else if (strcmp(argv[i], "--database") == 0) *database = argv[i + 1];
         else if (strcmp(argv[i], "--config") == 0) *config = argv[i + 1];
@@ -1927,7 +1931,7 @@ static void parse_sweep_args(int argc, char **argv,
 
 int mode_sweep(int argc, char **argv) {
     const char *strategy = NULL, *database = NULL, *config = NULL, *input = NULL, *output = NULL;
-    int time_limit = 0, cli_l2seg = 0;
+    int time_limit = 0, cli_l2seg = 0, debug_mode = 0;
     sqlite3 *db = NULL;
     nn_instance_t inst = {0};
     sweep_boat_t boat;
@@ -1953,7 +1957,7 @@ int mode_sweep(int argc, char **argv) {
     gap_stats_init(&total_gap_stats);
     runtime_stats_init(&total_mip_runtime_stats);
 
-    parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output, &time_limit, &cli_l2seg);
+    parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output, &time_limit, &cli_l2seg, &debug_mode);
     (void)cli_l2seg;
     if (!strategy || !database || !config || !input || !output) {
         fprintf(stderr, "ERROR: sweep requires --strategy, --database, --config, --input, and --output\n");
@@ -2044,20 +2048,22 @@ int mode_sweep(int argc, char **argv) {
                 GRBfreeenv(env);
                 goto cleanup;
             }
-            if (!write_sweep_json(output, db, &boat, &inst,
-                                  &sweep_cfg,
-                                  snapshots, snapshot_count,
-                                  total_boundary_attempts,
-                                  total_boundary_changes,
-                                  total_capacity_mip_solves, &total_gap_stats, &total_mip_runtime_stats,
-                                  preprocessing_seconds,
-                                  snapshot.total_runtime_seconds,
-                                  strategy, 0)) {
-                fprintf(stderr, "ERROR: Failed to persist initial sweep snapshot JSON\n");
-                GRBfreeenv(env);
-                goto cleanup;
+            if (debug_mode) {
+                if (!write_sweep_json(output, db, &boat, &inst,
+                                      &sweep_cfg,
+                                      snapshots, snapshot_count,
+                                      total_boundary_attempts,
+                                      total_boundary_changes,
+                                      total_capacity_mip_solves, &total_gap_stats, &total_mip_runtime_stats,
+                                      preprocessing_seconds,
+                                      snapshot.total_runtime_seconds,
+                                      strategy, 0)) {
+                    fprintf(stderr, "ERROR: Failed to persist initial sweep snapshot JSON\n");
+                    GRBfreeenv(env);
+                    goto cleanup;
+                }
             }
-            printf("Wrote initial sweep snapshot: init %.2f nm feasible=%s\n",
+            printf("Stored initial sweep snapshot: init %.2f nm feasible=%s\n",
                    snapshot.solution.total_distance, snapshot.feasible ? "true" : "false");
             fflush(stdout);
         }
@@ -2252,24 +2258,26 @@ int mode_sweep(int argc, char **argv) {
             for (int i = 0; i < snapshot.mip_runtime_count; i++) {
                 runtime_stats_add(&total_mip_runtime_stats, snapshot.mip_runtime_values[i]);
             }
-            if (!write_sweep_json(output, db, &boat, &inst,
-                                  &sweep_cfg,
-                                  snapshots, snapshot_count,
-                                  total_boundary_attempts,
-                                  total_boundary_changes,
-                                  total_capacity_mip_solves, &total_gap_stats, &total_mip_runtime_stats,
-                                  preprocessing_seconds,
-                                  snapshot.total_runtime_seconds,
-                                  strategy, 0)) {
-                fprintf(stderr, "ERROR: Failed to persist sweep snapshot JSON\n");
-                gap_stats_free(&pass_gap_stats);
-                runtime_stats_free(&pass_runtime_stats);
-                free(boundary_port_ids);
-                free(boundary_gain_nm);
-                free(pass_mip_solve_details);
-                free(active);
-                GRBfreeenv(env);
-                goto cleanup;
+            if (debug_mode) {
+                if (!write_sweep_json(output, db, &boat, &inst,
+                                      &sweep_cfg,
+                                      snapshots, snapshot_count,
+                                      total_boundary_attempts,
+                                      total_boundary_changes,
+                                      total_capacity_mip_solves, &total_gap_stats, &total_mip_runtime_stats,
+                                      preprocessing_seconds,
+                                      snapshot.total_runtime_seconds,
+                                      strategy, 0)) {
+                    fprintf(stderr, "ERROR: Failed to persist sweep snapshot JSON\n");
+                    gap_stats_free(&pass_gap_stats);
+                    runtime_stats_free(&pass_runtime_stats);
+                    free(boundary_port_ids);
+                    free(boundary_gain_nm);
+                    free(pass_mip_solve_details);
+                    free(active);
+                    GRBfreeenv(env);
+                    goto cleanup;
+                }
             }
             gap_stats_free(&pass_gap_stats);
             runtime_stats_free(&pass_runtime_stats);

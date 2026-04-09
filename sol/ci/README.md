@@ -21,7 +21,7 @@ default initialization for downstream refinement.
 ## Route Plotting
 
 ![CI Initialization](init.png)
-![CI Sweep Adjustment](sweep_60.png)
+![CI Sweep Adjustment](sweep.png)
 
 ## Segment Summary
 

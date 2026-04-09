@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "init_nn_1.0",
-    "timestamp": "1775167759",
+    "timestamp": "1775768059",
     "mode": "init_nn",
     "strategy": "nn",
     "boat_id": 2,
@@ -100,18 +100,27 @@
     "feasible": true
   }
   },
+  "mip": {
+    "phase": "1seg",
+    "timeout_seconds": 0.000000,
+    "solve_detail_tuple": ["node_count", "moved_stations", "mip_size", "runtime_seconds", "gap_percent"],
+    "solves": [[50, 21, [9604, 245], 0.519000, 0.000000], [63, 48, [15376, 310], 4.559000, 0.000000], [84, 77, [27556, 415], 25.388000, 0.000000], [111, 80, [48400, 550], 41.169000, 0.000000], [42, 35, [6724, 205], 5.851000, 0.000000], [40, 19, [6084, 195], 1.820000, 0.000000], [53, 17, [10816, 260], 4.627000, 0.000000], [38, 21, [5476, 185], 0.416000, 0.000000], [42, 19, [6724, 205], 0.405000, 0.000000], [49, 33, [9216, 240], 1.540000, 0.000000], [26, 5, [2500, 125], 0.089000, 0.000000], [5, 0, [64, 20], 0.004000, 0.000000], [3, 0, [16, 10], 0.004000, 0.000000]]
+  },
   "summary": {
     "final": "capacity-feasible",
     "status": "init_complete",
     "feasible": true,
     "total_distance_nm": [9219.15, 8507.42],
     "baseline_total_distance_nm": 9219.15,
-    "local_postopt_runtime_seconds": 81.364000,
+    "local_postopt_runtime_seconds": 86.391000,
     "final_total_distance_nm": 8507.42,
-    "preprocessing_seconds": 0.389911,
-    "solution_runtime_seconds": [0.011941, 81.364000],
-    "postprocessing_seconds": 0.775602,
-    "total_runtime_seconds": 82.541493,
+    "preprocessing_seconds": 0.713426,
+    "solution_runtime_seconds": [0.009482, 86.391000],
+    "mip_solves": 13,
+    "mip_runtime_seconds": {"mean": 6.645462, "max": 41.169000},
+    "mip_gap_percent": {"mean": 0.000000, "max": 0.000000},
+    "postprocessing_seconds": 0.781286,
+    "total_runtime_seconds": 87.895207,
     "method": "nearest_neighbor"
   }
 }

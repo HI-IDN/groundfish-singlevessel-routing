@@ -29,7 +29,7 @@ make -C src init_nn
 ## Route Plotting
 
 ![NN Initialization](init.png)
-![NN Sweep Adjustment](sweep_60.png)
+![NN Sweep Adjustment](sweep.png)
 
 ## Segment Summary
 

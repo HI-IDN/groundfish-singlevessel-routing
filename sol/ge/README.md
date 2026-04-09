@@ -19,7 +19,7 @@ particularly in regions where many similar‑length edges compete.
 ## Route Plotting
 
 ![GE Initialization](init.png)
-![GE Sweep Adjustment](sweep_60.png)
+![GE Sweep Adjustment](sweep.png)
 
 ## Segment Summary
 

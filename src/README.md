@@ -26,6 +26,16 @@ Current status:
 - sweep now assumes imported `init.json` already contains that local post-optimized baseline and preserves imported `dock_location_ids` on load
 - some JSON writing and waypoint-expansion code is still duplicated across modules and should be centralized later.
 
+JSON MIP solve-detail tuples:
+
+- MIP solve details live in the top-level `mip` section, not in `summary`.
+- `init.json` writes `mip.phase = "1seg"` for local segment post-optimization.
+- `sweep.json` writes `mip.phase = "2seg"` for boundary-sweep segment reoptimization.
+- `mip.timeout_seconds` is the per-MIP time limit used by that phase.
+- `init.json` and `sweep.json` use the same solve tuple layout: `[node_count, mip_size, runtime_seconds, gap_percent]`.
+- `node_count` is `stations + 2` because each segment MIP includes the segment stations plus start/end dock nodes.
+- `mip_size` is `[num_vars, num_constraints]`. For example, `mip_size = [5184, 180]` means 5,184 binary decision variables and 180 linear constraints.
+
 Design intent:
 
 - initialization strategies live in `init/`

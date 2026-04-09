@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 
 #include "../include/feasibility.h"
 #include "../include/init_types.h"
@@ -17,10 +18,17 @@ static const char *find_matching_brace(const char *p);
 static int extract_final_solution_variant_from_json(const char *json_path,
                                                     char **out_variant_name,
                                                     char **out_variant_object);
-static void write_init_mip_solve_detail_array(FILE *fp,
-                                              const char *key,
-                                              const init_mip_solve_detail_t *details,
-                                              int detail_count);
+static void compute_init_mip_summary(const init_mip_solve_detail_t *details,
+                                     int detail_count,
+                                     double *runtime_mean,
+                                     double *runtime_max,
+                                     double *gap_mean,
+                                     double *gap_max);
+static void write_init_mip_section(FILE *fp,
+                                   double timeout_seconds,
+                                   const init_mip_solve_detail_t *details,
+                                   int detail_count);
+static void write_json_double_or_null(FILE *fp, double value);
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
@@ -263,7 +271,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                        int is_feasible,
                        double preprocessing_seconds,
                        double solve_runtime_seconds,
-                       double local_postopt_runtime_seconds) {
+                       double local_postopt_runtime_seconds,
+                       double local_postopt_time_limit_seconds) {
     const char *final_variant_name = "capacity-feasible";
     const char *pre_local_postopt_variant_name = "baseline-capacity-feasible";
     FILE *fp = fopen(output_path, "w");
@@ -276,6 +285,10 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     char *original_noport_variant_name = NULL;
     char *original_noport_variant_object = NULL;
     int has_original_noport = 0;
+    double mip_runtime_mean = -1.0;
+    double mip_runtime_max = -1.0;
+    double mip_gap_mean = -1.0;
+    double mip_gap_max = -1.0;
 
     if (!fp) {
         perror("Cannot open output file");
@@ -519,6 +532,12 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    }\n");
     fprintf(fp, "  },\n");
 
+    compute_init_mip_summary(local_postopt_details, local_postopt_detail_count,
+                             &mip_runtime_mean, &mip_runtime_max,
+                             &mip_gap_mean, &mip_gap_max);
+    write_init_mip_section(fp, local_postopt_time_limit_seconds,
+                           local_postopt_details, local_postopt_detail_count);
+
     fprintf(fp, "  \"summary\": {\n");
     fprintf(fp, "    \"final\": \"%s\",\n", final_variant_name);
     fprintf(fp, "    \"status\": \"init_complete\",\n");
@@ -537,21 +556,17 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
     fprintf(fp, "    \"solution_runtime_seconds\": [%.6f, %.6f],\n",
             solve_runtime_seconds, local_postopt_runtime_seconds);
-    fprintf(fp, "    \"1seg_mip_solves\": %d,\n", local_postopt_detail_count);
-    fprintf(fp, "    \"1seg_mip_runtime_seconds_values\": [");
-    for (int i = 0; i < local_postopt_detail_count; i++) {
-        fprintf(fp, "%.6f", local_postopt_details[i].runtime_seconds);
-        if (i + 1 < local_postopt_detail_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-    fprintf(fp, "    \"1seg_mip_gap_percent_values\": [");
-    for (int i = 0; i < local_postopt_detail_count; i++) {
-        fprintf(fp, "%.6f", local_postopt_details[i].gap_percent);
-        if (i + 1 < local_postopt_detail_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-    write_init_mip_solve_detail_array(fp, "1seg_mip_solves_detail",
-                                      local_postopt_details, local_postopt_detail_count);
+    fprintf(fp, "    \"mip_solves\": %d,\n", local_postopt_detail_count);
+    fprintf(fp, "    \"mip_runtime_seconds\": {\"mean\": ");
+    write_json_double_or_null(fp, mip_runtime_mean);
+    fprintf(fp, ", \"max\": ");
+    write_json_double_or_null(fp, mip_runtime_max);
+    fprintf(fp, "},\n");
+    fprintf(fp, "    \"mip_gap_percent\": {\"mean\": ");
+    write_json_double_or_null(fp, mip_gap_mean);
+    fprintf(fp, ", \"max\": ");
+    write_json_double_or_null(fp, mip_gap_max);
+    fprintf(fp, "},\n");
     fprintf(fp, "    \"postprocessing_seconds\": 0.0,\n");
     fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n",
             preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds);
@@ -566,29 +581,60 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     free(original_noport_variant_object);
 }
 
-static void write_init_mip_solve_detail_array(FILE *fp,
-                                              const char *key,
-                                              const init_mip_solve_detail_t *details,
-                                              int detail_count) {
-    fprintf(fp, "    \"%s\": [", key);
-    if (details && detail_count > 0) fprintf(fp, "\n");
+static void compute_init_mip_summary(const init_mip_solve_detail_t *details,
+                                     int detail_count,
+                                     double *runtime_mean,
+                                     double *runtime_max,
+                                     double *gap_mean,
+                                     double *gap_max) {
+    double runtime_sum = 0.0;
+    double gap_sum = 0.0;
+    if (runtime_mean) *runtime_mean = -1.0;
+    if (runtime_max) *runtime_max = -1.0;
+    if (gap_mean) *gap_mean = -1.0;
+    if (gap_max) *gap_max = -1.0;
+    if (!details || detail_count <= 0) return;
+
+    for (int i = 0; i < detail_count; i++) {
+        runtime_sum += details[i].runtime_seconds;
+        gap_sum += details[i].gap_percent;
+        if (runtime_max && (i == 0 || details[i].runtime_seconds > *runtime_max)) {
+            *runtime_max = details[i].runtime_seconds;
+        }
+        if (gap_max && (i == 0 || details[i].gap_percent > *gap_max)) {
+            *gap_max = details[i].gap_percent;
+        }
+    }
+    if (runtime_mean) *runtime_mean = runtime_sum / (double)detail_count;
+    if (gap_mean) *gap_mean = gap_sum / (double)detail_count;
+}
+
+static void write_init_mip_section(FILE *fp,
+                                   double timeout_seconds,
+                                   const init_mip_solve_detail_t *details,
+                                   int detail_count) {
+    fprintf(fp, "  \"mip\": {\n");
+    fprintf(fp, "    \"phase\": \"1seg\",\n");
+    fprintf(fp, "    \"timeout_seconds\": %.6f,\n", timeout_seconds);
+    fprintf(fp, "    \"solve_detail_tuple\": [\"node_count\", \"mip_size\", \"runtime_seconds\", \"gap_percent\"],\n");
+    fprintf(fp, "    \"solves\": [");
     for (int i = 0; i < detail_count; i++) {
         const init_mip_solve_detail_t *detail = &details[i];
-        fprintf(fp, "      {\"segment_index\": %d, \"station_count\": %d, \"node_count\": %d, "
-                    "\"moved_stations\": %d, \"mip_size\": [%d, %d], "
-                    "\"runtime_seconds\": %.6f, \"gap_percent\": %.6f}%s\n",
-                detail->segment_index,
-                detail->station_count,
+        if (i) fprintf(fp, ", ");
+        fprintf(fp, "[%d, [%d, %d], %.6f, %.6f]",
                 detail->node_count,
-                detail->moved_stations,
                 detail->model_num_vars,
                 detail->model_num_constrs,
                 detail->runtime_seconds,
-                detail->gap_percent,
-                (i + 1 < detail_count) ? "," : "");
+                detail->gap_percent);
     }
-    if (details && detail_count > 0) fprintf(fp, "    ");
-    fprintf(fp, "],\n");
+    fprintf(fp, "]\n");
+    fprintf(fp, "  },\n");
+}
+
+static void write_json_double_or_null(FILE *fp, double value) {
+    if (value < 0.0 || isnan(value)) fprintf(fp, "null");
+    else fprintf(fp, "%.6f", value);
 }
 
 static int read_file_text(const char *path, char **out_text) {
@@ -1116,7 +1162,8 @@ int main(int argc, char **argv) {
                boat_start_loc_id, boat_end_loc_id, boat_capacity,
                boat_start_lat, boat_start_lon, is_feasible,
                elapsed_seconds(t0, t1), elapsed_seconds(t1, t_seg_end),
-               local_postopt_runtime_seconds);
+               local_postopt_runtime_seconds,
+               local_postopt_time_limit_seconds);
 
     printf("[OK] Wrote %s\n", output);
     printf("  segments: %d\n", sol.segment_count);
