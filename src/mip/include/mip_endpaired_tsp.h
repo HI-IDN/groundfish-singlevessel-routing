@@ -23,6 +23,8 @@ typedef struct {
     int solver_error;
     double gap;
     double runtime_seconds;
+    int model_num_vars;
+    int model_num_constrs;
 } mip_endpaired_solution_t;
 
 int solve_mip_endpaired_tsp(const mip_endpaired_instance_t *instance,

@@ -736,11 +736,38 @@ static void write_solution_section(FILE *fp, const char *label,
     free(dock_location_ids);
 }
 
+static void write_init_mip_solve_detail_array(FILE *fp,
+                                              const char *key,
+                                              const init_mip_solve_detail_t *details,
+                                              int detail_count) {
+    fprintf(fp, "    \"%s\": [", key);
+    if (details && detail_count > 0) fprintf(fp, "\n");
+    for (int i = 0; i < detail_count; i++) {
+        const init_mip_solve_detail_t *detail = &details[i];
+        fprintf(fp, "      {\"segment_index\": %d, \"station_count\": %d, \"node_count\": %d, "
+                    "\"moved_stations\": %d, \"mip_size\": [%d, %d], "
+                    "\"runtime_seconds\": %.6f, \"gap_percent\": %.6f}%s\n",
+                detail->segment_index,
+                detail->station_count,
+                detail->node_count,
+                detail->moved_stations,
+                detail->model_num_vars,
+                detail->model_num_constrs,
+                detail->runtime_seconds,
+                detail->gap_percent,
+                (i + 1 < detail_count) ? "," : "");
+    }
+    if (details && detail_count > 0) fprintf(fp, "    ");
+    fprintf(fp, "],\n");
+}
+
 /* Write NN solution to JSON in survey format */
 static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
                        const nn_solution_t *sol, int boat_id,
                        const nn_solution_t *pre_capacity_sol,
                        const nn_solution_t *pre_local_postopt_sol,
+                       const init_mip_solve_detail_t *local_postopt_details,
+                       int local_postopt_detail_count,
                        const char *boat_name,
                        const char *strategy_name,
                        const char *method_name,
@@ -874,6 +901,21 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         fprintf(fp, "%.6f", solve_runtime_seconds);
     }
     fprintf(fp, "],\n");
+    fprintf(fp, "    \"1seg_mip_solves\": %d,\n", local_postopt_detail_count);
+    fprintf(fp, "    \"1seg_mip_runtime_seconds_values\": [");
+    for (int i = 0; i < local_postopt_detail_count; i++) {
+        fprintf(fp, "%.6f", local_postopt_details[i].runtime_seconds);
+        if (i + 1 < local_postopt_detail_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "    \"1seg_mip_gap_percent_values\": [");
+    for (int i = 0; i < local_postopt_detail_count; i++) {
+        fprintf(fp, "%.6f", local_postopt_details[i].gap_percent);
+        if (i + 1 < local_postopt_detail_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+    write_init_mip_solve_detail_array(fp, "1seg_mip_solves_detail",
+                                      local_postopt_details, local_postopt_detail_count);
     fprintf(fp, "    \"postprocessing_seconds\": %.6f,\n",
             elapsed_seconds(t_output_start, t_output_expand_end));
     fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n",
@@ -1120,6 +1162,8 @@ int mode_init(int argc, char **argv) {
     double local_postopt_time_limit_seconds = read_init_local_postopt_time_limit_from_yaml(config);
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
+    init_mip_solve_detail_t *local_postopt_details = NULL;
+    int local_postopt_detail_count = 0;
     if (!init_copy_solution(&sol, &pre_local_postopt_sol)) {
         fprintf(stderr, "ERROR: Failed to copy pre-local-postopt init solution\n");
         sqlite3_close(db);
@@ -1130,7 +1174,9 @@ int mode_init(int argc, char **argv) {
                                   local_postopt_time_limit_seconds,
                                   &sol,
                                   &local_postopt_runtime_seconds,
-                                  &local_postopt_segment_solve_count)) {
+                                  &local_postopt_segment_solve_count,
+                                  &local_postopt_details,
+                                  &local_postopt_detail_count)) {
         fprintf(stderr, "ERROR: Failed to apply local post optimization to init solution\n");
         sqlite3_close(db);
         return 1;
@@ -1168,6 +1214,7 @@ int mode_init(int argc, char **argv) {
         write_json(db, output, &inst, &sol, boat_id,
                    ((strcmp(strategy, "ci") == 0) || (strcmp(strategy, "ge") == 0)) ? &pre_capacity_sol : NULL,
                    &pre_local_postopt_sol,
+                   local_postopt_details, local_postopt_detail_count,
                    boat_name, strategy, method_name,
                    boat_start_loc_id, boat_end_loc_id, boat_capacity, target_capacity, target_catch_slack_kg,
                    boat_start_lat, boat_start_lon, is_feasible,
@@ -1185,6 +1232,7 @@ int mode_init(int argc, char **argv) {
     init_free_solution(&sol);
     init_free_solution(&pre_capacity_sol);
     init_free_solution(&pre_local_postopt_sol);
+    free(local_postopt_details);
     free(inst.nodes);
     for (int i = 0; i < inst.max_loc_id; i++) {
         free(inst.distances[i]);

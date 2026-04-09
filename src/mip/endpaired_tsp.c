@@ -273,6 +273,8 @@ int solve_mip_endpaired_tsp(const mip_endpaired_instance_t *instance,
     if (error) goto quit;
 
     solution->total_distance_nm = solution->objective_value;
+    solution->model_num_vars = n * n;
+    solution->model_num_constrs = 5 * seg_size;
 
     if (instance->num_stations > 0 && node_tour) {
         int letour_len = 0;

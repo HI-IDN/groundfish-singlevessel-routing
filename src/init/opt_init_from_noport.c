@@ -17,10 +17,27 @@ static const char *find_matching_brace(const char *p);
 static int extract_final_solution_variant_from_json(const char *json_path,
                                                     char **out_variant_name,
                                                     char **out_variant_object);
+static void write_init_mip_solve_detail_array(FILE *fp,
+                                              const char *key,
+                                              const init_mip_solve_detail_t *details,
+                                              int detail_count);
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
            (double)(end.tv_nsec - start.tv_nsec) / 1e9;
+}
+
+static void normalize_json_text_newlines(char *text) {
+    char *src = text;
+    char *dst = text;
+    if (!text) return;
+    while (*src) {
+        if (*src != '\r') {
+            *dst++ = *src;
+        }
+        src++;
+    }
+    *dst = '\0';
 }
 
 static int read_boat_id_from_yaml(const char *yaml_path) {
@@ -234,6 +251,8 @@ static int lookup_waypoint_path_local(sqlite3 *db, int from_loc_id, int to_loc_i
 static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
                        const nn_solution_t *sol, int boat_id,
                        const nn_solution_t *pre_local_postopt_sol,
+                       const init_mip_solve_detail_t *local_postopt_details,
+                       int local_postopt_detail_count,
                        const char *noport_input_path,
                        const char *boat_name,
                        const char *strategy_name,
@@ -284,6 +303,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     has_original_noport = extract_final_solution_variant_from_json(noport_input_path,
                                                                    &original_noport_variant_name,
                                                                    &original_noport_variant_object);
+    normalize_json_text_newlines(original_noport_variant_object);
 
     fprintf(fp, "  \"solution\": {\n");
     if (has_original_noport) {
@@ -517,6 +537,21 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
     fprintf(fp, "    \"solution_runtime_seconds\": [%.6f, %.6f],\n",
             solve_runtime_seconds, local_postopt_runtime_seconds);
+    fprintf(fp, "    \"1seg_mip_solves\": %d,\n", local_postopt_detail_count);
+    fprintf(fp, "    \"1seg_mip_runtime_seconds_values\": [");
+    for (int i = 0; i < local_postopt_detail_count; i++) {
+        fprintf(fp, "%.6f", local_postopt_details[i].runtime_seconds);
+        if (i + 1 < local_postopt_detail_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "    \"1seg_mip_gap_percent_values\": [");
+    for (int i = 0; i < local_postopt_detail_count; i++) {
+        fprintf(fp, "%.6f", local_postopt_details[i].gap_percent);
+        if (i + 1 < local_postopt_detail_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+    write_init_mip_solve_detail_array(fp, "1seg_mip_solves_detail",
+                                      local_postopt_details, local_postopt_detail_count);
     fprintf(fp, "    \"postprocessing_seconds\": 0.0,\n");
     fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n",
             preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds);
@@ -529,6 +564,31 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     free(baseline_unique_waypoint_location_ids);
     free(original_noport_variant_name);
     free(original_noport_variant_object);
+}
+
+static void write_init_mip_solve_detail_array(FILE *fp,
+                                              const char *key,
+                                              const init_mip_solve_detail_t *details,
+                                              int detail_count) {
+    fprintf(fp, "    \"%s\": [", key);
+    if (details && detail_count > 0) fprintf(fp, "\n");
+    for (int i = 0; i < detail_count; i++) {
+        const init_mip_solve_detail_t *detail = &details[i];
+        fprintf(fp, "      {\"segment_index\": %d, \"station_count\": %d, \"node_count\": %d, "
+                    "\"moved_stations\": %d, \"mip_size\": [%d, %d], "
+                    "\"runtime_seconds\": %.6f, \"gap_percent\": %.6f}%s\n",
+                detail->segment_index,
+                detail->station_count,
+                detail->node_count,
+                detail->moved_stations,
+                detail->model_num_vars,
+                detail->model_num_constrs,
+                detail->runtime_seconds,
+                detail->gap_percent,
+                (i + 1 < detail_count) ? "," : "");
+    }
+    if (details && detail_count > 0) fprintf(fp, "    ");
+    fprintf(fp, "],\n");
 }
 
 static int read_file_text(const char *path, char **out_text) {
@@ -927,6 +987,8 @@ int main(int argc, char **argv) {
     double local_postopt_time_limit_seconds = 0.0;
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
+    init_mip_solve_detail_t *local_postopt_details = NULL;
+    int local_postopt_detail_count = 0;
     struct timespec t0, t1, t_seg_end, t_postopt_end;
 
     for (int i = 1; i < argc - 1; i++) {
@@ -1028,7 +1090,9 @@ int main(int argc, char **argv) {
                                   local_postopt_time_limit_seconds,
                                   &sol,
                                   &local_postopt_runtime_seconds,
-                                  &local_postopt_segment_solve_count)) {
+                                  &local_postopt_segment_solve_count,
+                                  &local_postopt_details,
+                                  &local_postopt_detail_count)) {
         fprintf(stderr, "Failed to apply local post optimization to OPT init solution\n");
         sqlite3_close(db);
         free(station_order);
@@ -1045,6 +1109,7 @@ int main(int argc, char **argv) {
 
     write_json(db, output, &inst, &sol, boat_id,
                &pre_local_postopt_sol,
+               local_postopt_details, local_postopt_detail_count,
                input,
                boat_name,
                "opt", "segment_from_noport",
@@ -1068,6 +1133,7 @@ int main(int argc, char **argv) {
     free(station_order);
     free_solution(&sol);
     free_solution(&pre_local_postopt_sol);
+    free(local_postopt_details);
     free_instance(&inst);
     return 0;
 }

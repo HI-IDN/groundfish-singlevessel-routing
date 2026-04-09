@@ -119,6 +119,37 @@ static int find_station_index_local(const nn_instance_t *inst, int station_id) {
     return -1;
 }
 
+static int count_segment_reordered_stations(const nn_solution_t *input,
+                                            int segment_index,
+                                            const int *signed_station_ids,
+                                            int station_count) {
+    int moved = 0;
+    int k = 0;
+    int *original_signed_ids = NULL;
+
+    if (!input || !signed_station_ids || station_count <= 0) return 0;
+    original_signed_ids = (int*)malloc((size_t)station_count * sizeof(int));
+    if (!original_signed_ids) return 0;
+
+    for (int i = 0; i < input->visit_station_count; i++) {
+        if (input->visit_station_segment[i] != segment_index) continue;
+        if (k >= station_count) break;
+        original_signed_ids[k++] = input->visit_station_ids[i] *
+                                   ((input->visit_station_direction[i] < 0) ? -1 : 1);
+    }
+    if (k != station_count) {
+        free(original_signed_ids);
+        return 0;
+    }
+
+    for (int i = 0; i < station_count; i++) {
+        if (original_signed_ids[i] != signed_station_ids[i]) moved++;
+    }
+
+    free(original_signed_ids);
+    return moved;
+}
+
 #ifdef HAVE_GUROBI
 static int solve_segment_order(const nn_instance_t *inst,
                                const int *station_ids,
@@ -128,7 +159,10 @@ static int solve_segment_order(const nn_instance_t *inst,
                                double time_limit_seconds,
                                GRBenv *env,
                                int **signed_station_ids_out,
-                               double *runtime_seconds_out) {
+                               double *runtime_seconds_out,
+                               double *gap_percent_out,
+                               int *model_num_vars_out,
+                               int *model_num_constrs_out) {
     mip_endpaired_instance_t mip_instance;
     mip_endpaired_solution_t mip_solution;
     mip_params_t mip_params;
@@ -176,6 +210,9 @@ static int solve_segment_order(const nn_instance_t *inst,
     *signed_station_ids_out = mip_solution.signed_station_ids;
     mip_solution.signed_station_ids = NULL;
     if (runtime_seconds_out) *runtime_seconds_out = mip_solution.runtime_seconds;
+    if (gap_percent_out) *gap_percent_out = mip_solution.gap * 100.0;
+    if (model_num_vars_out) *model_num_vars_out = mip_solution.model_num_vars;
+    if (model_num_constrs_out) *model_num_constrs_out = mip_solution.model_num_constrs;
 
     free_mip_endpaired_solution(&mip_solution);
     free(instance_station_ids);
@@ -201,9 +238,13 @@ int init_apply_local_postopt(const nn_instance_t *inst,
                              double time_limit_seconds,
                              nn_solution_t *output,
                              double *runtime_seconds_out,
-                             int *segment_solve_count_out) {
+                             int *segment_solve_count_out,
+                             init_mip_solve_detail_t **solve_details_out,
+                             int *solve_detail_count_out) {
     if (runtime_seconds_out) *runtime_seconds_out = 0.0;
     if (segment_solve_count_out) *segment_solve_count_out = 0;
+    if (solve_details_out) *solve_details_out = NULL;
+    if (solve_detail_count_out) *solve_detail_count_out = 0;
     if (!inst || !input || !output) return 0;
     init_free_solution(output);
 
@@ -220,6 +261,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
     int *segment_ends = NULL, seg_ends_cap = 0;
     int *segment_catches = NULL, seg_catches_cap = 0;
     double *segment_dists = NULL; int seg_dists_cap = 0;
+    init_mip_solve_detail_t *solve_details = NULL;
     double total_distance = 0.0;
     int total_catch = 0;
 
@@ -234,6 +276,12 @@ int init_apply_local_postopt(const nn_instance_t *inst,
     GRBsetintparam(env, "OutputFlag", 0);
     GRBsetintparam(env, "LogToConsole", 0);
 
+    if (input->segment_count > 0) {
+        solve_details = (init_mip_solve_detail_t*)calloc((size_t)input->segment_count,
+                                                         sizeof(init_mip_solve_detail_t));
+        if (!solve_details) goto fail;
+    }
+
     for (int s = 0; s < input->segment_count; s++) {
         int station_count = 0;
         int start_loc_id;
@@ -241,8 +289,11 @@ int init_apply_local_postopt(const nn_instance_t *inst,
         int *station_ids = NULL;
         int *signed_station_ids = NULL;
         double segment_runtime = 0.0;
+        double segment_gap_percent = -1.0;
         double segment_distance = 0.0;
         double input_segment_distance = 0.0;
+        int segment_model_num_vars = 0;
+        int segment_model_num_constrs = 0;
         int current_loc_id;
         int segment_start_idx = tour_len;
 
@@ -274,11 +325,24 @@ int init_apply_local_postopt(const nn_instance_t *inst,
         fflush(stdout);
 
         if (!solve_segment_order(inst, station_ids, station_count, start_loc_id, end_loc_id,
-                                 time_limit_seconds, env, &signed_station_ids, &segment_runtime)) {
+                                 time_limit_seconds, env, &signed_station_ids, &segment_runtime,
+                                 &segment_gap_percent, &segment_model_num_vars,
+                                 &segment_model_num_constrs)) {
             free(station_ids);
             goto fail;
         }
         free(station_ids);
+
+        if (solve_details) {
+            solve_details[s].segment_index = s + 1;
+            solve_details[s].station_count = station_count;
+            solve_details[s].node_count = station_count + 2;
+            solve_details[s].moved_stations = count_segment_reordered_stations(input, s, signed_station_ids, station_count);
+            solve_details[s].model_num_vars = segment_model_num_vars;
+            solve_details[s].model_num_constrs = segment_model_num_constrs;
+            solve_details[s].runtime_seconds = segment_runtime;
+            solve_details[s].gap_percent = segment_gap_percent;
+        }
 
         current_loc_id = start_loc_id;
         for (int i = 0; i < station_count; i++) {
@@ -389,6 +453,9 @@ int init_apply_local_postopt(const nn_instance_t *inst,
     }
 
     GRBfreeenv(env);
+    if (solve_details_out) *solve_details_out = solve_details;
+    else free(solve_details);
+    if (solve_detail_count_out) *solve_detail_count_out = input->segment_count;
     return 1;
 
 fail:
@@ -402,6 +469,7 @@ fail:
     free(segment_ends);
     free(segment_catches);
     free(segment_dists);
+    free(solve_details);
     return 0;
 #endif
 }
