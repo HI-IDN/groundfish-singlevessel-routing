@@ -106,3 +106,4 @@ tex.cache/
 dat/parsed_data.sqlite
 sol/solutions.sqlite
 dat/gsp.db
+dat/legacy_distances.db

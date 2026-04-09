@@ -29,6 +29,7 @@ clang main.c \
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
+#include <sqlite3.h>
 
 #include "gurobi_c.h"
 
@@ -488,6 +489,119 @@ static void free_exdata(ExData *ex){
   free(ex->LatLonDegMin);
 }
 
+static int write_distance_matrix_sqlite(const char *fname,
+                                        const ItemVec *items,
+                                        const ExData *ex,
+                                        const double *FullDist,
+                                        const int *FullFsb,
+                                        int FullM)
+{
+  sqlite3 *db = NULL;
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_open(fname, &db);
+  if (rc != SQLITE_OK) {
+    fprintf(stderr, "sqlite open failed: %s\n", db ? sqlite3_errmsg(db) : "unknown");
+    if (db) sqlite3_close(db);
+    return 1;
+  }
+
+  rc = sqlite3_exec(db,
+                    "PRAGMA journal_mode=WAL;"
+                    "DROP TABLE IF EXISTS legacy_distances;"
+                    "CREATE TABLE legacy_distances ("
+                    "from_node INTEGER,"
+                    "to_node INTEGER,"
+                    "from_loc_index INTEGER,"
+                    "to_loc_index INTEGER,"
+                    "from_side INTEGER,"
+                    "to_side INTEGER,"
+                    "from_type INTEGER,"
+                    "to_type INTEGER,"
+                    "from_name TEXT,"
+                    "to_name TEXT,"
+                    "from_lat_deg REAL,"
+                    "from_lon_deg REAL,"
+                    "to_lat_deg REAL,"
+                    "to_lon_deg REAL,"
+                    "distance_nm REAL,"
+                    "feasible INTEGER"
+                    ");"
+                    "CREATE INDEX idx_legacy_from_to ON legacy_distances(from_node, to_node);"
+                    "CREATE INDEX idx_legacy_coords ON legacy_distances(from_lat_deg, from_lon_deg, to_lat_deg, to_lon_deg);",
+                    NULL, NULL, NULL);
+  if (rc != SQLITE_OK) {
+    fprintf(stderr, "sqlite schema setup failed: %s\n", sqlite3_errmsg(db));
+    sqlite3_close(db);
+    return 1;
+  }
+
+  rc = sqlite3_prepare_v2(db,
+                          "INSERT INTO legacy_distances ("
+                          "from_node,to_node,from_loc_index,to_loc_index,from_side,to_side,"
+                          "from_type,to_type,from_name,to_name,from_lat_deg,from_lon_deg,"
+                          "to_lat_deg,to_lon_deg,distance_nm,feasible"
+                          ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
+                          -1, &stmt, NULL);
+  if (rc != SQLITE_OK) {
+    fprintf(stderr, "sqlite prepare failed: %s\n", sqlite3_errmsg(db));
+    sqlite3_close(db);
+    return 1;
+  }
+
+  sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+
+  for (int i = 0; i < FullM; i++) {
+    int from_loc = i / 2;
+    int from_side = i % 2;
+    int from_item_idx = ex->ItemIndex[from_loc];
+    const Item *from_item = &items->a[from_item_idx];
+    double from_lat_deg = ex->LatLonRad[from_loc * 4 + (from_side == 0 ? 0 : 2)] * 180.0 / PI;
+    double from_lon_deg = ex->LatLonRad[from_loc * 4 + (from_side == 0 ? 1 : 3)] * 180.0 / PI;
+
+    for (int j = 0; j < FullM; j++) {
+      int to_loc = j / 2;
+      int to_side = j % 2;
+      int to_item_idx = ex->ItemIndex[to_loc];
+      const Item *to_item = &items->a[to_item_idx];
+      double to_lat_deg = ex->LatLonRad[to_loc * 4 + (to_side == 0 ? 0 : 2)] * 180.0 / PI;
+      double to_lon_deg = ex->LatLonRad[to_loc * 4 + (to_side == 0 ? 1 : 3)] * 180.0 / PI;
+
+      sqlite3_bind_int(stmt, 1, i);
+      sqlite3_bind_int(stmt, 2, j);
+      sqlite3_bind_int(stmt, 3, from_loc);
+      sqlite3_bind_int(stmt, 4, to_loc);
+      sqlite3_bind_int(stmt, 5, from_side);
+      sqlite3_bind_int(stmt, 6, to_side);
+      sqlite3_bind_int(stmt, 7, ex->Type[from_loc]);
+      sqlite3_bind_int(stmt, 8, ex->Type[to_loc]);
+      sqlite3_bind_text(stmt, 9, from_item->Name ? from_item->Name : "", -1, SQLITE_STATIC);
+      sqlite3_bind_text(stmt, 10, to_item->Name ? to_item->Name : "", -1, SQLITE_STATIC);
+      sqlite3_bind_double(stmt, 11, from_lat_deg);
+      sqlite3_bind_double(stmt, 12, from_lon_deg);
+      sqlite3_bind_double(stmt, 13, to_lat_deg);
+      sqlite3_bind_double(stmt, 14, to_lon_deg);
+      sqlite3_bind_double(stmt, 15, FullDist[i * FullM + j]);
+      sqlite3_bind_int(stmt, 16, FullFsb[i * FullM + j]);
+
+      rc = sqlite3_step(stmt);
+      if (rc != SQLITE_DONE) {
+        fprintf(stderr, "sqlite insert failed: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        sqlite3_close(db);
+        return 1;
+      }
+      sqlite3_reset(stmt);
+      sqlite3_clear_bindings(stmt);
+    }
+  }
+
+  sqlite3_finalize(stmt);
+  sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+  sqlite3_close(db);
+  return 0;
+}
+
 static void append_type_ex(const ItemVec *items, int typ, ExData *ex, int *kptr) {
   int k=*kptr;
   for(int i=0;i<items->n;i++){
@@ -819,7 +933,7 @@ int __stdcall subtourelim(GRBmodel *model, void *cbdata, int where, void *usrdat
 /* ---------- Main ---------- */
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [timelimit_seconds] [--no-ports] [--write-dat <out.dat>]\n", argv[0]);
+    fprintf(stderr, "Usage: %s <datafile.dat> <ship_id 1..4> [timelimit_seconds] [--no-ports] [--write-dat <out.dat>] [--write-matrix <out.sqlite>]\n", argv[0]);
     return 1;
   }
 
@@ -828,6 +942,7 @@ int main(int argc, char **argv) {
   double timelimit = 3600.0;
   int skip_ports = 0;
   const char *write_dat = NULL;
+  const char *write_matrix = NULL;
   for (int i = 3; i < argc; i++) {
     if (strcmp(argv[i], "--no-ports") == 0) {
       skip_ports = 1;
@@ -837,6 +952,13 @@ int main(int argc, char **argv) {
         i++;
       } else {
         die("--write-dat requires a path");
+      }
+    } else if (strcmp(argv[i], "--write-matrix") == 0) {
+      if (i + 1 < argc) {
+        write_matrix = argv[i + 1];
+        i++;
+      } else {
+        die("--write-matrix requires a path");
       }
     } else {
       timelimit = atof(argv[i]);
@@ -868,6 +990,13 @@ int main(int argc, char **argv) {
   int *full_fsb = NULL;
   int full_m = 0;
   build_waypoint_dist(&ex, NULL, 0, &dist, &fsb, &full_dist, &full_fsb, &full_m);
+
+  if (write_matrix) {
+    if (write_distance_matrix_sqlite(write_matrix, &items, &ex, full_dist, full_fsb, full_m) != 0) {
+      die("Failed to write legacy distance matrix export");
+    }
+    printf("Legacy distance matrix written to %s\n", write_matrix);
+  }
 
   /* special closure between nodes 0 and 1 */
   dist[0*n + 1] = 0.0;

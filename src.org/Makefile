@@ -1,6 +1,7 @@
-.PHONY: all demo cap matheur matcapheur matcapmutheur matcapmut_v2 matcapmutheur_v3 utils clean db
+.PHONY: all demo demo-msvc cap matheur matcapheur matcapmutheur matcapmut_v2 matcapmutheur_v3 utils clean db
 
-CC ?= clang
+CC ?= /mingw64/bin/cc
+MSVC ?= cl
 
 # Output directories (relative to src/)
 BIN_DIR ?= ../bin
@@ -12,6 +13,12 @@ UNAME_S := $(shell uname -s)
 # Robust Windows/MSYS/CYGWIN detection: prefer MSYSTEM env var when present
 # IS_WINDOWS will be '1' on MSYS/MINGW/CYGWIN or when OS=Windows_NT
 IS_WINDOWS := $(shell if [ -n "$$MSYSTEM" ]; then echo 1; elif echo "$(UNAME_S)" | grep -E -q "MINGW|MSYS|CYGWIN" 2>/dev/null; then echo 1; elif [ "x$(OS)" = "xWindows_NT" ]; then echo 1; fi)
+# Fallback for this repo's typical Windows/MSYS setup: detect installed Windows Gurobi tree.
+ifeq ($(strip $(IS_WINDOWS)),)
+ifneq ($(wildcard /c/gurobi1301/win64/include/gurobi_c.h),)
+IS_WINDOWS := 1
+endif
+endif
 
 # Fallback: if IS_WINDOWS contains '1' it'll be considered true
 
@@ -20,11 +27,24 @@ IS_WINDOWS := $(shell if [ -n "$$MSYSTEM" ]; then echo 1; elif echo "$(UNAME_S)"
 ifeq ($(UNAME_S),Darwin)
 GUROBI_HOME ?= /Library/gurobi1300/macos_universal2
 else
+ifeq ($(IS_WINDOWS),1)
+GUROBI_HOME ?= /c/gurobi1301/win64
+else
 GUROBI_HOME ?= /opt/gurobi1300/linux64
+endif
 endif
 
 GUROBI_INC = -I$(GUROBI_HOME)/include
+ifeq ($(IS_WINDOWS),1)
+GUROBI_LIB = -L$(GUROBI_HOME)/lib -lgurobi130
+WIN_LINK_FLAGS = -Wl,--enable-auto-import
+else
 GUROBI_LIB = -L$(GUROBI_HOME)/lib -lgurobi130 -Wl,-rpath,$(GUROBI_HOME)/lib
+WIN_LINK_FLAGS =
+endif
+GUROBI_HOME_WIN ?= C:/gurobi1301/win64
+GUROBI_INC_WIN = /I"$(GUROBI_HOME_WIN)/include"
+GUROBI_LIB_WIN = "$(GUROBI_HOME_WIN)/lib/gurobi130.lib"
 
 # -------- utils shared lib + rpath / windows dll + import lib --------
 ifeq ($(UNAME_S),Darwin)
@@ -64,31 +84,37 @@ all: demo cap matheur matcapheur matcapmutheur matcapmut_v2 matcapmutheur_v3 uti
 
 demo: main.c utils
 	mkdir -p $(BIN_DIR)
-	$(CC) main.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/demo
+	$(CC) main.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) $(WIN_LINK_FLAGS) -lsqlite3 -lm -o $(BIN_DIR)/demo
+
+# Windows/MSVC build path for the legacy demo.
+# This links directly against Gurobi's .lib and compiles utils.c into the exe.
+demo-msvc: main.c utils.c
+	mkdir -p $(BIN_DIR)
+	$(MSVC) /nologo /O2 /Fe$(BIN_DIR)/demo_legacy.exe main.c utils.c $(GUROBI_INC_WIN) $(GUROBI_LIB_WIN)
 
 cap: capacity.c utils
 	mkdir -p $(BIN_DIR)
-	$(CC) capacity.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/cap
+	$(CC) capacity.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) $(WIN_LINK_FLAGS) -lm -o $(BIN_DIR)/cap
 
 matheur: matheur.c utils
 	mkdir -p $(BIN_DIR)
-	$(CC) matheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matheur
+	$(CC) matheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) $(WIN_LINK_FLAGS) -lm -o $(BIN_DIR)/matheur
 
 matcapheur: matcapheur.c utils
 	mkdir -p $(BIN_DIR)
-	$(CC) matcapheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapheur
+	$(CC) matcapheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) $(WIN_LINK_FLAGS) -lm -o $(BIN_DIR)/matcapheur
 
 matcapmutheur: matcapmutheur.c utils
 	mkdir -p $(BIN_DIR)
-	$(CC) matcapmutheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapmutheur
+	$(CC) matcapmutheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) $(WIN_LINK_FLAGS) -lm -o $(BIN_DIR)/matcapmutheur
 
 matcapmut_v2: matcapmut_v2.c utils
 	mkdir -p $(BIN_DIR)
-	$(CC) matcapmut_v2.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapmut_v2
+	$(CC) matcapmut_v2.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) $(WIN_LINK_FLAGS) -lm -o $(BIN_DIR)/matcapmut_v2
 
 matcapmutheur_v3: matcapmutheur_v3.c utils
 	mkdir -p $(BIN_DIR)
-	$(CC) matcapmutheur_v3.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapmutheur_v3
+	$(CC) matcapmutheur_v3.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) $(WIN_LINK_FLAGS) -lm -o $(BIN_DIR)/matcapmutheur_v3
 
 utils: utils.c
 	mkdir -p $(LIB_DIR)
