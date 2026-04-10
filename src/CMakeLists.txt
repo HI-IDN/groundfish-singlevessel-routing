@@ -161,30 +161,30 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     )
 endif()
 
-add_executable(gsp_init_opt
-    init/opt_init_from_noport.c
+add_executable(gsp_init_from_order
+    init/init_from_order.c
     init/local_postopt.c
     common/feasibility.c
     common/sql_utils.c
 )
 
-target_link_libraries(gsp_init_opt
+target_link_libraries(gsp_init_from_order
     ${SQLITE3_LIBRARIES}
     m
 )
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
-    target_include_directories(gsp_init_opt PRIVATE
+    target_include_directories(gsp_init_from_order PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/mip/include
         ${GUROBI_INCLUDE_DIR}
     )
-    target_compile_definitions(gsp_init_opt PRIVATE HAVE_GUROBI=1)
-    target_sources(gsp_init_opt PRIVATE
+    target_compile_definitions(gsp_init_from_order PRIVATE HAVE_GUROBI=1)
+    target_sources(gsp_init_from_order PRIVATE
         mip/endpaired_tsp.c
         mip/mip_common.c
         mip/mip_paired_tour.c
     )
-    target_link_libraries(gsp_init_opt
+    target_link_libraries(gsp_init_from_order
         -L${GUROBI_LIBRARY_DIR}
         gurobi130
     )
@@ -200,13 +200,15 @@ set(SOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../sol)
 set(SOL_NN_DIR ${SOL_DIR}/nn)
 set(SOL_GE_DIR ${SOL_DIR}/ge)
 set(SOL_CI_DIR ${SOL_DIR}/ci)
-set(SOL_OPT_DIR ${SOL_DIR}/opt)
+set(SOL_NOPORT_DIR ${SOL_DIR}/noport)
+set(SOL_FIXEDPORT_DIR ${SOL_DIR}/fixedport)
 
 file(MAKE_DIRECTORY ${SOL_DIR})
 file(MAKE_DIRECTORY ${SOL_NN_DIR})
 file(MAKE_DIRECTORY ${SOL_GE_DIR})
 file(MAKE_DIRECTORY ${SOL_CI_DIR})
-file(MAKE_DIRECTORY ${SOL_OPT_DIR})
+file(MAKE_DIRECTORY ${SOL_NOPORT_DIR})
+file(MAKE_DIRECTORY ${SOL_FIXEDPORT_DIR})
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     add_custom_target(run_init_nn
@@ -282,7 +284,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     )
 
     add_custom_target(run_noport_opt
-        COMMAND $<TARGET_FILE:gsp_noport_opt> --database ${DATABASE} --config ${CONFIG_YAML} --output ${SOL_OPT_DIR}/noport.json
+        COMMAND $<TARGET_FILE:gsp_noport_opt> --database ${DATABASE} --config ${CONFIG_YAML} --output ${SOL_NOPORT_DIR}/noport.json
         DEPENDS gsp_noport_opt
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Preprocessing: no-port optimal station ordering"
@@ -296,11 +298,16 @@ else()
     )
 endif()
 
-add_custom_target(run_init_opt
-    COMMAND $<TARGET_FILE:gsp_init_opt> --database ${DATABASE} --config ${CONFIG_YAML} --input ${SOL_OPT_DIR}/noport.json --output ${SOL_OPT_DIR}/init.json
-    DEPENDS gsp_init_opt
+add_custom_target(run_init_from_order
+    COMMAND $<TARGET_FILE:gsp_init_from_order> --database ${DATABASE} --config ${CONFIG_YAML} --input ${SOL_NOPORT_DIR}/noport.json --output ${SOL_NOPORT_DIR}/init.json
+    DEPENDS gsp_init_from_order
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Phase 0: OPT initialization from no-port ordering"
+    COMMENT "Phase 0: initialization from ordered input"
+)
+
+add_custom_target(run_init_noport
+    DEPENDS run_noport_opt run_init_from_order
+    COMMENT "Phase 0: no-port initialization"
 )
 
 # ============================================================
@@ -371,6 +378,6 @@ if(RUNTIME_STAGE_COMMANDS)
     )
 endif()
 
-install(TARGETS gsp_init_opt
+install(TARGETS gsp_init_from_order
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )

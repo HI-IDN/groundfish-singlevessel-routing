@@ -19,8 +19,8 @@ The intended split is:
 
 Current status:
 
-- `init/` contains the implemented construction heuristics `nn`, `ge`, `ci`, plus the OPT init path built from a no-port ordering.
-- all init methods share a final local segment post-optimization step controlled by `init.local_post_opt.time_limit_seconds` in `config/gsp_solver.yaml`
+- `init/` contains the implemented construction heuristics `nn`, `ge`, `ci`, plus the ordered-input init converter used by `noport`.
+- all init methods share a final local segment post-optimization step controlled by `gurobi.l1seg` in `config/gsp_solver.yaml`
 - `mip/` contains the no-port model and placeholders for the other Gurobi models.
 - `sweep/` is being rebuilt around the paper’s boundary-sweep phase.
 - sweep now assumes imported `init.json` already contains that local post-optimized baseline and preserves imported `dock_location_ids` on load
@@ -47,7 +47,4 @@ Common wrapper commands:
 
 - `make -C src prepare-routing-data`
   runs the routing-data pipeline in one pass: coastline/waypoint bootstrap, station import, distance build, and unused-waypoint pruning
-- `make -C src init_nn`
-- `make -C src init_ge`
-- `make -C src init_ci`
-- `make -C src init_opt`
+- `make -C src init INIT=<method>` where `method` is either `noport`, `nn`, `ci` or `ge`.

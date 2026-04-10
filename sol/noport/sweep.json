@@ -3,13 +3,13 @@
     "solver_version": "sweep_1.0",
     "timestamp": "1775769511",
     "mode": "sweep",
-    "strategy": "opt",
+    "strategy": "noport",
     "boat_id": 2,
     "boat_name": "Árni Friðriksson",
     "boat_docked_location": {"lat": 64.046333, "lon": -22.139000},
     "boat_location_id": 5,
-    "l1seg": 0,
-    "l2seg": 0,
+    "mip_time_limit_seconds": 0,
+    "global_time_limit_seconds": 172800,
     "max_iterations": 100
   },
   "problem": {
@@ -316,6 +316,6 @@
     "mip_runtime_seconds": {"mean": 1.828776, "max": 59.990000},
     "mip_gap_percent": {"mean": 0.000175, "max": 0.008203},
     "total_boundary_changes": 3,
-    "method": "opt"
+    "method": "noport"
   }
 }

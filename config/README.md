@@ -14,13 +14,21 @@ This minimal YAML file defines solver parameters, while most data is loaded from
 
 ## Configuration File: `gsp_solver.yaml`
 
+### Global Configuration
+
+```yaml
+global_time_limit_seconds: 172800  # 48 hours
+```
+
+`global_time_limit_seconds` is a project-level wall-clock cap for long-running workflows. Sweep
+returns when the cap is reached even if `sweep.max_iterations` has not been reached.
+
 ### Boat Configuration
 
 ```yaml
 boat:
   id: 2                          # boat_id in database
-  name: "Árni Friðriksson"       # Display name
-  # capacity and home_port loaded from database
+  # name of boat, its capacity and home_port is loaded from database
 ```
 
 **Why minimal?** Capacity and home port are stored in the database and loaded at runtime. This ensures consistency and avoids duplication.
@@ -30,60 +38,45 @@ boat:
 ```yaml
 init:
   strategies:
-    - opt      # Optimal NP-MIP (expensive, 2 hours)
+    - noport   # No-port MIP station ordering
+    - fixedport # Fixed port-order MIP
     - nn       # Nearest Neighbor (fast)
     - ge       # Greedy Edge (fast)
     - ci       # Cheapest Insertion (moderate)
-  
-  opt:
-    time_limit_seconds: 7200   # 2 hours for full dataset (580 stations)
-```
 
-**Why 7200 seconds (2 hours)?**
-- The OPT run should take about an hour
-- Better to have generous limit than risk timeout
+  noport: {}
+  fixedport: {}
+  nn: {}
+  ge: {}
+  ci: {}
+```
 
 ### Phase 1: Matheuristic Sweep Configuration
 
 ```yaml
 sweep:
-  l2seg_values: [60, 120, 180, 240, 300, 360, 420, 480]  # L2SEG: segment length in stations
-  
-  l1seg: 0                        # L1SEG: time limit per segment (0 = no limit for pure TSP)
-  
   max_iterations: 100             # Max iterations per sweep
-  max_stall_iterations: 20        # Stop if no improvement for N iterations
-  log_interval: 1                 # Log every iteration
 ```
-
-**L2SEG (Segment Length)**:
-- Tests 8 different segment sizes: 60, 120, 180, 240, 300, 360, 420, 480 stations
-- Larger L2SEG = larger segments = slower solve but more reordering potential
-- Smaller L2SEG = faster solves but limited improvements
-
-**L1SEG (Time Limit per Segment)**:
-- 0 = no time limit
-- Per-segment TSP has no capacity constraints, so it's pure TSP
-- Should solve quickly without artificial limits
-- Can set to positive value if needed (e.g., 120 seconds)
 
 ### Gurobi Configuration
 
 ```yaml
 gurobi:
+  l0seg: 0                    # No-port MIP time limit (0 = no limit)
+  l1seg: 0                    # Per-segment TSP time limit (0 = no limit)
+  l2seg: 0                    # Two-segment sweep MIP time limit (0 = no limit)
+  lXseg: 86400                # Fixed-port MIP time limit after incumbent exists
   env_log_file: null           # null = no log file
   threads: 0                   # 0 = auto-detect CPU count
   mip_focus: 0                 # 0 = balanced search
   seed: -1                     # -1 = random seed (reproducible per run)
 ```
 
-### Database Configuration
-
-```yaml
-database:
-  path: "sol/experiments.db"
-  auto_create_schema: true     # Auto-create tables if missing
-```
+**Segment Time Limits**:
+- `l0seg` controls the no-port MIP solve.
+- `l1seg` controls single-segment TSP solves.
+- `l2seg` controls two-segment sweep MIP solves.
+- `lXseg` controls the full fixed-port-order MIP solve after an incumbent exists.
 
 ### Output Configuration
 
@@ -100,8 +93,8 @@ When the solver starts, it loads:
 ```sql
 -- Boat info
 SELECT capacity FROM boats WHERE id = 2;
-SELECT l.lat, l.lon FROM boats b 
-  JOIN locations l ON b.location_id = l.id 
+SELECT l.lat, l.lon FROM boats b
+  JOIN locations l ON b.location_id = l.id
   WHERE b.id = 2;
 
 -- Instance parameters
@@ -114,41 +107,6 @@ This means:
 - ✅ Boat/instance data always in sync
 - ✅ Easy to switch boats (just change `boat.id: 2` to `boat.id: 1`)
 - ✅ YAML stays clean and minimal
-
-## Performance Expectations
-
-### Phase 0 (INIT)
-- OPT: 7200 seconds (2 hours) max → actual ~425-600 seconds
-- NN: <1 second
-- GE: 5-10 seconds
-- CI: 30-60 seconds
-- **Total: ~2-3 hours** (OPT dominates)
-
-### Phase 1 (MH Sweep)
-- 8 L2SEG values × 100 iterations each
-- Per-segment TSP fast (no capacity, no time limit)
-- **Expected total: ~24 hours** for 8 sweeps
-
-### Complete Pipeline
-- Phase 0: ~2-3 hours
-- Phase 1: ~24 hours
-- **Total: ~26-27 hours**
-
-## Monitoring Configuration
-
-Check which values are being used:
-
-```bash
-# Show all YAML settings
-cat config/gsp_solver.yaml
-
-# Show database values at runtime
-sqlite3 dat/gsp_data.db "SELECT capacity FROM boats WHERE id=2;"
-sqlite3 dat/gsp_data.db "SELECT COUNT(*) FROM stations;"
-
-# Show Gurobi environment
-gurobi_cl --license
-```
 
 ## References
 

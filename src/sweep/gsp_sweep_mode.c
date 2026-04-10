@@ -81,8 +81,8 @@ typedef struct {
 } sweep_boat_t;
 
 typedef struct {
-    int l1seg;
-    int l2seg;
+    int mip_time_limit_seconds;
+    int global_time_limit_seconds;
     int max_iterations;
 } sweep_config_t;
 
@@ -417,11 +417,11 @@ static int read_int_after_colon(const char *line, int default_value) {
 static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *cfg) {
     FILE *fp;
     char line[MAX_LINE];
-    int in_sweep = 0;
+    int section = 0;
 
     if (!cfg) return;
-    cfg->l1seg = 0;
-    cfg->l2seg = 0;
+    cfg->mip_time_limit_seconds = 0;
+    cfg->global_time_limit_seconds = 0;
     cfg->max_iterations = 0;
 
     fp = fopen(yaml_path, "r");
@@ -432,25 +432,23 @@ static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *c
         while (*trim == ' ' || *trim == '\t') trim++;
         if (*trim == '#' || *trim == '\0' || *trim == '\n') continue;
 
-        if (!in_sweep) {
-            if (strncmp(trim, "sweep:", 6) == 0) in_sweep = 1;
+        if (trim == line && strncmp(trim, "global_time_limit_seconds:", 26) == 0) {
+            cfg->global_time_limit_seconds = read_int_after_colon(trim, cfg->global_time_limit_seconds);
+            section = 0;
             continue;
         }
 
-        if (trim == line && strchr(trim, ':') && strncmp(trim, "sweep:", 6) != 0) break;
+        if (trim == line && strchr(trim, ':')) {
+            if (strncmp(trim, "sweep:", 6) == 0) section = 1;
+            else if (strncmp(trim, "gurobi:", 7) == 0) section = 2;
+            else section = 0;
+            continue;
+        }
 
-        if (strncmp(trim, "l1seg:", 6) == 0) {
-            cfg->l1seg = read_int_after_colon(trim, cfg->l1seg);
-        } else if (strncmp(trim, "max_iterations:", 15) == 0) {
+        if (section == 1 && strncmp(trim, "max_iterations:", 15) == 0) {
             cfg->max_iterations = read_int_after_colon(trim, cfg->max_iterations);
-        } else if (strncmp(trim, "l2seg:", 6) == 0) {
-            cfg->l2seg = read_int_after_colon(trim, cfg->l2seg);
-        } else if (strncmp(trim, "l2seg_values:", 12) == 0) {
-            const char *p = strchr(trim, '[');
-            if (p) {
-                while (*p && !isdigit((unsigned char)*p) && *p != '-') p++;
-                if (*p) cfg->l2seg = atoi(p);
-            }
+        } else if (section == 2 && strncmp(trim, "l2seg:", 6) == 0) {
+            cfg->mip_time_limit_seconds = read_int_after_colon(trim, cfg->mip_time_limit_seconds);
         }
     }
 
@@ -1744,7 +1742,7 @@ static void write_sweep_mip_section(FILE *fp,
     int first = 1;
     fprintf(fp, "  \"mip\": {\n");
     fprintf(fp, "    \"phase\": \"2seg\",\n");
-    fprintf(fp, "    \"timeout_seconds\": %.6f,\n", cfg ? (double)cfg->l1seg : 0.0);
+    fprintf(fp, "    \"timeout_seconds\": %.6f,\n", cfg ? (double)cfg->mip_time_limit_seconds : 0.0);
     fprintf(fp, "    \"solve_detail_tuple\": [\"node_count\", \"mip_size\", \"runtime_seconds\", \"gap_percent\"],\n");
     fprintf(fp, "    \"solves\": [");
     for (int s = 0; s < snapshot_count; s++) {
@@ -1819,8 +1817,8 @@ static int write_sweep_json(const char *output_path,
     fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n",
             boat->boat_start_lat, boat->boat_start_lon);
     fprintf(fp, "    \"boat_location_id\": %d,\n", boat->boat_start_loc_id);
-    fprintf(fp, "    \"l1seg\": %d,\n", cfg ? cfg->l1seg : 0);
-    fprintf(fp, "    \"l2seg\": %d,\n", cfg ? cfg->l2seg : 0);
+    fprintf(fp, "    \"mip_time_limit_seconds\": %d,\n", cfg ? cfg->mip_time_limit_seconds : 0);
+    fprintf(fp, "    \"global_time_limit_seconds\": %d,\n", cfg ? cfg->global_time_limit_seconds : 0);
     fprintf(fp, "    \"max_iterations\": %d\n", cfg ? cfg->max_iterations : 0);
     fprintf(fp, "  },\n");
 
@@ -1902,15 +1900,13 @@ static int write_sweep_json(const char *output_path,
 static void parse_sweep_args(int argc, char **argv,
                              const char **strategy, const char **database,
                              const char **config, const char **input,
-                             const char **output, int *time_limit, int *l2seg,
-                             int *debug_mode) {
+                             const char **output, int *time_limit, int *debug_mode) {
     *strategy = NULL;
     *database = NULL;
     *config = NULL;
     *input = NULL;
     *output = NULL;
     *time_limit = 0;
-    *l2seg = 0;
     *debug_mode = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -1925,13 +1921,12 @@ static void parse_sweep_args(int argc, char **argv,
         else if (strcmp(argv[i], "--input") == 0) *input = argv[i + 1];
         else if (strcmp(argv[i], "--output") == 0) *output = argv[i + 1];
         else if (strcmp(argv[i], "--time-limit") == 0) *time_limit = atoi(argv[i + 1]);
-        else if (strcmp(argv[i], "--l2seg") == 0) *l2seg = atoi(argv[i + 1]);
     }
 }
 
 int mode_sweep(int argc, char **argv) {
     const char *strategy = NULL, *database = NULL, *config = NULL, *input = NULL, *output = NULL;
-    int time_limit = 0, cli_l2seg = 0, debug_mode = 0;
+    int time_limit = 0, debug_mode = 0;
     sqlite3 *db = NULL;
     nn_instance_t inst = {0};
     sweep_boat_t boat;
@@ -1957,8 +1952,7 @@ int mode_sweep(int argc, char **argv) {
     gap_stats_init(&total_gap_stats);
     runtime_stats_init(&total_mip_runtime_stats);
 
-    parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output, &time_limit, &cli_l2seg, &debug_mode);
-    (void)cli_l2seg;
+    parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output, &time_limit, &debug_mode);
     if (!strategy || !database || !config || !input || !output) {
         fprintf(stderr, "ERROR: sweep requires --strategy, --database, --config, --input, and --output\n");
         goto cleanup;
@@ -1988,8 +1982,9 @@ int mode_sweep(int argc, char **argv) {
     }
     printf("Loaded segmented input: %d segments, %.2f nm total\n",
            segment_count, input_total_distance_nm);
-    printf("Sweep parameters: l1seg=%d l2seg=%d max_iterations=%d time_limit=%d\n",
-           sweep_cfg.l1seg, sweep_cfg.l2seg, sweep_cfg.max_iterations, time_limit);
+    printf("Sweep parameters: mip_time_limit=%d max_iterations=%d global_time_limit=%d time_limit=%d\n",
+           sweep_cfg.mip_time_limit_seconds,
+           sweep_cfg.max_iterations, sweep_cfg.global_time_limit_seconds, time_limit);
     fflush(stdout);
 
     {
@@ -2089,6 +2084,16 @@ int mode_sweep(int argc, char **argv) {
             int pass_mip_detail_count = 0;
             int pass_mip_detail_capacity = 0;
 
+            clock_gettime(CLOCK_MONOTONIC, &t_now);
+            if (sweep_cfg.global_time_limit_seconds > 0 &&
+                elapsed_seconds(t_start, t_now) >= (double)sweep_cfg.global_time_limit_seconds) {
+                printf("Stopping sweep: global wall-clock limit reached (%.2fs >= %ds)\n",
+                       elapsed_seconds(t_start, t_now),
+                       sweep_cfg.global_time_limit_seconds);
+                fflush(stdout);
+                keep_running = 0;
+                break;
+            }
             if (sweep_cfg.max_iterations > 0 && pass_index > sweep_cfg.max_iterations) {
                 keep_running = 0;
                 break;
@@ -2122,6 +2127,29 @@ int mode_sweep(int argc, char **argv) {
                 int boundary_loc_id;
                 int boundary_port_id = 0;
                 char boundary_port_name[128];
+                double boundary_time_limit_seconds = (double)sweep_cfg.mip_time_limit_seconds;
+                clock_gettime(CLOCK_MONOTONIC, &t_now);
+                if (sweep_cfg.global_time_limit_seconds > 0 &&
+                    elapsed_seconds(t_start, t_now) >= (double)sweep_cfg.global_time_limit_seconds) {
+                    printf("Stopping sweep pass%d: global wall-clock limit reached before boundary %d (%.2fs >= %ds)\n",
+                           pass_index, b + 1,
+                           elapsed_seconds(t_start, t_now),
+                           sweep_cfg.global_time_limit_seconds);
+                    fflush(stdout);
+                    keep_running = 0;
+                    break;
+                }
+                if (sweep_cfg.global_time_limit_seconds > 0) {
+                    double remaining_seconds =
+                        (double)sweep_cfg.global_time_limit_seconds - elapsed_seconds(t_start, t_now);
+                    if (remaining_seconds <= 0.0) {
+                        keep_running = 0;
+                        break;
+                    }
+                    if (boundary_time_limit_seconds <= 0.0 || remaining_seconds < boundary_time_limit_seconds) {
+                        boundary_time_limit_seconds = remaining_seconds;
+                    }
+                }
                 if (!active[b]) continue;
                 active[b] = 0;
                 boundary_attempts++;
@@ -2165,7 +2193,7 @@ int mode_sweep(int argc, char **argv) {
                                       b + 1,
                                       b + 1,
                                       right_idx + 1,
-                                      (double)sweep_cfg.l1seg)) {
+                                      boundary_time_limit_seconds)) {
                     int station_changes = count_segment_station_changes(&left_before, &segments[b]) +
                                           count_segment_station_changes(&right_before, &segments[right_idx]);
                     double after_total = segments[b].distance_nm + segments[right_idx].distance_nm;
@@ -2289,6 +2317,10 @@ int mode_sweep(int argc, char **argv) {
             pass_index++;
             if (!changed) keep_running = 0;
             if (time_limit > 0 && snapshot.total_runtime_seconds >= (double)time_limit) keep_running = 0;
+            if (sweep_cfg.global_time_limit_seconds > 0 &&
+                snapshot.total_runtime_seconds >= (double)sweep_cfg.global_time_limit_seconds) {
+                keep_running = 0;
+            }
         }
 
         free(active);

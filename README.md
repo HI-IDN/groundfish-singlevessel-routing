@@ -97,10 +97,9 @@ Groundfish Survey Routing Solver: Complete Workflow
 The GSP solver optimizes groundfish survey routes for Icelandic research vessels using a two-phase
 approach:
 
-- **Phase 0 (INIT)**: Generate 4 initialization strategies (OPT, NN, GE, CI). Run once, solutions
+- **Phase 0 (INIT)**: Generate initialization strategies (noport, fixedport, NN, GE, CI). Run once, solutions
   cached in database.
-- **Phase 1 (MH)**: Improve from cached init solutions using matheuristic sweep. Reusable for
-  different L2SEG parameters.
+- **Phase 1 (MH)**: Improve from cached init solutions using matheuristic sweep.
 
 ### Problem Instance
 
@@ -123,22 +122,21 @@ capacity-feasible segment while keeping the imported segment boundaries fixed. T
 post-postopt distances are both reported in `init.json`, and sweep assumes this post-optimization
 has already been done.
 
-Configure that step in `config/gsp_solver.yaml`:
+Configure that step with `gurobi.l1seg` in `config/gsp_solver.yaml`:
 
 ```yaml
-init:
-  local_post_opt:
-    time_limit_seconds: 0   # 0 = uncapped
+gurobi:
+  l1seg: 0   # 0 = uncapped per-segment post-opt
 ```
 
 #### Single Strategy
 
 ```bash
-make -C src noport-opt
-make -C src init_opt
-make -C src init_nn
-make -C src init_ge
-make -C src init_ci
+make -C src noport
+make -C src init INIT=noport
+make -C src init INIT=nn
+make -C src init INIT=ge
+make -C src init INIT=ci
 ```
 
 #### Batch: All 4 Strategies
@@ -147,7 +145,7 @@ make -C src init_ci
 bash scripts/run_phase0_init.sh
 ```
 
-**Expected Output (OPT strategy)**:
+**Expected Output (noport strategy)**:
 
 ```
 ============================================================
@@ -158,7 +156,7 @@ Capacity: 45 tonnes
 Home Port: Hafnarfjörður
 Database: dat/gsp.db
 
-Strategy: OPT (Optimal via NP-MIP)
+Strategy: noport (NP-MIP station order)
 Solver: Gurobi 11.0
 CPUs Available: 8 cores
 Threads: 4 (Gurobi)
@@ -199,7 +197,7 @@ Sample output:
 ci|8654.32|580|13|87.4
 ge|8698.15|580|13|15.3
 nn|8721.45|580|13|8.2
-opt|8742.15|580|13|425.3
+noport|8742.15|580|13|425.3
 ```
 
 ### Phase 1: Matheuristic Sweep (Reusable)
@@ -211,29 +209,27 @@ capacity-aware MIP solves.
 
 ```bash
 ./build/gsp_gurobi --mode sweep \
-  --strategy opt \
+  --strategy noport \
   --database dat/gsp.db \
   --config config/gsp_solver.yaml \
-  --input sol/opt/init.json \
-  --output sol/opt/sweep.json \
+  --input sol/noport/init.json \
+  --output sol/noport/sweep.json \
   --time-limit 120
 ```
 
 Parameters:
 
-- `--init-strategy opt` - Use OPT init (looks up boat_id + strategy in database)
-- `--l2seg 120` - Segment size (120 stations per segment)
-- `--stride 60` - Overlap stride (50% overlap = L2SEG/2)
-- `--mip-time-limit 120` - Time limit per MIP solve (seconds)
+- `--init-strategy noport` - Use noport init (looks up boat_id + strategy in database)
+- `gurobi.l2seg` - Time limit per two-segment MIP solve (seconds)
 - `--max-iterations 100` - Maximum iterations to run
 
-#### Batch: All L2SEG Values
+#### Batch Sweep
 
 ```bash
 bash scripts/run_phase1_sweep.sh
 ```
 
-Runs sweeps with L2SEG = 60, 120, 180, 240, 300 using cached OPT initialization.
+Runs the sweep workflow using cached noport initialization.
 
 **Expected Output (Sweep Progress)**:
 
@@ -241,19 +237,16 @@ Runs sweeps with L2SEG = 60, 120, 180, 240, 300 using cached OPT initialization.
 ============================================================
 GSP Solver - Phase 1: Matheuristic Sweep
 ============================================================
-Init Strategy: OPT (init_run_id=1)
+Init Strategy: noport (init_run_id=1)
 Initial Distance: 8742.15 nm | Segments: 13
 
 Configuration:
-  L2SEG: 120 stations/segment
-  Stride: 60 stations
-  Overlap: 50%
-  MIP Time Limit: 120.0 s per segment solve
+  MIP Time Limit: 120.0 s per two-segment solve
   Max Iterations: 100
   CPUs Available: 8 cores
   Gurobi Threads: 4
 
-[INIT] Loading cached init solution (OPT, boat_id=2)...
+[INIT] Loading cached init solution (noport, boat_id=2)...
 [INIT] Distance: 8742.15 nm | Segments: 13 | Load: 528 tonnes
 
 [STARTING] Matheuristic iteration sweep...
@@ -290,16 +283,21 @@ boat:
   # capacity, home_port loaded from database
 
 init:
-  strategies: [ opt, nn, ge, ci ]
-  opt:
-    time_limit_seconds: 7200          # 2 hours for OPT initialization
+  strategies: [ noport, fixedport, nn, ge, ci ]
+  noport: {}
+  fixedport: {}
+  nn: {}
+  ge: {}
+  ci: {}
 
 sweep:
-  l2seg_values: [ 60, 120, 180, 240, 300, 360, 420, 480 ]  # L2SEG: segment length
-  l1seg: 0                            # L1SEG: time limit per segment (0 = no limit)
-
   max_iterations: 100
-  max_stall_iterations: 20
+
+gurobi:
+  l0seg: 0
+  l1seg: 0
+  l2seg: 0
+  lXseg: 86400
 ```
 
 ### Querying Results
@@ -318,21 +316,20 @@ sqlite3 dat/gsp.db \
    ORDER BY total_distance ASC;"
 ```
 
-**Best MH result for each L2SEG:**
+**Best MH result by run:**
 
 ```bash
 sqlite3 dat/gsp.db \
   "SELECT 
      init.strategy,
-     mh.l2seg,
      mh.final_distance,
      ROUND(100.0*(init.total_distance - mh.final_distance) / init.total_distance, 2) AS improvement_pct,
      mh.iterations_completed,
      ROUND(mh.total_runtime_seconds/60.0, 1) AS runtime_min
    FROM mh_runs mh
    JOIN init_runs init ON mh.init_run_id = init.id
-   WHERE init.boat_id = 2 AND init.strategy = 'opt'
-   ORDER BY mh.l2seg;"
+   WHERE init.boat_id = 2 AND init.strategy = 'noport'
+   ORDER BY mh.final_distance;"
 ```
 
 **Track convergence:**
@@ -358,7 +355,7 @@ sqlite3 dat/gsp.db \
 bash scripts/run_phase0_init.sh
 ```
 
-**`scripts/run_phase1_sweep.sh`** - Run MH sweeps (L2SEG = 60, 120, 180, 240, 300):
+**`scripts/run_phase1_sweep.sh`** - Run MH sweeps:
 
 ```bash
 bash scripts/run_phase1_sweep.sh
@@ -376,20 +373,15 @@ Typical runtimes on 8-core system (Árni Friðriksson, 580 stations, 45 tonne ca
 
 **Phase 0 (INIT):**
 
-- OPT: 400-500 seconds (~7-8 minutes)
+- noport: 400-500 seconds (~7-8 minutes)
 - NN: <1 second
 - GE: 5-10 seconds
 - CI: 45-60 seconds
 - **Total Phase 0**: ~10 minutes
 
-**Phase 1 (MH, per L2SEG):**
+**Phase 1 (MH):**
 
-- L2SEG=60: 90-120 minutes (100 iterations)
-- L2SEG=120: 110-140 minutes (100 iterations)
-- L2SEG=180: 120-150 minutes (100 iterations)
-- L2SEG=240: 100-130 minutes (100 iterations)
-- L2SEG=300: 80-110 minutes (100 iterations)
-- **Total Phase 1 (5 L2SEG)**: ~10-12 hours
+- Runtime depends mainly on `gurobi.l2seg`, active boundaries, and `sweep.max_iterations`.
 
 **Complete Pipeline**: ~10-13 hours total
 
@@ -413,9 +405,9 @@ Solution tracking uses 8 tables in `dat/gsp.db`:
 
 - Solution: Run Phase 0 first: `bash scripts/run_phase0_init.sh`
 
-**Problem: "No OPT solution available"**
+**Problem: "No noport solution available"**
 
-- Solution: OPT takes ~7 minutes. Use `--init-strategy nn` or `--init-strategy ge` for quick
+- Solution: noport takes ~7 minutes. Use `--init-strategy nn` or `--init-strategy ge` for quick
   testing.
 
 **Problem: Phase 1 taking very long**

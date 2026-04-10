@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "solver_version": "opt_noport_1.0",
+    "solver_version": "noport_1.0",
     "timestamp": "1774546480",
-    "mode": "init_opt",
-    "strategy": "opt",
+    "mode": "init_noport",
+    "strategy": "noport",
     "boat_id": 2,
     "boat_name": "Árni Friðriksson",
     "boat_docked_location": {"lat": 64.046333, "lon": -22.139000},
@@ -34,6 +34,13 @@
     "feasible": false
     }
   },
+  "mip": {
+    "phase": "noport",
+    "timeout_seconds": 0.000000,
+    "global_time_limit_seconds": 172800.000000,
+    "solve_detail_tuple": ["node_count", "mip_size", "runtime_seconds", "gap_percent"],
+    "solves": [[582, [1350244, 2905], 23666.340000, 0.009000]]
+  },
   "summary": {
     "final": "capacity-infeasible",
     "status": "noport_complete",
@@ -42,16 +49,18 @@
     "final_total_distance_nm": 5794.88,
     "preprocessing_seconds": 1.019000,
     "solution_runtime_seconds": [23666.340000],
+    "mip_solves": 1,
+    "mip_runtime_seconds": {"mean": 23666.340000, "max": 23666.340000},
+    "mip_gap_percent": {"mean": 0.009000, "max": 0.009000},
     "postprocessing_seconds": 0.0,
-    "total_runtime_seconds": 36619.029000,
+    "total_runtime_seconds": 23667.359000,
     "method": "noport_mip"
   },
   "solver_stats": {
     "status": "optimal",
     "preprocessing_seconds": 1.019000,
     "runtime_seconds": 23666.340000,
-    "cumulative_runtime_seconds": 36616.752000,
-    "cumulative_elapsed_seconds": 36619.029000,
+    "total_runtime_seconds": 23667.359000,
     "method": "noport_mip",
     "mip_gap": 0.000090
   }

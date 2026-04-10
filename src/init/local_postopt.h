@@ -16,7 +16,7 @@ typedef struct {
 
 int init_copy_solution(const nn_solution_t *src, nn_solution_t *dst);
 void init_free_solution(nn_solution_t *sol);
-double read_init_local_postopt_time_limit_from_yaml(const char *yaml_path);
+double read_init_mip_time_limit_from_yaml(const char *yaml_path);
 int init_apply_local_postopt(const nn_instance_t *inst,
                              const nn_solution_t *input,
                              int boat_start_loc_id,

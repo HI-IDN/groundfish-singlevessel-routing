@@ -1,6 +1,6 @@
-# OPT Initialization
+# Noport Initialization
 
-The OPT initialization mirrors the old `src` no-port model. It first solves a directed no-port TSP
+The noport initialization mirrors the old `src` no-port model. It first solves a directed no-port TSP
 over the boat and all stations only. Ports are not part of the optimization model at this stage.
 The boat contributes one start endpoint and one end endpoint, and each station contributes its two
 directional endpoints. The model then chooses a single Hamiltonian cycle on these doubled nodes with
@@ -17,14 +17,14 @@ High level:
 This separation is intentional. The no-port MIP is meant to answer only: *"what is the best station
 ordering if capacity resets are ignored?"* It is not the full capacity-feasible routing model.
 
-![OPT No-Port Model](noport.png)
+![Noport Model](noport.png)
 
-Because this is still a full directed TSP with lazy subtour elimination, OPT is much more expensive
+Because this is still a full directed TSP with lazy subtour elimination, noport is much more expensive
 than NN, GE, or CI. In return, it provides the strongest station-order baseline for later capacity
 repair and matheuristic refinement.
 
-![OPT Initialization](init.png)
-![OPT Sweep Adjustment](sweep.png)
+![Noport Initialization](init.png)
+![Noport Sweep Adjustment](sweep.png)
 
 ## Segment Summary
 

@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "solver_version": "init_opt_1.0",
+    "solver_version": "init_from_order_1.0",
     "timestamp": "1775767378",
-    "mode": "init_opt",
-    "strategy": "opt",
+    "mode": "init_noport",
+    "strategy": "noport",
     "boat_id": 2,
     "boat_name": "Árni Friðriksson",
     "boat_docked_location": {"lat": 64.046333, "lon": -22.139000},
@@ -137,6 +137,6 @@
     "mip_gap_percent": {"mean": 0.000000, "max": 0.000000},
     "postprocessing_seconds": 0.0,
     "total_runtime_seconds": 98.092600,
-    "method": "segment_from_noport"
+    "method": "segment_from_order"
   }
 }

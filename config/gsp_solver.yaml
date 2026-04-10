@@ -1,6 +1,9 @@
 # GSP Solver Configuration
 # Groundfish Survey Routing Optimization
 
+# Global wall-clock limit across long-running workflows (in seconds)
+global_time_limit_seconds: 172800      # 48 hours
+
 # Default boat configuration
 boat:
   id: 2                                  # Árni Friðriksson (boat_id in database)
@@ -8,43 +11,38 @@ boat:
 # Phase 0: Initialization Strategies
 init:
   target_catch_slack_kg: 1000            # Reserve slack so target capacity stays below raw capacity
-  local_post_opt:
-    time_limit_seconds: 0                # 0 = uncapped per-segment post-opt for all init methods
   strategies:
-    - opt                                # OPT: Optimal NP-MIP (expensive)
+    - noport                             # No-port MIP station ordering
+    - fixedport                          # Fixed port-order MIP
     - nn                                 # NN: Nearest Neighbor (fast)
     - ge                                 # GE: Greedy Edge (fast)
     - ci                                 # CI: Cheapest Insertion (moderate)
 
-  opt:
-    # NP-MIP solution mapped to a legal capacity feasible tour
-    time_limit_seconds: 86400             # 24 hours
-
-  nn:
-    # Nearest Neighbor - greedy heuristic, no time limit needed
-    time_limit_seconds: 0
-
-  ge:
-    # Greedy Edge - construction heuristic, no time limit needed
-    time_limit_seconds: 0
-
-  ci:
-    # Cheapest Insertion - construction heuristic, no time limit needed
-    time_limit_seconds: 0
+  noport: {}                             # Reserved for method-specific init options
+  fixedport: {}                          # Reserved for method-specific init options
+  nn: {}                                 # Reserved for method-specific init options
+  ge: {}                                 # Reserved for method-specific init options
+  ci: {}                                 # Reserved for method-specific init options
 
 # Phase 1: Matheuristic Sweep Parameters
 sweep:
-  # L2SEG: segment length in stations
-  l2seg: 0                               # 0 = no limit
-
-  # L1SEG: time limit per segment MIP solve (in seconds)
-  l1seg: 0                               # 0 = no time limit (per-segment TSP is pure TSP, no capacity)
-
   # Iteration control
   max_iterations: 100                    # Maximum iterations per L2SEG sweep
 
 # Gurobi Solver Settings
 gurobi:
+  # L0SEG: time limit for the no-port MIP solve (in seconds)
+  l0seg: 0                               # 0 = no time limit
+
+  # L1SEG: time limit per segment MIP solve (in seconds)
+  l1seg: 0                               # 0 = no time limit (per-segment TSP is pure TSP, no capacity)
+
+  # L2SEG: time limit for 2 segment MIP solve (in seconds) for the matheuristic sweep
+  l2seg: 0                               # 0 = no time limit
+
+  # LXSEG: time limit for the full fixed-port-order MIP solve after an incumbent exists (in seconds)
+  lXseg: 86400                           # 24 hours; fixed-port solve may run longer until first incumbent
+
   env_log_file: log/gurobi.log           # null=no log file, or path like "log/gurobi.log"
   threads: 2                             # 0=auto-detect, >0=fixed thread count
   mip_focus: 0                           # 0=balanced, 1=feasible, 2=optimal, 3=best_bound

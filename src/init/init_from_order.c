@@ -261,7 +261,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                        const nn_solution_t *pre_local_postopt_sol,
                        const init_mip_solve_detail_t *local_postopt_details,
                        int local_postopt_detail_count,
-                       const char *noport_input_path,
+                       const char *order_input_path,
                        const char *boat_name,
                        const char *strategy_name,
                        const char *method_name,
@@ -272,7 +272,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                        double preprocessing_seconds,
                        double solve_runtime_seconds,
                        double local_postopt_runtime_seconds,
-                       double local_postopt_time_limit_seconds) {
+                       double mip_time_limit_seconds) {
     const char *final_variant_name = "capacity-feasible";
     const char *pre_local_postopt_variant_name = "baseline-capacity-feasible";
     FILE *fp = fopen(output_path, "w");
@@ -282,9 +282,9 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     int baseline_uniq_wp_n = 0, baseline_uniq_wp_cap = 0;
     int has_pre_local_postopt = pre_local_postopt_sol &&
                                 pre_local_postopt_sol->visit_station_count > 0;
-    char *original_noport_variant_name = NULL;
-    char *original_noport_variant_object = NULL;
-    int has_original_noport = 0;
+    char *original_order_variant_name = NULL;
+    char *original_order_variant_object = NULL;
+    int has_original_order = 0;
     double mip_runtime_mean = -1.0;
     double mip_runtime_max = -1.0;
     double mip_gap_mean = -1.0;
@@ -297,7 +297,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
 
     fprintf(fp, "{\n");
     fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"init_opt_1.0\",\n");
+    fprintf(fp, "    \"solver_version\": \"init_from_order_1.0\",\n");
     fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
     fprintf(fp, "    \"mode\": \"init_%s\",\n", strategy_name ? strategy_name : "unknown");
     fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
@@ -313,16 +313,16 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "    \"capacity\": %.0f\n", boat_capacity);
     fprintf(fp, "  },\n");
 
-    has_original_noport = extract_final_solution_variant_from_json(noport_input_path,
-                                                                   &original_noport_variant_name,
-                                                                   &original_noport_variant_object);
-    normalize_json_text_newlines(original_noport_variant_object);
+    has_original_order = extract_final_solution_variant_from_json(order_input_path,
+                                                                  &original_order_variant_name,
+                                                                  &original_order_variant_object);
+    normalize_json_text_newlines(original_order_variant_object);
 
     fprintf(fp, "  \"solution\": {\n");
-    if (has_original_noport) {
+    if (has_original_order) {
         fprintf(fp, "    \"%s\": %s,\n",
-                original_noport_variant_name,
-                original_noport_variant_object);
+                original_order_variant_name,
+                original_order_variant_object);
     }
     if (has_pre_local_postopt) {
         fprintf(fp, "    \"%s\": {\n", pre_local_postopt_variant_name);
@@ -535,7 +535,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     compute_init_mip_summary(local_postopt_details, local_postopt_detail_count,
                              &mip_runtime_mean, &mip_runtime_max,
                              &mip_gap_mean, &mip_gap_max);
-    write_init_mip_section(fp, local_postopt_time_limit_seconds,
+    write_init_mip_section(fp, mip_time_limit_seconds,
                            local_postopt_details, local_postopt_detail_count);
 
     fprintf(fp, "  \"summary\": {\n");
@@ -577,8 +577,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fclose(fp);
     free(unique_waypoint_location_ids);
     free(baseline_unique_waypoint_location_ids);
-    free(original_noport_variant_name);
-    free(original_noport_variant_object);
+    free(original_order_variant_name);
+    free(original_order_variant_object);
 }
 
 static void compute_init_mip_summary(const init_mip_solve_detail_t *details,
@@ -772,11 +772,10 @@ cleanup:
     return 0;
 }
 
-static int parse_station_order_from_noport_json(const char *json_path, int **out_ids, int *out_n) {
+static int parse_station_order_from_order_json(const char *json_path, int **out_ids, int *out_n) {
     char *text = NULL;
     char *key = NULL;
     char *outer = NULL;
-    char *inner = NULL;
     char *p = NULL;
     int *ids = NULL;
     int count = 0;
@@ -797,20 +796,21 @@ static int parse_station_order_from_noport_json(const char *json_path, int **out
         free(text);
         return 0;
     }
-    inner = strchr(outer + 1, '[');
-    if (!inner) {
-        free(text);
-        return 0;
-    }
-
-    p = inner + 1;
+    p = outer + 1;
+    depth = 1;
     while (*p) {
         char *endptr = NULL;
         long val;
-        if (*p == '[') depth++;
         if (*p == ']') {
-            if (depth == 0) break;
             depth--;
+            if (depth == 0) break;
+            p++;
+            continue;
+        }
+        if (*p == '[') {
+            depth++;
+            p++;
+            continue;
         }
         if (!((*p >= '0' && *p <= '9') || *p == '-')) {
             p++;
@@ -835,6 +835,13 @@ static int parse_station_order_from_noport_json(const char *json_path, int **out
     return 1;
 }
 
+static const char *infer_strategy_from_path(const char *path) {
+    if (!path) return "noport";
+    if (strstr(path, "fixedport") || strstr(path, "fixed_port") || strstr(path, "fixed-port")) return "fixedport";
+    if (strstr(path, "noport") || strstr(path, "no_port") || strstr(path, "no-port")) return "noport";
+    return "order";
+}
+
 static int find_station_idx_by_table_id(const nn_instance_t *inst, int station_id) {
     for (int i = 0; i < inst->num_stations; i++) {
         if (inst->nodes[i].table_id == station_id) return i;
@@ -842,13 +849,13 @@ static int find_station_idx_by_table_id(const nn_instance_t *inst, int station_i
     return -1;
 }
 
-static int opt_segment_from_order(const nn_instance_t *inst,
-                                  const int *station_order,
-                                  int station_order_n,
-                                  nn_solution_t *sol,
-                                  int boat_start_loc_id,
-                                  int boat_end_loc_id,
-                                  int boat_capacity) {
+static int segment_from_order(const nn_instance_t *inst,
+                              const int *station_order,
+                              int station_order_n,
+                              nn_solution_t *sol,
+                              int boat_start_loc_id,
+                              int boat_end_loc_id,
+                              int boat_capacity) {
     int tour_cap = 256;
     int *tour = (int*)malloc((size_t)tour_cap * sizeof(int));
     int *segment_starts = NULL, seg_starts_cap = 0;
@@ -878,7 +885,7 @@ static int opt_segment_from_order(const nn_instance_t *inst,
         int stat_dir = 0;
 
         if (station_idx < 0) {
-            fprintf(stderr, "Station %d from noport.json not found in DB\n", station_id);
+            fprintf(stderr, "Station %d from ordered input not found in DB\n", station_id);
             return -1;
         }
 
@@ -1015,6 +1022,7 @@ int main(int argc, char **argv) {
     const char *config = NULL;
     const char *input = NULL;
     const char *output = NULL;
+    const char *strategy = NULL;
     sqlite3 *db = NULL;
     nn_instance_t inst = {0};
     nn_solution_t sol = {0};
@@ -1030,7 +1038,7 @@ int main(int argc, char **argv) {
     int station_order_n = 0;
     int is_feasible = 1;
     nn_solution_t pre_local_postopt_sol = {0};
-    double local_postopt_time_limit_seconds = 0.0;
+    double mip_time_limit_seconds = 0.0;
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     init_mip_solve_detail_t *local_postopt_details = NULL;
@@ -1042,17 +1050,19 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--config") == 0) config = argv[i + 1];
         else if (strcmp(argv[i], "--input") == 0) input = argv[i + 1];
         else if (strcmp(argv[i], "--output") == 0) output = argv[i + 1];
+        else if (strcmp(argv[i], "--strategy") == 0) strategy = argv[i + 1];
     }
 
     if (!database || !config || !input || !output) {
-        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <sol/opt/noport.json> --output <sol/opt/init.json>\n", argv[0]);
+        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <ordered.json> --output <init.json> [--strategy noport|fixedport]\n", argv[0]);
         return 1;
     }
+    if (!strategy) strategy = infer_strategy_from_path(input);
 
     clock_gettime(CLOCK_MONOTONIC, &t0);
     boat_id = read_boat_id_from_yaml(config);
 
-    if (!parse_station_order_from_noport_json(input, &station_order, &station_order_n)) {
+    if (!parse_station_order_from_order_json(input, &station_order, &station_order_n)) {
         fprintf(stderr, "Failed to read station order from %s\n", input);
         return 1;
     }
@@ -1097,18 +1107,19 @@ int main(int argc, char **argv) {
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
 
-    printf("OPT init from noport\n");
+    printf("Init from ordered input\n");
     printf("  input:    %s\n", input);
     printf("  output:   %s\n", output);
+    printf("  strategy: %s\n", strategy);
     printf("  boat:     %s (id=%d)\n", boat_name, boat_id);
     printf("  stations: %d\n", station_order_n);
     printf("  capacity: %.0f\n", boat_capacity);
-    printf("[INIT] Building capacity-feasible segmentation from no-port order\n");
+    printf("[INIT] Building capacity-feasible segmentation from ordered station input\n");
     fflush(stdout);
 
-    if (opt_segment_from_order(&inst, station_order, station_order_n, &sol,
-                               boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
-        fprintf(stderr, "Failed to segment noport station order\n");
+    if (segment_from_order(&inst, station_order, station_order_n, &sol,
+                           boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
+        fprintf(stderr, "Failed to segment ordered station input\n");
         sqlite3_close(db);
         free(station_order);
         free_solution(&sol);
@@ -1118,7 +1129,7 @@ int main(int argc, char **argv) {
     clock_gettime(CLOCK_MONOTONIC, &t_seg_end);
 
     if (!init_copy_solution(&sol, &pre_local_postopt_sol)) {
-        fprintf(stderr, "Failed to copy pre-local-postopt OPT init solution\n");
+        fprintf(stderr, "Failed to copy pre-local-postopt init solution\n");
         sqlite3_close(db);
         free(station_order);
         free_solution(&sol);
@@ -1130,16 +1141,16 @@ int main(int argc, char **argv) {
            pre_local_postopt_sol.segment_count, pre_local_postopt_sol.total_distance);
     fflush(stdout);
 
-    local_postopt_time_limit_seconds = read_init_local_postopt_time_limit_from_yaml(config);
+    mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
     if (!init_apply_local_postopt(&inst, &pre_local_postopt_sol,
                                   boat_start_loc_id, boat_end_loc_id,
-                                  local_postopt_time_limit_seconds,
+                                  mip_time_limit_seconds,
                                   &sol,
                                   &local_postopt_runtime_seconds,
                                   &local_postopt_segment_solve_count,
                                   &local_postopt_details,
                                   &local_postopt_detail_count)) {
-        fprintf(stderr, "Failed to apply local post optimization to OPT init solution\n");
+        fprintf(stderr, "Failed to apply local post optimization to init solution\n");
         sqlite3_close(db);
         free(station_order);
         free_solution(&sol);
@@ -1158,12 +1169,12 @@ int main(int argc, char **argv) {
                local_postopt_details, local_postopt_detail_count,
                input,
                boat_name,
-               "opt", "segment_from_noport",
+               strategy, "segment_from_order",
                boat_start_loc_id, boat_end_loc_id, boat_capacity,
                boat_start_lat, boat_start_lon, is_feasible,
                elapsed_seconds(t0, t1), elapsed_seconds(t1, t_seg_end),
                local_postopt_runtime_seconds,
-               local_postopt_time_limit_seconds);
+               mip_time_limit_seconds);
 
     printf("[OK] Wrote %s\n", output);
     printf("  segments: %d\n", sol.segment_count);
@@ -1172,8 +1183,8 @@ int main(int argc, char **argv) {
     printf("  local post-opt: solves=%d runtime=%.4f s time_limit=%s%.0f\n",
            local_postopt_segment_solve_count,
            local_postopt_runtime_seconds,
-           (local_postopt_time_limit_seconds > 0.0) ? "" : "uncapped ",
-           (local_postopt_time_limit_seconds > 0.0) ? local_postopt_time_limit_seconds : 0.0);
+           (mip_time_limit_seconds > 0.0) ? "" : "uncapped ",
+           (mip_time_limit_seconds > 0.0) ? mip_time_limit_seconds : 0.0);
     printf("  feasible: %s\n", is_feasible ? "true" : "false");
 
     sqlite3_close(db);

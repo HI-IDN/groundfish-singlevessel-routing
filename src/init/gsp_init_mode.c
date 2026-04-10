@@ -813,7 +813,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                        double preprocessing_seconds,
                        double solve_runtime_seconds,
                        double local_postopt_runtime_seconds,
-                       double local_postopt_time_limit_seconds,
+                       double mip_time_limit_seconds,
                        double check_runtime_seconds,
                        double *output_runtime_seconds) {
     waypoint_cache_t cache;
@@ -913,7 +913,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     compute_init_mip_summary(local_postopt_details, local_postopt_detail_count,
                              &mip_runtime_mean, &mip_runtime_max,
                              &mip_gap_mean, &mip_gap_max);
-    write_init_mip_section(fp, local_postopt_time_limit_seconds,
+    write_init_mip_section(fp, mip_time_limit_seconds,
                            local_postopt_details, local_postopt_detail_count);
 
     fprintf(fp, "  \"summary\": {\n");
@@ -1198,7 +1198,7 @@ int mode_init(int argc, char **argv) {
     double solve_runtime_seconds = elapsed_seconds(t_solve_start, t_solve_end);
     printf("[NN] Done in %.4f s\n", solve_runtime_seconds);
 
-    double local_postopt_time_limit_seconds = read_init_local_postopt_time_limit_from_yaml(config);
+    double mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     init_mip_solve_detail_t *local_postopt_details = NULL;
@@ -1210,7 +1210,7 @@ int mode_init(int argc, char **argv) {
     }
     if (!init_apply_local_postopt(&inst, &pre_local_postopt_sol,
                                   boat_start_loc_id, boat_end_loc_id,
-                                  local_postopt_time_limit_seconds,
+                                  mip_time_limit_seconds,
                                   &sol,
                                   &local_postopt_runtime_seconds,
                                   &local_postopt_segment_solve_count,
@@ -1223,8 +1223,8 @@ int mode_init(int argc, char **argv) {
     printf("[POSTOPT] Segment local post-opt: solves=%d runtime=%.4f s time_limit=%s%.0f\n",
            local_postopt_segment_solve_count,
            local_postopt_runtime_seconds,
-           (local_postopt_time_limit_seconds > 0.0) ? "" : "uncapped ",
-           (local_postopt_time_limit_seconds > 0.0) ? local_postopt_time_limit_seconds : 0.0);
+           (mip_time_limit_seconds > 0.0) ? "" : "uncapped ",
+           (mip_time_limit_seconds > 0.0) ? mip_time_limit_seconds : 0.0);
     printf("[POSTOPT] Distance: %.2f -> %.2f nm\n",
            pre_local_postopt_sol.total_distance,
            sol.total_distance);
@@ -1259,7 +1259,7 @@ int mode_init(int argc, char **argv) {
                    boat_start_lat, boat_start_lon, is_feasible,
                    t_mode_start,
                    preprocessing_seconds, solve_runtime_seconds, local_postopt_runtime_seconds,
-                   local_postopt_time_limit_seconds,
+                   mip_time_limit_seconds,
                    elapsed_seconds(t_check_start, t_check_end),
                    &output_runtime_seconds);
     }

@@ -9,9 +9,9 @@
 | MH-NN | MH with nearest-neighbor | `L_2seg = 1-8 min` | N/A | 6911.67 |
 | MH-CI | MH with cheapest-insertion | `L_2seg = 1-8 min` | 4377.20 | 5354.93 |
 | MH-GE | MH with greedy-edge | `L_2seg = 1-8 min` | 5027.03 | 5104.34 |
-| MH-OPT | MH with NP-based initialization | `L_2seg = 1-8 min` | NP-MIP | 4762.17 |
+| MH-noport | MH with NP-based initialization | `L_2seg = 1-8 min` | NP-MIP | 4762.17 |
 
-The four initialization strategies yield very different starting points. NN gives the weakest capacity-feasible baseline, while OPT gives the strongest baseline at the cost of a separate optimal no-port solve.
+The four initialization strategies yield very different starting points. NN gives the weakest capacity-feasible baseline, while noport gives the strongest baseline at the cost of a separate no-port MIP solve.
 
 ## Overall findings
 
@@ -61,7 +61,7 @@ The practical implication is that many short local MIP solves are more effective
 | 420 | 3 | 4813.738 | 5.7 / 6 / 8 | 8 / 31 | 0 / 5 / 26 / 5 | 504 |
 | 480 | 6 | 4746.185 | 3.5 / 2 / 9 | 11 / 39 | 0 / 6 / 20 / 5 | 825 |
 
-## MH-OPT
+## MH-noport
 
 | `L_2seg` (s) | Sweeps | Final distance | Stations moved mean/med/max | Accepted/solves | MIP gap min/mean/max/std (%) | Runtime (min) |
 | ---: | ---: | ---: | --- | --- | --- | ---: |

@@ -59,13 +59,13 @@ Rscript R/plot_solution_path.R
 
 Specify a custom solution file:
 ```bash
-Rscript R/plot_solution_path.R sol/init_opt.json
+Rscript R/plot_solution_path.R sol/noport/init.json
 ```
 
 **Output:**
 - Generates PNG file with same name as input JSON
   - `sol/init_nn.json` → `sol/init_nn.png`
-  - `sol/init_opt.json` → `sol/init_opt.png`
+  - `sol/noport/init.json` → `sol/noport/init.png`
 
 **Dependencies:**
 - `tidyverse` - Data manipulation and visualization
@@ -262,7 +262,7 @@ Plot all strategies side-by-side:
 
 ```bash
 # Generate all solutions
-for strategy in nn ge ci opt; do
+for strategy in nn ge ci noport; do
   ./build/gsp --mode init --strategy $strategy \
     --database dat/gsp_data.db \
     --config config/gsp_solver.yaml

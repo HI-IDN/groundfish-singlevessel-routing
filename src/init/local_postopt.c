@@ -74,11 +74,10 @@ fail:
     return 0;
 }
 
-double read_init_local_postopt_time_limit_from_yaml(const char *yaml_path) {
+double read_init_mip_time_limit_from_yaml(const char *yaml_path) {
     FILE *fp = fopen(yaml_path, "r");
     char line[MAX_LINE];
-    int in_init = 0;
-    int in_local_post_opt = 0;
+    int in_gurobi = 0;
     double time_limit = 0.0;
 
     if (!fp) return 0.0;
@@ -89,21 +88,13 @@ double read_init_local_postopt_time_limit_from_yaml(const char *yaml_path) {
         if (*trimmed == '#' || *trimmed == '\0' || *trimmed == '\n') continue;
 
         if (!isspace((unsigned char)line[0])) {
-            in_init = (strncmp(trimmed, "init:", 5) == 0);
-            in_local_post_opt = 0;
+            in_gurobi = (strncmp(trimmed, "gurobi:", 7) == 0);
             continue;
         }
-        if (!in_init) continue;
+        if (!in_gurobi) continue;
 
-        if (trimmed == line + 2 && strncmp(trimmed, "local_post_opt:", 15) == 0) {
-            in_local_post_opt = 1;
-            continue;
-        }
-        if (trimmed == line + 2 && strncmp(trimmed, "local_post_opt:", 15) != 0) {
-            in_local_post_opt = 0;
-        }
-        if (in_local_post_opt && strncmp(trimmed, "time_limit_seconds:", 19) == 0) {
-            time_limit = atof(trimmed + 19);
+        if (strncmp(trimmed, "l1seg:", 6) == 0) {
+            time_limit = atof(trimmed + 6);
             break;
         }
     }
