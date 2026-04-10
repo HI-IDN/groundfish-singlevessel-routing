@@ -1,5 +1,6 @@
 #include "../mip/include/mip_noport.h"
 #include "../include/feasibility.h"
+#include "../include/mip_report.h"
 
 #include <sqlite3.h>
 #include <stdio.h>
@@ -375,8 +376,7 @@ static int write_noport_json(sqlite3 *db,
     int *positive_station_ids = NULL;
     int mip_seg_size = app->n_stations + 1;
     int mip_num_nodes = 2 * mip_seg_size;
-    int mip_model_num_vars = mip_num_nodes * mip_num_nodes;
-    int mip_model_num_constrs = 5 * mip_seg_size;
+    gsp_mip_solve_detail_t mip_detail;
     double mip_gap_percent = solution->gap * 100.0;
 
     if (!build_route_locations(app, solution, &route, &route_len, &total_catch)) return 1;
@@ -477,18 +477,14 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "    }\n");
     fprintf(fp, "  },\n");
 
-    fprintf(fp, "  \"mip\": {\n");
-    fprintf(fp, "    \"phase\": \"noport\",\n");
-    fprintf(fp, "    \"timeout_seconds\": %.6f,\n", timeout_seconds);
-    fprintf(fp, "    \"global_time_limit_seconds\": %.6f,\n", global_time_limit_seconds);
-    fprintf(fp, "    \"solve_detail_tuple\": [\"node_count\", \"mip_size\", \"runtime_seconds\", \"gap_percent\"],\n");
-    fprintf(fp, "    \"solves\": [[%d, [%d, %d], %.6f, %.6f]]\n",
-            app->n_stations + 2,
-            mip_model_num_vars,
-            mip_model_num_constrs,
-            solution->runtime_seconds,
-            mip_gap_percent);
-    fprintf(fp, "  },\n");
+    gsp_mip_solve_detail_init(&mip_detail);
+    mip_detail.station_count = app->n_stations;
+    mip_detail.node_count = app->n_stations + 2;
+    mip_detail.model_num_vars = mip_num_nodes * mip_num_nodes;
+    mip_detail.model_num_constrs = 5 * mip_seg_size;
+    mip_detail.runtime_seconds = solution->runtime_seconds;
+    mip_detail.gap_percent = mip_gap_percent;
+    gsp_write_mip_section(fp, "l0seg", "noport_directed_tsp", timeout_seconds, &mip_detail, 1);
 
     fprintf(fp, "  \"summary\": {\n");
     fprintf(fp, "    \"final\": \"%s\",\n", final_variant_name);

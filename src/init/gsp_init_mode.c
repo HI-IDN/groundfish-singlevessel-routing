@@ -31,6 +31,7 @@ static double elapsed_seconds(struct timespec start, struct timespec end) {
 #include "cheapest_insertion.h"
 #include "local_postopt.h"
 #include "../include/feasibility.h"
+#include "../include/mip_report.h"
 
 #define MAX_LINE 1024
 
@@ -737,68 +738,12 @@ static void write_solution_section(FILE *fp, const char *label,
     free(dock_location_ids);
 }
 
-static void compute_init_mip_summary(const init_mip_solve_detail_t *details,
-                                     int detail_count,
-                                     double *runtime_mean,
-                                     double *runtime_max,
-                                     double *gap_mean,
-                                     double *gap_max) {
-    double runtime_sum = 0.0;
-    double gap_sum = 0.0;
-    if (runtime_mean) *runtime_mean = -1.0;
-    if (runtime_max) *runtime_max = -1.0;
-    if (gap_mean) *gap_mean = -1.0;
-    if (gap_max) *gap_max = -1.0;
-    if (!details || detail_count <= 0) return;
-
-    for (int i = 0; i < detail_count; i++) {
-        runtime_sum += details[i].runtime_seconds;
-        gap_sum += details[i].gap_percent;
-        if (runtime_max && (i == 0 || details[i].runtime_seconds > *runtime_max)) {
-            *runtime_max = details[i].runtime_seconds;
-        }
-        if (gap_max && (i == 0 || details[i].gap_percent > *gap_max)) {
-            *gap_max = details[i].gap_percent;
-        }
-    }
-    if (runtime_mean) *runtime_mean = runtime_sum / (double)detail_count;
-    if (gap_mean) *gap_mean = gap_sum / (double)detail_count;
-}
-
-static void write_init_mip_section(FILE *fp,
-                                   double timeout_seconds,
-                                   const init_mip_solve_detail_t *details,
-                                   int detail_count) {
-    fprintf(fp, "  \"mip\": {\n");
-    fprintf(fp, "    \"phase\": \"1seg\",\n");
-    fprintf(fp, "    \"timeout_seconds\": %.6f,\n", timeout_seconds);
-    fprintf(fp, "    \"solve_detail_tuple\": [\"node_count\", \"mip_size\", \"runtime_seconds\", \"gap_percent\"],\n");
-    fprintf(fp, "    \"solves\": [");
-    for (int i = 0; i < detail_count; i++) {
-        const init_mip_solve_detail_t *detail = &details[i];
-        if (i) fprintf(fp, ", ");
-        fprintf(fp, "[%d, [%d, %d], %.6f, %.6f]",
-                detail->node_count,
-                detail->model_num_vars,
-                detail->model_num_constrs,
-                detail->runtime_seconds,
-                detail->gap_percent);
-    }
-    fprintf(fp, "]\n");
-    fprintf(fp, "  },\n");
-}
-
-static void write_json_double_or_null(FILE *fp, double value) {
-    if (value < 0.0 || isnan(value)) fprintf(fp, "null");
-    else fprintf(fp, "%.6f", value);
-}
-
 /* Write NN solution to JSON in survey format */
 static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
                        const nn_solution_t *sol, int boat_id,
                        const nn_solution_t *pre_capacity_sol,
                        const nn_solution_t *pre_local_postopt_sol,
-                       const init_mip_solve_detail_t *local_postopt_details,
+                       const gsp_mip_solve_detail_t *local_postopt_details,
                        int local_postopt_detail_count,
                        const char *boat_name,
                        const char *strategy_name,
@@ -910,11 +855,11 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
            leg_query_count, total_waypoint_ids, cache.direct_hits, cache.reverse_hits, cache.misses,
            elapsed_seconds(t_output_preload_end, t_output_expand_end));
 
-    compute_init_mip_summary(local_postopt_details, local_postopt_detail_count,
-                             &mip_runtime_mean, &mip_runtime_max,
-                             &mip_gap_mean, &mip_gap_max);
-    write_init_mip_section(fp, mip_time_limit_seconds,
-                           local_postopt_details, local_postopt_detail_count);
+    gsp_compute_mip_summary(local_postopt_details, local_postopt_detail_count,
+                            &mip_runtime_mean, &mip_runtime_max,
+                            &mip_gap_mean, &mip_gap_max);
+    gsp_write_mip_section(fp, "l1seg", "endpaired_tsp", mip_time_limit_seconds,
+                          local_postopt_details, local_postopt_detail_count);
 
     fprintf(fp, "  \"summary\": {\n");
     fprintf(fp, "    \"final\": \"%s\",\n", final_variant_name);
@@ -946,14 +891,14 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "],\n");
     fprintf(fp, "    \"mip_solves\": %d,\n", local_postopt_detail_count);
     fprintf(fp, "    \"mip_runtime_seconds\": {\"mean\": ");
-    write_json_double_or_null(fp, mip_runtime_mean);
+    gsp_write_json_double_or_null(fp, mip_runtime_mean);
     fprintf(fp, ", \"max\": ");
-    write_json_double_or_null(fp, mip_runtime_max);
+    gsp_write_json_double_or_null(fp, mip_runtime_max);
     fprintf(fp, "},\n");
     fprintf(fp, "    \"mip_gap_percent\": {\"mean\": ");
-    write_json_double_or_null(fp, mip_gap_mean);
+    gsp_write_json_double_or_null(fp, mip_gap_mean);
     fprintf(fp, ", \"max\": ");
-    write_json_double_or_null(fp, mip_gap_max);
+    gsp_write_json_double_or_null(fp, mip_gap_max);
     fprintf(fp, "},\n");
     fprintf(fp, "    \"postprocessing_seconds\": %.6f,\n",
             elapsed_seconds(t_output_start, t_output_expand_end));
@@ -1201,7 +1146,7 @@ int mode_init(int argc, char **argv) {
     double mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
-    init_mip_solve_detail_t *local_postopt_details = NULL;
+    gsp_mip_solve_detail_t *local_postopt_details = NULL;
     int local_postopt_detail_count = 0;
     if (!init_copy_solution(&sol, &pre_local_postopt_sol)) {
         fprintf(stderr, "ERROR: Failed to copy pre-local-postopt init solution\n");

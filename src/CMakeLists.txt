@@ -120,6 +120,7 @@ add_executable(gsp
     init/greedy_insertion.c
     init/cheapest_insertion.c
     common/feasibility.c
+    common/mip_report.c
     common/sql_utils.c
     sweep/gsp_sweep_mode.c
 )
@@ -138,6 +139,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         init/greedy_insertion.c
         init/cheapest_insertion.c
         common/feasibility.c
+        common/mip_report.c
         common/sql_utils.c
         sweep/gsp_sweep_mode.c
         mip/endpaired_tsp.c
@@ -165,6 +167,7 @@ add_executable(gsp_init_from_order
     init/init_from_order.c
     init/local_postopt.c
     common/feasibility.c
+    common/mip_report.c
     common/sql_utils.c
 )
 
@@ -266,6 +269,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         ${GSP_MIP_SHARED_SOURCES}
         init/noport_order_main.c
         common/feasibility.c
+        common/mip_report.c
         common/sql_utils.c
     )
 

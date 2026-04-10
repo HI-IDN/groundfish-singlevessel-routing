@@ -2,6 +2,25 @@
 #define INIT_TYPES_H
 
 typedef struct {
+    int boat_id;
+    char boat_name[256];
+    double boat_capacity;
+    int boat_loc_id;
+    double boat_lat;
+    double boat_lon;
+} gsp_boat_t;
+
+typedef struct {
+    int *signed_station_ids;
+    int count;
+    int capacity;
+    int catch_amount;
+    int start_loc_id;
+    int end_loc_id;
+    double distance_nm;
+} gsp_route_segment_t;
+
+typedef struct {
     int table_id;      /* stations.id or ports.id */
     int start_loc_id;  /* locations.id used as travel start */
     int end_loc_id;    /* locations.id used as travel end (ports: same as start) */

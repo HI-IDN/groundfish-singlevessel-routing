@@ -230,7 +230,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
                              nn_solution_t *output,
                              double *runtime_seconds_out,
                              int *segment_solve_count_out,
-                             init_mip_solve_detail_t **solve_details_out,
+                             gsp_mip_solve_detail_t **solve_details_out,
                              int *solve_detail_count_out) {
     if (runtime_seconds_out) *runtime_seconds_out = 0.0;
     if (segment_solve_count_out) *segment_solve_count_out = 0;
@@ -252,7 +252,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
     int *segment_ends = NULL, seg_ends_cap = 0;
     int *segment_catches = NULL, seg_catches_cap = 0;
     double *segment_dists = NULL; int seg_dists_cap = 0;
-    init_mip_solve_detail_t *solve_details = NULL;
+    gsp_mip_solve_detail_t *solve_details = NULL;
     double total_distance = 0.0;
     int total_catch = 0;
 
@@ -268,8 +268,8 @@ int init_apply_local_postopt(const nn_instance_t *inst,
     GRBsetintparam(env, "LogToConsole", 0);
 
     if (input->segment_count > 0) {
-        solve_details = (init_mip_solve_detail_t*)calloc((size_t)input->segment_count,
-                                                         sizeof(init_mip_solve_detail_t));
+        solve_details = (gsp_mip_solve_detail_t*)calloc((size_t)input->segment_count,
+                                                        sizeof(gsp_mip_solve_detail_t));
         if (!solve_details) goto fail;
     }
 
@@ -325,6 +325,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
         free(station_ids);
 
         if (solve_details) {
+            gsp_mip_solve_detail_init(&solve_details[s]);
             solve_details[s].segment_index = s + 1;
             solve_details[s].station_count = station_count;
             solve_details[s].node_count = station_count + 2;

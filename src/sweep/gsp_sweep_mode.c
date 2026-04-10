@@ -10,6 +10,7 @@
 
 #include "../include/init_types.h"
 #include "../include/feasibility.h"
+#include "../include/mip_report.h"
 #include "../init/init_utils.h"
 
 #ifdef HAVE_GUROBI
@@ -23,30 +24,6 @@
 
 #define MAX_LINE 1024
 #define SWEEP_EPS 1e-6
-
-typedef struct {
-    int *signed_station_ids;
-    int count;
-    int capacity;
-    int catch_amount;
-    int start_loc_id;
-    int end_loc_id;
-    double distance_nm;
-} sweep_segment_t;
-
-typedef struct {
-    int boundary_index;
-    int candidate_split_index;
-    int segment_index;
-    int segment_role;
-    int station_count;
-    int node_count;
-    int moved_stations;
-    int model_num_vars;
-    int model_num_constrs;
-    double runtime_seconds;
-    double gap_percent;
-} sweep_mip_solve_detail_t;
 
 typedef struct {
     nn_solution_t solution;
@@ -64,21 +41,11 @@ typedef struct {
     double *mip_runtime_values;
     int mip_detail_count;
     int mip_detail_capacity;
-    sweep_mip_solve_detail_t *mip_solve_details;
+    gsp_mip_solve_detail_t *mip_solve_details;
     double pass_runtime_seconds;
     double total_runtime_seconds;
     int feasible;
 } sweep_snapshot_t;
-
-typedef struct {
-    int boat_id;
-    char boat_name[256];
-    double boat_capacity;
-    int boat_start_loc_id;
-    int boat_end_loc_id;
-    double boat_start_lat;
-    double boat_start_lon;
-} sweep_boat_t;
 
 typedef struct {
     int mip_time_limit_seconds;
@@ -106,8 +73,8 @@ typedef struct {
     double sum_sq;
 } runtime_stats_t;
 
-static int count_segment_station_changes(const sweep_segment_t *before,
-                                         const sweep_segment_t *after);
+static int count_segment_station_changes(const gsp_route_segment_t *before,
+                                         const gsp_route_segment_t *after);
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
@@ -202,12 +169,6 @@ static void runtime_stats_add(runtime_stats_t *stats, double runtime_seconds) {
     stats->sum_sq += runtime_seconds * runtime_seconds;
 }
 
-static void write_json_double_or_null(FILE *fp, double value) {
-    if (!fp) return;
-    if (value < 0.0 || isnan(value)) fprintf(fp, "null");
-    else fprintf(fp, "%.6f", value);
-}
-
 static int contains_int(const int *arr, int count, int value) {
     for (int i = 0; i < count; i++) {
         if (arr[i] == value) return 1;
@@ -234,23 +195,7 @@ static void free_solution(nn_solution_t *sol) {
     memset(sol, 0, sizeof(*sol));
 }
 
-static int append_mip_solve_detail(sweep_mip_solve_detail_t **arr, int *count, int *capacity,
-                                   const sweep_mip_solve_detail_t *detail) {
-    if (!arr || !count || !capacity || !detail) return 0;
-    if (*count >= *capacity) {
-        int new_capacity = (*capacity <= 0) ? 16 : (*capacity * 2);
-        sweep_mip_solve_detail_t *tmp = (sweep_mip_solve_detail_t*)realloc(
-            *arr, (size_t)new_capacity * sizeof(sweep_mip_solve_detail_t));
-        if (!tmp) return 0;
-        *arr = tmp;
-        *capacity = new_capacity;
-    }
-    (*arr)[*count] = *detail;
-    (*count)++;
-    return 1;
-}
-
-static void free_segments(sweep_segment_t *segments, int n_segments) {
+static void free_segments(gsp_route_segment_t *segments, int n_segments) {
     if (!segments) return;
     for (int i = 0; i < n_segments; i++) {
         free(segments[i].signed_station_ids);
@@ -293,7 +238,7 @@ static int lookup_port_info(sqlite3 *db, int location_id, int *port_id, char *po
     return found;
 }
 
-static void print_segment_station_order(const sweep_segment_t *segments, int segment_count) {
+static void print_segment_station_order(const gsp_route_segment_t *segments, int segment_count) {
     printf("Final segment station order:\n");
     for (int s = 0; s < segment_count; s++) {
         printf("  seg%d: [", s + 1);
@@ -825,7 +770,7 @@ static void free_instance(nn_instance_t *inst) {
     memset(inst, 0, sizeof(*inst));
 }
 
-static int load_boat(sqlite3 *db, int boat_id, sweep_boat_t *boat) {
+static int load_boat(sqlite3 *db, int boat_id, gsp_boat_t *boat) {
     sqlite3_stmt *stmt = NULL;
     const char *sql =
         "SELECT b.name, b.capacity, b.location_id, l.lat, l.lon "
@@ -840,10 +785,9 @@ static int load_boat(sqlite3 *db, int boat_id, sweep_boat_t *boat) {
         const unsigned char *name = sqlite3_column_text(stmt, 0);
         if (name) snprintf(boat->boat_name, sizeof(boat->boat_name), "%s", (const char*)name);
         boat->boat_capacity = sqlite3_column_double(stmt, 1);
-        boat->boat_start_loc_id = sqlite3_column_int(stmt, 2);
-        boat->boat_end_loc_id = boat->boat_start_loc_id;
-        boat->boat_start_lat = sqlite3_column_double(stmt, 3);
-        boat->boat_start_lon = sqlite3_column_double(stmt, 4);
+        boat->boat_loc_id = sqlite3_column_int(stmt, 2);
+        boat->boat_lat = sqlite3_column_double(stmt, 3);
+        boat->boat_lon = sqlite3_column_double(stmt, 4);
         sqlite3_finalize(stmt);
         return 1;
     }
@@ -940,8 +884,8 @@ static int extract_int_array_from_input(const char *json_text,
 }
 
 static int load_segments_from_json(const char *input_path, const nn_instance_t *inst,
-                                   const sweep_boat_t *boat,
-                                   sweep_segment_t **out_segments, int *out_count,
+                                   const gsp_boat_t *boat,
+                                   gsp_route_segment_t **out_segments, int *out_count,
                                    nn_solution_t *initial_solution,
                                    double *input_total_distance_nm) {
     char *json_text = read_text_file(input_path);
@@ -953,7 +897,7 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
     int location_segment_count = 0;
     int *dock_location_ids = NULL;
     int dock_count = 0;
-    sweep_segment_t *segments = NULL;
+    gsp_route_segment_t *segments = NULL;
     int rc = 0;
 
     if (input_total_distance_nm) *input_total_distance_nm = 0.0;
@@ -966,14 +910,14 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
     if (location_segment_count != segment_count) goto cleanup;
     if (!extract_int_array_from_input(json_text, "dock_location_ids", &dock_location_ids, &dock_count)) goto cleanup;
     if (dock_count != segment_count + 1) goto cleanup;
-    if (dock_location_ids[0] != boat->boat_start_loc_id ||
-        dock_location_ids[dock_count - 1] != boat->boat_end_loc_id) goto cleanup;
+    if (dock_location_ids[0] != boat->boat_loc_id ||
+        dock_location_ids[dock_count - 1] != boat->boat_loc_id) goto cleanup;
 
-    segments = (sweep_segment_t*)calloc((size_t)segment_count, sizeof(sweep_segment_t));
+    segments = (gsp_route_segment_t*)calloc((size_t)segment_count, sizeof(gsp_route_segment_t));
     if (!segments) goto cleanup;
 
     for (int i = 0; i < segment_count; i++) {
-        sweep_segment_t *seg = &segments[i];
+        gsp_route_segment_t *seg = &segments[i];
         seg->count = segment_sizes[i];
         seg->capacity = segment_sizes[i];
         seg->signed_station_ids = segment_arrays[i];
@@ -1140,8 +1084,8 @@ fail:
 }
 #endif
 
-static int segment_to_solution(const nn_instance_t *inst, const sweep_boat_t *boat,
-                               const sweep_segment_t *segments, int n_segments,
+static int segment_to_solution(const nn_instance_t *inst, const gsp_boat_t *boat,
+                               const gsp_route_segment_t *segments, int n_segments,
                                nn_solution_t *sol) {
     int visit_station_count = 0;
     int tour_length = 0;
@@ -1199,7 +1143,7 @@ static int segment_to_solution(const nn_instance_t *inst, const sweep_boat_t *bo
     return 1;
 }
 
-static int solution_is_feasible(const nn_instance_t *inst, const sweep_boat_t *boat,
+static int solution_is_feasible(const nn_instance_t *inst, const gsp_boat_t *boat,
                                 const nn_solution_t *sol) {
     return segments_within_capacity(sol->segment_catches, sol->segment_count, boat->boat_capacity) &&
            stations_are_unique_and_complete(sol->visit_station_ids, sol->visit_station_count, inst->num_stations);
@@ -1327,7 +1271,7 @@ static void write_station_mutation_ids(FILE *fp,
 }
 
 #ifdef HAVE_GUROBI
-static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, sweep_segment_t *segment,
+static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, gsp_route_segment_t *segment,
                               double time_limit_seconds) {
     int *station_ids = NULL;
     int catch_amount = 0;
@@ -1357,7 +1301,7 @@ static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, sweep_segm
 }
 
 static int reoptimize_all_segments(GRBenv *env, const nn_instance_t *inst,
-                                   sweep_segment_t *segments, int n_segments,
+                                   gsp_route_segment_t *segments, int n_segments,
                                    double time_limit_seconds) {
     for (int i = 0; i < n_segments; i++) {
         if (!reoptimize_segment(env, inst, &segments[i], time_limit_seconds)) return 0;
@@ -1365,11 +1309,11 @@ static int reoptimize_all_segments(GRBenv *env, const nn_instance_t *inst,
     return 1;
 }
 
-static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const sweep_boat_t *boat,
-                             sweep_segment_t *left, sweep_segment_t *right,
+static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_boat_t *boat,
+                             gsp_route_segment_t *left, gsp_route_segment_t *right,
                              gap_stats_t *gap_stats, runtime_stats_t *runtime_stats,
                              int *solve_count,
-                             sweep_mip_solve_detail_t **solve_details,
+                             gsp_mip_solve_detail_t **solve_details,
                              int *solve_detail_count,
                              int *solve_detail_capacity,
                              int boundary_index,
@@ -1419,22 +1363,22 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const sweep
             continue;
         }
         if (solve_details && solve_detail_count && solve_detail_capacity) {
-            sweep_mip_solve_detail_t detail;
-            memset(&detail, 0, sizeof(detail));
+            gsp_mip_solve_detail_t detail;
+            gsp_mip_solve_detail_init(&detail);
             detail.boundary_index = boundary_index;
             detail.candidate_split_index = k;
             detail.segment_index = left_segment_index;
             detail.segment_role = 0;
             detail.station_count = k;
             detail.node_count = k + 2;
-            detail.moved_stations = count_segment_station_changes(left, &(sweep_segment_t){
+            detail.moved_stations = count_segment_station_changes(left, &(gsp_route_segment_t){
                 .signed_station_ids = left_ids, .count = k
             });
             detail.model_num_vars = left_num_vars;
             detail.model_num_constrs = left_num_constrs;
             detail.runtime_seconds = left_runtime_seconds;
             detail.gap_percent = left_gap_percent;
-            if (!append_mip_solve_detail(solve_details, solve_detail_count, solve_detail_capacity, &detail)) {
+            if (!gsp_append_mip_solve_detail(solve_details, solve_detail_count, solve_detail_capacity, &detail)) {
                 free(left_ids);
                 return 0;
             }
@@ -1449,22 +1393,22 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const sweep
             continue;
         }
         if (solve_details && solve_detail_count && solve_detail_capacity) {
-            sweep_mip_solve_detail_t detail;
-            memset(&detail, 0, sizeof(detail));
+            gsp_mip_solve_detail_t detail;
+            gsp_mip_solve_detail_init(&detail);
             detail.boundary_index = boundary_index;
             detail.candidate_split_index = k;
             detail.segment_index = right_segment_index;
             detail.segment_role = 1;
             detail.station_count = total - k;
             detail.node_count = (total - k) + 2;
-            detail.moved_stations = count_segment_station_changes(right, &(sweep_segment_t){
+            detail.moved_stations = count_segment_station_changes(right, &(gsp_route_segment_t){
                 .signed_station_ids = right_ids, .count = total - k
             });
             detail.model_num_vars = right_num_vars;
             detail.model_num_constrs = right_num_constrs;
             detail.runtime_seconds = right_runtime_seconds;
             detail.gap_percent = right_gap_percent;
-            if (!append_mip_solve_detail(solve_details, solve_detail_count, solve_detail_capacity, &detail)) {
+            if (!gsp_append_mip_solve_detail(solve_details, solve_detail_count, solve_detail_capacity, &detail)) {
                 free(left_ids);
                 free(right_ids);
                 return 0;
@@ -1509,8 +1453,8 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const sweep
 }
 #endif
 
-static int count_segment_station_changes(const sweep_segment_t *before,
-                                         const sweep_segment_t *after) {
+static int count_segment_station_changes(const gsp_route_segment_t *before,
+                                         const gsp_route_segment_t *after) {
     int changes = 0;
     for (int i = 0; i < before->count; i++) {
         int found = 0;
@@ -1539,7 +1483,7 @@ static int count_segment_station_changes(const sweep_segment_t *before,
 
 static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst,
                                 const nn_solution_t *sol,
-                                const sweep_boat_t *boat, int feasible) {
+                                const gsp_boat_t *boat, int feasible) {
     int *unique_waypoint_location_ids = NULL;
     int unique_waypoint_count = 0;
     int unique_waypoint_capacity = 0;
@@ -1561,10 +1505,10 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
             fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
             continue;
         }
-        base[base_n++] = (s == 0) ? boat->boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
+        base[base_n++] = (s == 0) ? boat->boat_loc_id : sol->tour[sol->segment_ends[s - 1]];
         for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
-        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat->boat_end_loc_id)) {
-            base[base_n++] = boat->boat_end_loc_id;
+        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat->boat_loc_id)) {
+            base[base_n++] = boat->boat_loc_id;
         }
         if (base_n > 0) {
             fprintf(fp, "%d", base[0]);
@@ -1608,11 +1552,11 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
     fprintf(fp, "      ],\n");
 
     fprintf(fp, "      \"dock_location_ids\": [");
-    fprintf(fp, "%d", boat->boat_start_loc_id);
+    fprintf(fp, "%d", boat->boat_loc_id);
     for (int s = 0; s < sol->segment_count - 1; s++) {
         fprintf(fp, ", %d", sol->tour[sol->segment_ends[s]]);
     }
-    fprintf(fp, ", %d],\n", boat->boat_end_loc_id);
+    fprintf(fp, ", %d],\n", boat->boat_loc_id);
 
     fprintf(fp, "      \"unique_waypoint_location_ids\": [");
     for (int i = 0; i < unique_waypoint_count; i++) {
@@ -1671,7 +1615,7 @@ static void write_pass_entry(FILE *fp,
                              const char *pass_name,
                              const nn_solution_t *prev_solution,
                              const sweep_snapshot_t *snapshot,
-                             const sweep_boat_t *boat) {
+                             const gsp_boat_t *boat) {
     int moved_stations = count_station_moves_between_solutions(prev_solution, &snapshot->solution);
     fprintf(fp, "    \"%s\": {\n", pass_name);
     fprintf(fp, "      \"pass\": %d,\n", snapshot->pass_index);
@@ -1701,70 +1645,33 @@ static void write_pass_entry(FILE *fp,
     fprintf(fp, "\n    }");
 }
 
-static void compute_sweep_mip_summary(const sweep_snapshot_t *snapshots,
-                                      int snapshot_count,
-                                      double *runtime_mean,
-                                      double *runtime_max,
-                                      double *gap_mean,
-                                      double *gap_max) {
+static gsp_mip_solve_detail_t *flatten_sweep_mip_details(const sweep_snapshot_t *snapshots,
+                                                         int snapshot_count,
+                                                         int *out_count) {
+    gsp_mip_solve_detail_t *details = NULL;
     int count = 0;
-    double runtime_sum = 0.0;
-    double gap_sum = 0.0;
-    if (runtime_mean) *runtime_mean = -1.0;
-    if (runtime_max) *runtime_max = -1.0;
-    if (gap_mean) *gap_mean = -1.0;
-    if (gap_max) *gap_max = -1.0;
-    if (!snapshots || snapshot_count <= 0) return;
+    int capacity = 0;
+
+    if (out_count) *out_count = 0;
+    if (!snapshots || snapshot_count <= 0) return NULL;
 
     for (int s = 0; s < snapshot_count; s++) {
         for (int i = 0; i < snapshots[s].mip_detail_count; i++) {
-            const sweep_mip_solve_detail_t *detail = &snapshots[s].mip_solve_details[i];
-            runtime_sum += detail->runtime_seconds;
-            gap_sum += detail->gap_percent;
-            if (runtime_max && (count == 0 || detail->runtime_seconds > *runtime_max)) {
-                *runtime_max = detail->runtime_seconds;
+            if (!gsp_append_mip_solve_detail(&details, &count, &capacity,
+                                             &snapshots[s].mip_solve_details[i])) {
+                free(details);
+                return NULL;
             }
-            if (gap_max && (count == 0 || detail->gap_percent > *gap_max)) {
-                *gap_max = detail->gap_percent;
-            }
-            count++;
         }
     }
-    if (count <= 0) return;
-    if (runtime_mean) *runtime_mean = runtime_sum / (double)count;
-    if (gap_mean) *gap_mean = gap_sum / (double)count;
-}
 
-static void write_sweep_mip_section(FILE *fp,
-                                    const sweep_config_t *cfg,
-                                    const sweep_snapshot_t *snapshots,
-                                    int snapshot_count) {
-    int first = 1;
-    fprintf(fp, "  \"mip\": {\n");
-    fprintf(fp, "    \"phase\": \"2seg\",\n");
-    fprintf(fp, "    \"timeout_seconds\": %.6f,\n", cfg ? (double)cfg->mip_time_limit_seconds : 0.0);
-    fprintf(fp, "    \"solve_detail_tuple\": [\"node_count\", \"mip_size\", \"runtime_seconds\", \"gap_percent\"],\n");
-    fprintf(fp, "    \"solves\": [");
-    for (int s = 0; s < snapshot_count; s++) {
-        for (int i = 0; i < snapshots[s].mip_detail_count; i++) {
-            const sweep_mip_solve_detail_t *detail = &snapshots[s].mip_solve_details[i];
-            if (!first) fprintf(fp, ", ");
-            fprintf(fp, "[%d, [%d, %d], %.6f, %.6f]",
-                    detail->node_count,
-                    detail->model_num_vars,
-                    detail->model_num_constrs,
-                    detail->runtime_seconds,
-                    detail->gap_percent);
-            first = 0;
-        }
-    }
-    fprintf(fp, "]\n");
-    fprintf(fp, "  },\n");
+    if (out_count) *out_count = count;
+    return details;
 }
 
 static int write_sweep_json(const char *output_path,
                             sqlite3 *db,
-                            const sweep_boat_t *boat,
+                            const gsp_boat_t *boat,
                             const nn_instance_t *inst,
                             const sweep_config_t *cfg,
                             const sweep_snapshot_t *snapshots,
@@ -1790,6 +1697,8 @@ static int write_sweep_json(const char *output_path,
     double mip_runtime_max = -1.0;
     double mip_gap_mean = -1.0;
     double mip_gap_max = -1.0;
+    gsp_mip_solve_detail_t *mip_details = NULL;
+    int mip_detail_count = 0;
     if (!fp) return 0;
 
     compute_station_move_stats(snapshots, snapshot_count,
@@ -1802,9 +1711,10 @@ static int write_sweep_json(const char *output_path,
     }
     postprocessing_seconds = total_runtime_seconds - preprocessing_seconds - pass_runtime_total_seconds;
     if (postprocessing_seconds < 0.0) postprocessing_seconds = 0.0;
-    compute_sweep_mip_summary(snapshots, snapshot_count,
-                              &mip_runtime_mean, &mip_runtime_max,
-                              &mip_gap_mean, &mip_gap_max);
+    mip_details = flatten_sweep_mip_details(snapshots, snapshot_count, &mip_detail_count);
+    gsp_compute_mip_summary(mip_details, mip_detail_count,
+                            &mip_runtime_mean, &mip_runtime_max,
+                            &mip_gap_mean, &mip_gap_max);
 
     fprintf(fp, "{\n");
     fprintf(fp, "  \"metadata\": {\n");
@@ -1815,8 +1725,8 @@ static int write_sweep_json(const char *output_path,
     fprintf(fp, "    \"boat_id\": %d,\n", boat->boat_id);
     fprintf(fp, "    \"boat_name\": \"%s\",\n", boat->boat_name);
     fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n",
-            boat->boat_start_lat, boat->boat_start_lon);
-    fprintf(fp, "    \"boat_location_id\": %d,\n", boat->boat_start_loc_id);
+            boat->boat_lat, boat->boat_lon);
+    fprintf(fp, "    \"boat_location_id\": %d,\n", boat->boat_loc_id);
     fprintf(fp, "    \"mip_time_limit_seconds\": %d,\n", cfg ? cfg->mip_time_limit_seconds : 0);
     fprintf(fp, "    \"global_time_limit_seconds\": %d,\n", cfg ? cfg->global_time_limit_seconds : 0);
     fprintf(fp, "    \"max_iterations\": %d\n", cfg ? cfg->max_iterations : 0);
@@ -1837,7 +1747,9 @@ static int write_sweep_json(const char *output_path,
         fprintf(fp, "%s\n", (i + 1 < snapshot_count) ? "," : "");
     }
     fprintf(fp, "  },\n");
-    write_sweep_mip_section(fp, cfg, snapshots, snapshot_count);
+    gsp_write_mip_section(fp, "l2seg", "endpaired_tsp",
+                          cfg ? (double)cfg->mip_time_limit_seconds : 0.0,
+                          mip_details, mip_detail_count);
 
     if (snapshots[snapshot_count - 1].pass_index == 0) snprintf(final_pass_name, sizeof(final_pass_name), "init");
     else snprintf(final_pass_name, sizeof(final_pass_name), "pass%d", snapshots[snapshot_count - 1].pass_index);
@@ -1871,22 +1783,22 @@ static int write_sweep_json(const char *output_path,
     fprintf(fp, "    \"sweep_pass_count\": %d,\n", (snapshot_count > 0) ? (snapshot_count - 1) : 0);
     fprintf(fp, "    \"stations_moved_per_pass\": {\"count\": %d, \"mean\": ",
             station_move_pass_count);
-    write_json_double_or_null(fp, station_move_mean);
+    gsp_write_json_double_or_null(fp, station_move_mean);
     fprintf(fp, ", \"median\": ");
-    write_json_double_or_null(fp, station_move_median);
+    gsp_write_json_double_or_null(fp, station_move_median);
     fprintf(fp, ", \"max\": %d},\n", station_move_max);
     fprintf(fp, "    \"accepted_capacity_solves\": %d,\n", total_boundary_changes);
     fprintf(fp, "    \"total_capacity_solves\": %d,\n", total_boundary_attempts);
     fprintf(fp, "    \"total_capacity_mip_solves\": %d,\n", total_capacity_mip_solves);
     fprintf(fp, "    \"mip_runtime_seconds\": {\"mean\": ");
-    write_json_double_or_null(fp, mip_runtime_mean);
+    gsp_write_json_double_or_null(fp, mip_runtime_mean);
     fprintf(fp, ", \"max\": ");
-    write_json_double_or_null(fp, mip_runtime_max);
+    gsp_write_json_double_or_null(fp, mip_runtime_max);
     fprintf(fp, "},\n");
     fprintf(fp, "    \"mip_gap_percent\": {\"mean\": ");
-    write_json_double_or_null(fp, mip_gap_mean);
+    gsp_write_json_double_or_null(fp, mip_gap_mean);
     fprintf(fp, ", \"max\": ");
-    write_json_double_or_null(fp, mip_gap_max);
+    gsp_write_json_double_or_null(fp, mip_gap_max);
     fprintf(fp, "},\n");
     fprintf(fp, "    \"total_boundary_changes\": %d,\n", total_boundary_changes);
     fprintf(fp, "    \"method\": \"%s\"\n", strategy_name ? strategy_name : "sweep");
@@ -1894,6 +1806,7 @@ static int write_sweep_json(const char *output_path,
     fprintf(fp, "}\n");
 
     fclose(fp);
+    free(mip_details);
     return 1;
 }
 
@@ -1929,9 +1842,9 @@ int mode_sweep(int argc, char **argv) {
     int time_limit = 0, debug_mode = 0;
     sqlite3 *db = NULL;
     nn_instance_t inst = {0};
-    sweep_boat_t boat;
+    gsp_boat_t boat;
     sweep_config_t sweep_cfg;
-    sweep_segment_t *segments = NULL;
+    gsp_route_segment_t *segments = NULL;
     int segment_count = 0;
     double input_total_distance_nm = 0.0;
     nn_solution_t current_solution = {0};
@@ -2080,7 +1993,7 @@ int mode_sweep(int argc, char **argv) {
             sweep_snapshot_t snapshot;
             int *boundary_port_ids = NULL;
             double *boundary_gain_nm = NULL;
-            sweep_mip_solve_detail_t *pass_mip_solve_details = NULL;
+            gsp_mip_solve_detail_t *pass_mip_solve_details = NULL;
             int pass_mip_detail_count = 0;
             int pass_mip_detail_capacity = 0;
 
@@ -2120,8 +2033,8 @@ int mode_sweep(int argc, char **argv) {
             fflush(stdout);
 
             for (int b = 0; b < segment_count; b++) {
-                sweep_segment_t left_before = {0};
-                sweep_segment_t right_before = {0};
+                gsp_route_segment_t left_before = {0};
+                gsp_route_segment_t right_before = {0};
                 double before_total;
                 int right_idx;
                 int boundary_loc_id;
