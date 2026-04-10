@@ -301,35 +301,60 @@ cat(sprintf("  matched to gsp distance rows:           %d\n", sum(!is.na(result$
 cat(sprintf("  no gsp distance found:                  %d\n", sum( is.na(result$new_distance))))
 
 # -- summary stats ------------------------------------------------------------
-eps <- 0.01   # nm tolerance for "same"
-matched <- result[!is.na(result$new_distance) & result$old_distance < 1e9, ]
-matched$delta <- matched$new_distance - matched$old_distance
+eps   <- 0.01   # nm tolerance for "same"
+INF   <- 1e5    # sentinel threshold
 
-improved <- matched[matched$delta < -eps, ]
-worsened <- matched[matched$delta >  eps, ]
-same     <- matched[abs(matched$delta) <= eps, ]
+cmp <- result[!is.na(result$new_distance), ]
+cmp$delta <- cmp$new_distance - cmp$old_distance
 
-fmt_group <- function(df, label) {
-  if (nrow(df) == 0) {
-    cat(sprintf("  %-10s  n=%6d\n", label, 0L))
+old_inf  <- cmp$old_distance >= INF
+new_inf  <- cmp$new_distance >= INF
+
+# bucket 1: both infeasible (no change)
+both_inf   <- cmp[ old_inf  &  new_inf, ]
+# bucket 2: legacy infeasible, new routable (newly reachable — good)
+gained     <- cmp[ old_inf  & !new_inf, ]
+# bucket 3: legacy routable, new infeasible (regression — bad)
+lost       <- cmp[!old_inf  &  new_inf, ]
+# bucket 4: both finite — partition into improved / same / worsened
+finite     <- cmp[!old_inf  & !new_inf, ]
+improved   <- finite[finite$delta < -eps, ]
+same       <- finite[abs(finite$delta) <= eps, ]
+worsened   <- finite[finite$delta >  eps, ]
+
+fmt_group <- function(df, label, show_delta = TRUE) {
+  if (!show_delta || nrow(df) == 0) {
+    cat(sprintf("  %-28s  n=%7d\n", label, nrow(df)))
   } else {
-    cat(sprintf("  %-10s  n=%6d  mean=%+8.3f nm  median=%+8.3f nm  max=%+8.3f nm\n",
+    cat(sprintf("  %-28s  n=%7d  mean=%+9.3f nm  median=%+9.3f nm  extremum=%+9.3f nm\n",
                 label, nrow(df),
-                mean(df$delta), median(df$delta), df$delta[which.max(abs(df$delta))]))
+                mean(df$delta), median(df$delta),
+                df$delta[which.max(abs(df$delta))]))
   }
 }
-cat(sprintf("  total comparable pairs: %d  (eps=%.3f nm)\n", nrow(matched), eps))
-fmt_group(improved, "improved")
-fmt_group(same,     "same")
-fmt_group(worsened, "worsened")
+
+cat(sprintf("  total matched pairs: %d  (feasibility threshold=1e5, eps=%.3f nm)\n\n",
+            nrow(cmp), eps))
+cat("  [+] gsp LOWER distance = better\n\n")
+fmt_group(gained,   "new       (was inf, now finite)")
+fmt_group(improved, "improved  (new < old - eps)")
+fmt_group(same,     "same      (|Δ| <= eps)")
+fmt_group(worsened, "worsened  (new > old + eps)   <-- BAD")
+cat("\n")
+if (nrow(lost) > 0)
+  fmt_group(lost, "REGRESSION (was finite -> now inf) <-- CRITICAL")
+if (nrow(both_inf) > 0)
+  cat(sprintf("  (both infeasible, unchanged:  n=%d)\n", nrow(both_inf)))
 
 # -- write CSV ----------------------------------------------------------------
 out <- result[, c("from_location_id", "to_location_id",
                   "from_name", "to_name",
                   "new_distance", "old_distance",
                   "crosses_land", "waypoint_path")]
-out <- out[order(out$from_location_id, out$to_location_id), ]
+# order w.r.t. most discrepant pairs first
+out$dist_diff <- abs(out$new_distance - out$old_distance)
+out <- out[order(-out$dist_diff, out$from_location_id, out$to_location_id), ]
 
-csv_out <- "dat/debug_distances.csv"
+csv_out <- "debug/distances.csv"
 write.csv(out, csv_out, row.names = FALSE)
 cat(sprintf("\nWrote %s  (%d rows)\n", csv_out, nrow(out)))

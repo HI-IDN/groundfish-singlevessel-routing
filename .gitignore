@@ -111,7 +111,7 @@ dat/legacy_distances.db
 # Legacy version
 island.bin
 dat/singleboatdata2023spring.dat
-dat/debug_distances.csv
+debug/*.csv
 
 # Log files
 *.log
