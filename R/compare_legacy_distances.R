@@ -8,11 +8,14 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 
-# positional: legacy_db [plot_out]
+# positional: legacy_db [gsp_db [plot_out]]
 legacy_db <- if (length(args) >= 1) args[1] else {
   if (file.exists("legacy_distances.db")) "legacy_distances.db" else "dat/legacy_distances.db"
 }
-plot_out <- if (length(args) >= 2) args[2] else NULL
+gsp_db <- if (length(args) >= 2) args[2] else {
+  if (file.exists("gsp.db")) "gsp.db" else "dat/gsp.db"
+}
+plot_out <- if (length(args) >= 3) args[3] else NULL
 
 if (!file.exists(legacy_db)) stop(sprintf("DB not found: %s", legacy_db), call. = FALSE)
 
@@ -20,6 +23,15 @@ read_sql <- function(db_path, sql) {
   con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
   on.exit(DBI::dbDisconnect(con), add = TRUE)
   DBI::dbGetQuery(con, sql)
+}
+
+# ---- haversine helper (nautical miles) --------------------------------------
+haversine_nm <- function(lat1, lon1, lat2, lon2) {
+  R <- 3440.065
+  dlat <- (lat2 - lat1) * pi / 180
+  dlon <- (lon2 - lon1) * pi / 180
+  a <- sin(dlat / 2)^2 + cos(lat1 * pi / 180) * cos(lat2 * pi / 180) * sin(dlon / 2)^2
+  2 * R * asin(pmin(1, sqrt(a)))
 }
 
 # ---- coastline ---------------------------------------------------------------
@@ -97,4 +109,227 @@ if (!is.null(plot_out)) {
   print(p)
 }
 
+# ============================================================
+# Coordinate comparison: legacy  vs  gsp.db
+# ============================================================
+if (!file.exists(gsp_db)) {
+  cat(sprintf("\ngsp_db not found (%s), skipping comparison.\n", gsp_db))
+  quit(save = "no", status = 0)
+}
 
+cat(sprintf("\n=== Coordinate comparison: legacy vs gsp ===\n"))
+cat(sprintf("  legacy: %s\n  gsp:    %s\n\n", legacy_db, gsp_db))
+
+report_worst <- function(cmp, label, threshold = 0.1, max_rows = 10) {
+  bad <- cmp[cmp$dist_nm > threshold, ]
+  if (nrow(bad) == 0) return(invisible(NULL))
+  bad <- bad[order(-bad$dist_nm), ]
+  cat(sprintf("  WARNING: %d %s with coord diff > %.2f nm:\n",
+              nrow(bad), label, threshold))
+  for (i in seq_len(min(max_rows, nrow(bad)))) {
+    cat(sprintf("    %-12s  leg=(%.5f, %.5f)  gsp=(%.5f, %.5f)  %.4f nm\n",
+                bad$name[i],
+                bad$lat_leg[i], bad$lon_leg[i],
+                bad$lat_gsp[i], bad$lon_gsp[i],
+                bad$dist_nm[i]))
+  }
+}
+
+# ---- boats ------------------------------------------------------------------
+# legacy: type=1 (ship), side=0 (both sides same dock; take 0 for uniqueness)
+leg_boats <- read_sql(legacy_db,
+  "SELECT DISTINCT from_name AS name,
+          from_lat_deg       AS lat,
+          from_lon_deg       AS lon
+   FROM legacy_distances
+   WHERE from_type = 1 AND from_side = 0")
+leg_boats$lon  <- -leg_boats$lon   # positive-west -> negative-west
+leg_boats$name <- gsub('^"|"$', "", leg_boats$name)  # strip surrounding quotes
+
+gsp_boats <- read_sql(gsp_db,
+  "SELECT b.name, l.lat, l.lon
+   FROM boats b
+   JOIN locations l ON l.id = b.location_id")
+
+boat_cmp <- merge(leg_boats, gsp_boats, by = "name", suffixes = c("_leg", "_gsp"))
+boat_cmp$dist_nm <- haversine_nm(boat_cmp$lat_leg, boat_cmp$lon_leg,
+                                  boat_cmp$lat_gsp, boat_cmp$lon_gsp)
+
+cat(sprintf("Boats\n"))
+cat(sprintf("  legacy: %d   gsp: %d   matched: %d\n",
+            nrow(leg_boats), nrow(gsp_boats), nrow(boat_cmp)))
+
+unmatched_leg_b <- setdiff(leg_boats$name, gsp_boats$name)
+unmatched_gsp_b <- setdiff(gsp_boats$name, leg_boats$name)
+if (length(unmatched_leg_b) > 0)
+  cat(sprintf("  in legacy only: %s\n", paste(unmatched_leg_b, collapse = ", ")))
+if (length(unmatched_gsp_b) > 0)
+  cat(sprintf("  in gsp only:    %s\n", paste(unmatched_gsp_b, collapse = ", ")))
+
+if (nrow(boat_cmp) > 0) {
+  cat(sprintf("  coord diff (nm):  mean=%.5f  max=%.5f\n",
+              mean(boat_cmp$dist_nm), max(boat_cmp$dist_nm)))
+  report_worst(boat_cmp, "boat(s)")
+}
+
+# ---- stations ---------------------------------------------------------------
+# legacy: type=2 (station), side=0 -> start location, side=1 -> end location
+leg_sta <- read_sql(legacy_db,
+  "SELECT DISTINCT from_name AS name, from_side AS side,
+          from_lat_deg AS lat, from_lon_deg AS lon
+   FROM legacy_distances
+   WHERE from_type = 2")
+leg_sta$lon  <- -leg_sta$lon   # positive-west -> negative-west
+leg_sta$name <- gsub('^"|"$', "", leg_sta$name)  # strip surrounding quotes
+
+gsp_sta <- read_sql(gsp_db,
+  "SELECT s.ext_id        AS name,
+          sl.lat          AS start_lat,
+          sl.lon          AS start_lon,
+          el.lat          AS end_lat,
+          el.lon          AS end_lon
+   FROM stations s
+   JOIN locations sl ON sl.id = s.start_location_id
+   JOIN locations el ON el.id = s.end_location_id")
+
+leg_sta0 <- leg_sta[leg_sta$side == 0, c("name", "lat", "lon")]
+leg_sta1 <- leg_sta[leg_sta$side == 1, c("name", "lat", "lon")]
+
+cmp_start <- merge(leg_sta0,
+                   gsp_sta[, c("name", "start_lat", "start_lon")],
+                   by = "name")
+names(cmp_start)[names(cmp_start) == "start_lat"] <- "lat_gsp"
+names(cmp_start)[names(cmp_start) == "start_lon"] <- "lon_gsp"
+names(cmp_start)[names(cmp_start) == "lat"]       <- "lat_leg"
+names(cmp_start)[names(cmp_start) == "lon"]       <- "lon_leg"
+cmp_start$dist_nm <- haversine_nm(cmp_start$lat_leg, cmp_start$lon_leg,
+                                   cmp_start$lat_gsp, cmp_start$lon_gsp)
+
+cmp_end <- merge(leg_sta1,
+                 gsp_sta[, c("name", "end_lat", "end_lon")],
+                 by = "name")
+names(cmp_end)[names(cmp_end) == "end_lat"] <- "lat_gsp"
+names(cmp_end)[names(cmp_end) == "end_lon"] <- "lon_gsp"
+names(cmp_end)[names(cmp_end) == "lat"]     <- "lat_leg"
+names(cmp_end)[names(cmp_end) == "lon"]     <- "lon_leg"
+cmp_end$dist_nm <- haversine_nm(cmp_end$lat_leg, cmp_end$lon_leg,
+                                 cmp_end$lat_gsp, cmp_end$lon_gsp)
+
+cat(sprintf("\nStations\n"))
+cat(sprintf("  legacy unique names: %d   gsp: %d\n",
+            length(unique(leg_sta$name)), nrow(gsp_sta)))
+cat(sprintf("  matched start (side 0): %d   end (side 1): %d\n",
+            nrow(cmp_start), nrow(cmp_end)))
+
+unmatched_leg_s <- setdiff(unique(leg_sta$name), gsp_sta$name)
+unmatched_gsp_s <- setdiff(gsp_sta$name, unique(leg_sta$name))
+if (length(unmatched_leg_s) > 0)
+  cat(sprintf("  in legacy only: %d  (e.g. %s)\n",
+              length(unmatched_leg_s),
+              paste(head(unmatched_leg_s, 5), collapse = ", ")))
+if (length(unmatched_gsp_s) > 0)
+  cat(sprintf("  in gsp only:    %d  (e.g. %s)\n",
+              length(unmatched_gsp_s),
+              paste(head(unmatched_gsp_s, 5), collapse = ", ")))
+
+if (nrow(cmp_start) > 0)
+  cat(sprintf("  start coord diff (nm): mean=%.5f  max=%.5f\n",
+              mean(cmp_start$dist_nm), max(cmp_start$dist_nm)))
+if (nrow(cmp_end) > 0)
+  cat(sprintf("  end   coord diff (nm): mean=%.5f  max=%.5f\n",
+              mean(cmp_end$dist_nm), max(cmp_end$dist_nm)))
+
+report_worst(cmp_start, "start station(s)")
+report_worst(cmp_end,   "end station(s)")
+
+# ============================================================
+# Distance comparison -> dat/debug_distances.csv
+# ============================================================
+cat(sprintf("\n=== Distance comparison ===\n"))
+
+# -- (name, side) -> gsp location_id lookup -----------------------------------
+gsp_sta_locs <- read_sql(gsp_db,
+  "SELECT ext_id AS name, start_location_id, end_location_id FROM stations")
+gsp_boat_locs <- read_sql(gsp_db,
+  "SELECT name, location_id FROM boats")
+
+loc_lookup <- rbind(
+  data.frame(name = gsp_sta_locs$name,  side = 0L, loc_id = gsp_sta_locs$start_location_id),
+  data.frame(name = gsp_sta_locs$name,  side = 1L, loc_id = gsp_sta_locs$end_location_id),
+  data.frame(name = gsp_boat_locs$name, side = 0L, loc_id = gsp_boat_locs$location_id),
+  data.frame(name = gsp_boat_locs$name, side = 1L, loc_id = gsp_boat_locs$location_id)
+)
+
+# -- legacy pairs: stations + boats only, no self-pairs -----------------------
+leg_pairs <- read_sql(legacy_db,
+  "SELECT from_name, from_side, from_type,
+          to_name,   to_side,   to_type,
+          distance_nm AS old_distance,
+          feasible    AS old_feasible
+   FROM legacy_distances
+   WHERE from_type IN (1, 2)
+     AND to_type   IN (1, 2)
+     AND from_node <> to_node")
+leg_pairs$from_name <- gsub('^"|"$', "", leg_pairs$from_name)
+leg_pairs$to_name   <- gsub('^"|"$', "", leg_pairs$to_name)
+
+cat(sprintf("  legacy station+boat pairs (excl. self): %d\n", nrow(leg_pairs)))
+
+# -- resolve to gsp location IDs ----------------------------------------------
+leg_pairs <- merge(leg_pairs, loc_lookup,
+                   by.x = c("from_name", "from_side"), by.y = c("name", "side"))
+names(leg_pairs)[names(leg_pairs) == "loc_id"] <- "from_location_id"
+
+leg_pairs <- merge(leg_pairs, loc_lookup,
+                   by.x = c("to_name", "to_side"),   by.y = c("name", "side"))
+names(leg_pairs)[names(leg_pairs) == "loc_id"] <- "to_location_id"
+
+cat(sprintf("  after resolving to gsp location IDs:    %d\n", nrow(leg_pairs)))
+
+# -- join gsp distances -------------------------------------------------------
+gsp_dist <- read_sql(gsp_db,
+  "SELECT from_location_id, to_location_id,
+          distance_nm AS new_distance,
+          crosses_land, waypoint_path
+   FROM distances")
+
+result <- merge(leg_pairs, gsp_dist,
+                by = c("from_location_id", "to_location_id"),
+                all.x = TRUE)
+
+cat(sprintf("  matched to gsp distance rows:           %d\n", sum(!is.na(result$new_distance))))
+cat(sprintf("  no gsp distance found:                  %d\n", sum( is.na(result$new_distance))))
+
+# -- summary stats ------------------------------------------------------------
+eps <- 0.01   # nm tolerance for "same"
+matched <- result[!is.na(result$new_distance) & result$old_distance < 1e9, ]
+matched$delta <- matched$new_distance - matched$old_distance
+
+improved <- matched[matched$delta < -eps, ]
+worsened <- matched[matched$delta >  eps, ]
+same     <- matched[abs(matched$delta) <= eps, ]
+
+fmt_group <- function(df, label) {
+  if (nrow(df) == 0) {
+    cat(sprintf("  %-10s  n=%6d\n", label, 0L))
+  } else {
+    cat(sprintf("  %-10s  n=%6d  mean=%+8.3f nm  median=%+8.3f nm  max=%+8.3f nm\n",
+                label, nrow(df),
+                mean(df$delta), median(df$delta), df$delta[which.max(abs(df$delta))]))
+  }
+}
+cat(sprintf("  total comparable pairs: %d  (eps=%.3f nm)\n", nrow(matched), eps))
+fmt_group(improved, "improved")
+fmt_group(same,     "same")
+fmt_group(worsened, "worsened")
+
+# -- write CSV ----------------------------------------------------------------
+out <- result[, c("from_location_id", "to_location_id",
+                  "from_name", "to_name",
+                  "new_distance", "old_distance",
+                  "crosses_land", "waypoint_path")]
+out <- out[order(out$from_location_id, out$to_location_id), ]
+
+csv_out <- "dat/debug_distances.csv"
+write.csv(out, csv_out, row.names = FALSE)
+cat(sprintf("\nWrote %s  (%d rows)\n", csv_out, nrow(out)))
