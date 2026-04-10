@@ -67,7 +67,7 @@ $(COUNTRY_DB): $(COUNTRY_ISLAND) $(COUNTRY_DAT) $(COUNTRY_PORT_FILE) $(COUNTRY_B
 
 preprocessing: prepare-routing-data survey
 
-survey: build
+survey: $(BUILD_DIR)/CMakeCache.txt
 	@cd $(BUILD_DIR) && $(MAKE) survey
 
 noport: ../sol/noport/noport.json

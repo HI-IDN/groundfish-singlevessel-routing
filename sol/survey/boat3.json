@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "survey_export_1.1",
-    "timestamp": "1773871286",
+    "timestamp": "1775852868",
     "mode": "survey",
     "strategy": "baseline",
     "boat_id": 3,
@@ -32,8 +32,18 @@
       "tour_length": [73, 82],
       "segment_count": 2,
       "segment_catch_amount": [20040, 52715],
-      "segment_distance_nm": [833.70, 982.03],
-      "total_distance_nm": 1815.73,
+      "distance_nm": {
+        "segment": {
+          "transit": [551.55, 672.02],
+          "haul": [282.16, 310.01],
+          "total": [833.70, 982.03]
+        },
+        "grand_total": {
+          "transit": 1223.57,
+          "haul": 592.17,
+          "total": 1815.73
+        }
+      },
       "feasible": true
     }
   },

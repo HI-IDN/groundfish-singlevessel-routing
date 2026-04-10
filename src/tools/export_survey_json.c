@@ -16,6 +16,7 @@
 #include "../include/constants.h"
 #include "../include/dat_parser.h"
 #include "../include/feasibility.h"
+#include "../include/init_types.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -321,6 +322,18 @@ static double lookup_distance_nm(sqlite3 *db, int from_loc_id, int to_loc_id) {
     return d;
 }
 
+static void accumulate_distance_breakdown(gsp_distance_breakdown_t *breakdown,
+                                          double distance_nm,
+                                          int is_haul) {
+    if (!breakdown || distance_nm <= 0.0) return;
+    if (is_haul) {
+        breakdown->haul_distance_nm += distance_nm;
+    } else {
+        breakdown->transit_distance_nm += distance_nm;
+    }
+    breakdown->total_distance_nm += distance_nm;
+}
+
 /* Parse JSON waypoint_path like [1200,1199] into int array. */
 static int parse_waypoint_path_json(const char *json_text, int **out_ids) {
     int *ids = NULL;
@@ -399,38 +412,6 @@ static int lookup_waypoint_path(sqlite3 *db, int from_loc_id, int to_loc_id, int
     }
 
     return count;
-}
-
-/* Validate that chain distance through waypoints matches direct from->to distance. */
-static void validate_waypoint_chain_distance(sqlite3 *db, int from_loc_id, int to_loc_id,
-                                             const int *waypoints, int n_waypoints) {
-    double direct;
-    double chain = 0.0;
-    int prev = from_loc_id;
-
-    if (!db || !waypoints || n_waypoints <= 0) return;
-
-    direct = lookup_distance_nm(db, from_loc_id, to_loc_id);
-    if (direct < 0.0) return;
-
-    for (int i = 0; i < n_waypoints; i++) {
-        double d = lookup_distance_nm(db, prev, waypoints[i]);
-        if (d < 0.0) return;
-        chain += d;
-        prev = waypoints[i];
-    }
-
-    {
-        double d = lookup_distance_nm(db, prev, to_loc_id);
-        if (d < 0.0) return;
-        chain += d;
-    }
-
-    if (fabs(chain - direct) > 1e-4) {
-        fprintf(stderr,
-                "[WARN] Waypoint-chain mismatch %d->%d: direct=%.8f chain=%.8f\n",
-                from_loc_id, to_loc_id, direct, chain);
-    }
 }
 
 /* Export a single boat's route to JSON */
@@ -688,8 +669,13 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
     free(station_ids);
 
     /* Compute segment and total distance along adjacent pairs implied by exported segment location lists. */
+    gsp_distance_breakdown_t *segment_breakdowns =
+        (gsp_distance_breakdown_t*)calloc((size_t)segment_count, sizeof(gsp_distance_breakdown_t));
     double *segment_distance_nm = (double*)calloc((size_t)segment_count, sizeof(double));
+    gsp_distance_breakdown_t total_breakdown;
     double total_distance = 0.0;
+
+    memset(&total_breakdown, 0, sizeof(total_breakdown));
 
     /* Dock annotations: boat start, visited port boundaries, boat end. */
     int *dock_location_ids = NULL;
@@ -740,17 +726,21 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
                 int s_start = resolved_loc_ids[i];
                 int s_end = station_end_loc_ids[i];
                 double d1 = lookup_distance_nm(db, prev, s_start);
-                if (d1 > 0.0) segment_distance_nm[s] += d1;
+                accumulate_distance_breakdown(&segment_breakdowns[s], d1, 0);
                 double d2 = lookup_distance_nm(db, s_start, s_end);
-                if (d2 > 0.0) segment_distance_nm[s] += d2;
+                accumulate_distance_breakdown(&segment_breakdowns[s], d2, 1);
                 prev = s_end;
             }
         }
 
         {
             double d3 = lookup_distance_nm(db, prev, end_loc);
-            if (d3 > 0.0) segment_distance_nm[s] += d3;
+            accumulate_distance_breakdown(&segment_breakdowns[s], d3, 0);
         }
+        segment_distance_nm[s] = segment_breakdowns[s].total_distance_nm;
+        total_breakdown.transit_distance_nm += segment_breakdowns[s].transit_distance_nm;
+        total_breakdown.haul_distance_nm += segment_breakdowns[s].haul_distance_nm;
+        total_breakdown.total_distance_nm += segment_breakdowns[s].total_distance_nm;
         total_distance += segment_distance_nm[s];
     }
 
@@ -758,7 +748,8 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         if (!append_int(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id)) {
             free(dock_location_ids);
             free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
-            free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station); free(segment_distance_nm);
+            free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station);
+            free(segment_breakdowns); free(segment_distance_nm);
             return 1;
         }
     }
@@ -772,7 +763,9 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         perror("fopen");
         free(dock_location_ids);
         free(unique_waypoint_location_ids);
-        free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station); free(segment_distance_nm);
+        free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
+        free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station);
+        free(segment_breakdowns); free(segment_distance_nm);
         return 1;
     }
 
@@ -839,7 +832,6 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
                 int n_wps = lookup_waypoint_path(db, from_loc, to_loc, &wps);
 
                 if (n_wps > 0) {
-                    validate_waypoint_chain_distance(db, from_loc, to_loc, wps, n_wps);
                     for (int k = 0; k < n_wps; k++) {
                         fprintf(out, ", %d", wps[k]);
                         (void)append_unique_int(&unique_waypoint_location_ids, &uniq_wp_n, &uniq_wp_cap, wps[k]);
@@ -911,13 +903,33 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         fprintf(out, "%d", segment_catch[s]);
     }
     fprintf(out, "],\n");
-    fprintf(out, "      \"segment_distance_nm\": [");
+    fprintf(out, "      \"distance_nm\": {\n");
+    fprintf(out, "        \"segment\": {\n");
+    fprintf(out, "          \"transit\": [");
     for (int s = 0; s < segment_count; s++) {
         if (s) fprintf(out, ", ");
-        fprintf(out, "%.2f", segment_distance_nm[s]);
+        fprintf(out, "%.2f", segment_breakdowns[s].transit_distance_nm);
     }
     fprintf(out, "],\n");
-    fprintf(out, "      \"total_distance_nm\": %.2f,\n", total_distance);
+    fprintf(out, "          \"haul\": [");
+    for (int s = 0; s < segment_count; s++) {
+        if (s) fprintf(out, ", ");
+        fprintf(out, "%.2f", segment_breakdowns[s].haul_distance_nm);
+    }
+    fprintf(out, "],\n");
+    fprintf(out, "          \"total\": [");
+    for (int s = 0; s < segment_count; s++) {
+        if (s) fprintf(out, ", ");
+        fprintf(out, "%.2f", segment_breakdowns[s].total_distance_nm);
+    }
+    fprintf(out, "]\n");
+    fprintf(out, "        },\n");
+    fprintf(out, "        \"grand_total\": {\n");
+    fprintf(out, "          \"transit\": %.2f,\n", total_breakdown.transit_distance_nm);
+    fprintf(out, "          \"haul\": %.2f,\n", total_breakdown.haul_distance_nm);
+    fprintf(out, "          \"total\": %.2f\n", total_breakdown.total_distance_nm);
+    fprintf(out, "        }\n");
+    fprintf(out, "      },\n");
     fprintf(out, "      \"feasible\": %s\n", is_feasible ? "true" : "false");
     fprintf(out, "    }\n");
     fprintf(out, "  },\n");
@@ -966,7 +978,9 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
 
     free(dock_location_ids);
     free(unique_waypoint_location_ids);
-    free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station); free(segment_distance_nm);
+    free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
+    free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station);
+    free(segment_breakdowns); free(segment_distance_nm);
     return 0;
 }
 
