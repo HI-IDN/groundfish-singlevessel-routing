@@ -41,6 +41,74 @@ read_db_table <- function(db_path, sql, params = NULL) {
   tibble::tibble(data)
 }
 
+ensure_segment_list <- function(x) {
+  if (is.null(x)) return(list())
+  if (is.list(x) && !is.data.frame(x)) return(x)
+  if (is.data.frame(x)) return(split(x, seq_len(nrow(x))))
+  list(x)
+}
+
+parse_integer_segment <- function(x) {
+  if (is.null(x)) return(integer())
+  if (is.character(x)) {
+    x <- trimws(paste(x, collapse = " "))
+    if (!nzchar(x)) return(integer())
+    return(as.integer(strsplit(x, "\\s+")[[1]]))
+  }
+  as.integer(unlist(x, use.names = FALSE))
+}
+
+normalize_station_segments <- function(x) {
+  lapply(ensure_segment_list(x), parse_integer_segment)
+}
+
+load_station_endpoints <- function(db_path) {
+  read_db_table(
+    db_path,
+    "SELECT s.id AS station_id,
+            s.start_location_id,
+            s.end_location_id,
+            ls.lat AS start_lat,
+            ls.lon AS start_lon,
+            le.lat AS end_lat,
+            le.lon AS end_lon
+     FROM stations s
+     JOIN locations ls ON ls.id = s.start_location_id
+     JOIN locations le ON le.id = s.end_location_id"
+  )
+}
+
+build_station_line_segments <- function(station_segments, station_endpoints) {
+  station_segments <- normalize_station_segments(station_segments)
+  station_lines <- tibble::tibble()
+  station_sequence <- 1
+
+  for (s in seq_along(station_segments)) {
+    for (signed_station_id in station_segments[[s]]) {
+      station_id <- abs(as.integer(signed_station_id))
+      station_row <- station_endpoints[station_endpoints$station_id == station_id, ]
+      if (nrow(station_row) > 0) {
+        reverse_station <- signed_station_id < 0
+        station_lines <- dplyr::bind_rows(
+          station_lines,
+          tibble::tibble(
+            segment = s,
+            station_sequence = station_sequence,
+            station_id = station_id,
+            lat = if (reverse_station) station_row$end_lat[1] else station_row$start_lat[1],
+            lon = if (reverse_station) station_row$end_lon[1] else station_row$start_lon[1],
+            lat_end = if (reverse_station) station_row$start_lat[1] else station_row$end_lat[1],
+            lon_end = if (reverse_station) station_row$start_lon[1] else station_row$end_lon[1]
+          )
+        )
+        station_sequence <- station_sequence + 1
+      }
+    }
+  }
+
+  station_lines
+}
+
 base_coastline_plot <- function(coastline_df) {
   ggplot2::ggplot(coastline_df, ggplot2::aes(x = lon, y = lat)) +
     ggplot2::geom_path(color = "gray30", linewidth = 0.3, alpha = 0.6)

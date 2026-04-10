@@ -16,7 +16,7 @@ script_dir <- if (length(script_file_arg) > 0) {
 source(file.path(script_dir, "plot_utils.R"))
 load_required_packages(required_packages)
 
-cat("=== Combined Survey Route Plotter ===\n\n")
+cat("=== GSP Multi-Vessel Route Plotter ===\n\n")
 cat(sprintf("Input glob: %s\n", input_glob))
 cat(sprintf("Output: %s\n", output_file))
 cat(sprintf("Database: %s\n\n", db_path))
@@ -28,13 +28,6 @@ if (!file.exists(db_path)) {
 survey_files <- Sys.glob(input_glob)
 if (length(survey_files) == 0) {
   stop(sprintf("No survey files matched: %s", input_glob), call. = FALSE)
-}
-
-ensure_segment_list <- function(x) {
-  if (is.null(x)) return(list())
-  if (is.list(x) && !is.data.frame(x)) return(x)
-  if (is.data.frame(x)) return(split(x, seq_len(nrow(x))))
-  list(x)
 }
 
 mix_with_white <- function(color, amount) {
@@ -71,12 +64,15 @@ read_solution_block <- function(path) {
 cat("Loading coastline and locations...\n")
 coastline <- read_db_table(db_path, "SELECT lat, lon FROM coastline")
 locations <- read_db_table(db_path, "SELECT id, lat, lon FROM locations")
+cat("Loading station endpoint data...\n")
+station_endpoints <- load_station_endpoints(db_path)
 
 boats <- lapply(survey_files, read_solution_block)
 boats <- boats[order(vapply(boats, `[[`, integer(1), "boat_id"))]
 
 boat_base_colors <- c("#0B5FA5", "#C84C09", "#2A7F62", "#8B2E5F", "#6A4C93", "#B38B00")
 route_path <- tibble()
+station_lines <- tibble()
 boat_summary <- tibble()
 total_distance_nm <- 0
 total_stations <- 0
@@ -88,7 +84,8 @@ for (idx in seq_along(boats)) {
   solution <- boat$solution
   segments <- ensure_segment_list(solution$tour_segments_location_ids)
   segment_count <- length(segments)
-  station_count <- sum(lengths(ensure_segment_list(solution$tour_segments_station_ids)))
+  station_segments <- normalize_station_segments(solution$tour_segments_station_ids)
+  station_count <- sum(lengths(station_segments))
   segment_distance <- as.numeric(solution$segment_distance_nm)
   segment_catch <- as.numeric(solution$segment_catch_amount)
   base_color <- boat_base_colors[(idx - 1) %% length(boat_base_colors) + 1]
@@ -120,6 +117,20 @@ for (idx in seq_along(boats)) {
       )
     route_path <- bind_rows(route_path, seg_points)
   }
+
+  boat_station_lines <- build_station_line_segments(station_segments, station_endpoints) %>%
+    mutate(
+      boat_id = boat$boat_id,
+      boat_name = boat$boat_name,
+      segment_key = sprintf("%s #%d", first_word(boat$boat_name), segment),
+      segment_label = sprintf("%s #%d: %.0f nm, %.1f t",
+                              first_word(boat$boat_name), segment,
+                              segment_distance[segment],
+                              segment_catch[segment] / 1000),
+      segment_color = segment_colors[segment],
+      base_color = base_color
+    )
+  station_lines <- bind_rows(station_lines, boat_station_lines)
 
   boat_summary <- bind_rows(
     boat_summary,
@@ -165,12 +176,8 @@ port_points <- route_path %>%
   summarize(visits = n(), .groups = "drop") %>%
   filter(visits > 1)
 
-station_points <- route_path %>%
-  group_by(location_id, lat, lon) %>%
-  summarize(boats = n_distinct(boat_id), .groups = "drop") %>%
-  anti_join(port_points, by = c("location_id", "lat", "lon"))
-
-cat(sprintf("Loaded %d boats and %d total route points\n\n", nrow(boat_summary), nrow(route_path)))
+cat(sprintf("Loaded %d boats, %d total route points, and %d station line segments\n\n",
+            nrow(boat_summary), nrow(route_path), nrow(station_lines)))
 
 summary_table <- boat_summary %>%
   transmute(
@@ -229,8 +236,8 @@ p <- base_coastline_plot(coastline) +
       group = interaction(boat_id, segment),
       color = segment_key
     ),
-    linewidth = 0.95,
-    alpha = 0.92,
+    linewidth = 0.35,
+    alpha = 0.45,
     lineend = "round",
     inherit.aes = FALSE
   ) +
@@ -240,12 +247,18 @@ p <- base_coastline_plot(coastline) +
     labels = legend_labels,
     name = "Segment Stats"
   ) +
-  geom_point(
-    data = station_points,
-    aes(x = lon, y = lat),
-    size = 0.8,
-    color = "grey35",
-    alpha = 0.25,
+  geom_segment(
+    data = station_lines,
+    aes(
+      x = lon,
+      y = lat,
+      xend = lon_end,
+      yend = lat_end,
+      color = segment_key
+    ),
+    linewidth = 1.35,
+    alpha = 0.9,
+    lineend = "round",
     inherit.aes = FALSE
   ) +
   geom_point(

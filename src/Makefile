@@ -24,7 +24,7 @@ SWEEP_INIT_RAW := $(or $(INIT),$(init),noport)
 SWEEP_INIT := $(if $(filter gi,$(SWEEP_INIT_RAW)),ge,$(SWEEP_INIT_RAW))
 VALID_INIT_TYPES := nn ge ci noport fixedport
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init noport noport-opt sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init noport sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary help
 
 all: build
 
@@ -70,11 +70,11 @@ preprocessing: prepare-routing-data survey
 survey: build
 	@cd $(BUILD_DIR) && $(MAKE) survey
 
-noport noport-opt: ../sol/noport/noport.json
+noport: ../sol/noport/noport.json
 
 ../sol/noport/noport.json: $(COUNTRY_DB)
 	@mkdir -p ../sol/noport
-	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_noport_opt --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --output "../sol/noport/noport.json" 2>&1 | tee -a ../sol/noport/noport.log'
+	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_noport --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --output "../sol/noport/noport.json" 2>&1 | tee -a ../sol/noport/noport.log'
 
 ../sol/noport/init.json: ../sol/noport/noport.json
 	@mkdir -p ../sol/noport
@@ -129,7 +129,7 @@ sweep_table:
 plot-routes: $(ROUTE_PNGS)
 
 ../sol/%.png: ../sol/%.json
-	@cd .. && Rscript R/plot_survey_route.R "$(patsubst ../%,%,$<)" "$(patsubst ../%,%,$@)"
+	@cd .. && Rscript R/plot_single_vessel_route.R "$(patsubst ../%,%,$<)" "$(patsubst ../%,%,$@)"
 
 ../dat/coastline_waypoints_ports.png:
 	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp.db dat/coastline_waypoints_ports.png'
@@ -138,12 +138,12 @@ plot-routes: $(ROUTE_PNGS)
 	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R dat/gsp.db sol/survey_overview.png'
 
 ../sol/survey/routes_combined.png:
-	@bash -lc 'cd .. && Rscript R/plot_survey_routes_combined.R "sol/survey/boat*.json" "sol/survey/routes_combined.png" "dat/gsp.db"'
+	@bash -lc 'cd .. && Rscript R/plot_multi_vessel_route.R "sol/survey/boat*.json" "sol/survey/routes_combined.png" "dat/gsp.db"'
 
 ../sol/sweep_summary_panels.png:
 	@bash -lc 'cd .. && Rscript R/plot_sweep_summary_panels.R sol sol/sweep_summary_panels.png'
 
-plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png plot-routes
+plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png ../sol/survey/routes_combined.png plot-routes
 
 plot-survey-routes: ../sol/survey/routes_combined.png
 

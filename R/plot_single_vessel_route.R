@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
-# GSP Survey Route Plotter
-# Usage: Rscript plot_survey_route.R <path/to/boat*.json> [path/to/output.png] [final|capacity-feasible|presolve]
+# GSP Single-Vessel Route Plotter
+# Usage: Rscript plot_single_vessel_route.R <path/to/boat*.json> [path/to/output.png] [final|capacity-feasible|presolve]
 
 required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite")
 
@@ -13,11 +13,11 @@ script_dir <- if (length(script_file_arg) > 0) {
 source(file.path(script_dir, "plot_utils.R"))
 load_required_packages(required_packages)
 
-cat("=== GSP Survey Route Plotter ===\n\n")
+cat("=== GSP Single-Vessel Route Plotter ===\n\n")
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) == 0) {
-  warning("Usage: Rscript plot_survey_route.R <path/to/boat*.json> [path/to/output.png] [final|capacity-feasible|presolve]\n", call. = FALSE)
+  warning("Usage: Rscript plot_single_vessel_route.R <path/to/boat*.json> [path/to/output.png] [final|capacity-feasible|presolve]\n", call. = FALSE)
   args <- c("sol/opt/noport.json", "sol/opt/noport.png", "final")
 }
 
@@ -44,13 +44,6 @@ survey <- tryCatch({
   stop(sprintf("Failed to parse JSON: %s", e$message), call. = FALSE)
 })
 
-ensure_segment_list <- function(x) {
-  if (is.null(x)) return(list())
-  if (is.list(x) && !is.data.frame(x)) return(x)
-  if (is.data.frame(x)) return(split(x, seq_len(nrow(x))))
-  list(x)
-}
-
 resolve_solution_block <- function(survey, variant_name) {
   variant_name <- tolower(variant_name)
   if (variant_name %in% c("final", "solution")) {
@@ -74,7 +67,7 @@ resolve_solution_block <- function(survey, variant_name) {
 resolved <- resolve_solution_block(survey, selected_variant)
 solution <- resolved$solution
 solution$tour_segments_location_ids <- ensure_segment_list(solution$tour_segments_location_ids)
-solution$tour_segments_station_ids <- ensure_segment_list(solution$tour_segments_station_ids)
+solution$tour_segments_station_ids <- normalize_station_segments(solution$tour_segments_station_ids)
 
 if (length(solution$tour_segments_location_ids) == 0) {
   stop("tour_segments_location_ids is missing from this JSON.", call. = FALSE)
@@ -153,6 +146,9 @@ coastline <- read_db_table(db_path, "SELECT lat, lon FROM coastline")
 cat("Loading location data...\n")
 locations <- read_db_table(db_path, "SELECT id, lat, lon FROM locations")
 
+cat("Loading station endpoint data...\n")
+station_endpoints <- load_station_endpoints(db_path)
+
 dock_loc_ids <- unlist(solution$dock_location_ids)
 waypoint_loc_ids <- unlist(solution$unique_waypoint_location_ids)
 
@@ -188,6 +184,9 @@ for (segment in solution$tour_segments_location_ids) {
 
 cat(sprintf("Built route path with %d locations across %d segments\n\n", nrow(route_path), segment_count))
 
+station_lines <- build_station_line_segments(solution$tour_segments_station_ids, station_endpoints)
+cat(sprintf("Built %d station line segments\n\n", nrow(station_lines)))
+
 p <- base_coastline_plot(coastline)
 
 segment_labels <- sprintf("#%d: %.0f nm, %d kg",
@@ -199,8 +198,8 @@ p <- p +
   geom_path(
     data = route_path,
     aes(x = lon, y = lat, color = factor(segment)),
-    linewidth = 0.8,
-    alpha = 0.7,
+    linewidth = 0.35,
+    alpha = 0.45,
     inherit.aes = FALSE
   ) +
   scale_color_viridis_d(
@@ -209,17 +208,16 @@ p <- p +
     labels = segment_labels
   )
 
-station_points <- route_path %>% filter(point_type == "Station")
 port_points <- route_path %>% filter(point_type == "PORT") %>% distinct(lat, lon, .keep_all = TRUE)
 waypoints <- route_path %>% filter(point_type == "WAYP") %>% distinct(lat, lon, .keep_all = TRUE)
 
 p <- p +
-  geom_point(
-    data = station_points,
-    aes(x = lon, y = lat),
-    size = 1.5,
-    color = "steelblue",
-    alpha = 0.4,
+  geom_segment(
+    data = station_lines,
+    aes(x = lon, y = lat, xend = lon_end, yend = lat_end, color = factor(segment)),
+    linewidth = 1.35,
+    alpha = 0.9,
+    lineend = "round",
     inherit.aes = FALSE
   ) +
   geom_point(

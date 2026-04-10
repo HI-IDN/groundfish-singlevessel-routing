@@ -28,15 +28,16 @@ That workflow:
 To regenerate a PNG from one of the JSON files:
 
 ```bash
-Rscript R/plot_survey_route.R sol/survey/boat1.json
+Rscript R/plot_single_vessel_route.R sol/survey/boat1.json
 ```
 
 Examples:
 
 ```bash
-Rscript R/plot_survey_route.R sol/survey/boat2.json
-Rscript R/plot_survey_route.R sol/survey/boat3.json
-Rscript R/plot_survey_route.R sol/survey/boat4.json
+Rscript R/plot_single_vessel_route.R sol/survey/boat2.json
+Rscript R/plot_single_vessel_route.R sol/survey/boat3.json
+Rscript R/plot_single_vessel_route.R sol/survey/boat4.json
+Rscript R/plot_multi_vessel_route.R "sol/survey/boat*.json" sol/survey/routes_combined.png dat/gsp.db
 ```
 
 The corresponding PNG is written next to the JSON file, for example:
