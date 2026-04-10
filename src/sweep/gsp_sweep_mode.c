@@ -8,6 +8,7 @@
 
 #include "../include/init_types.h"
 #include "../include/feasibility.h"
+#include "../include/json_utils.h"
 #include "../include/mip_report.h"
 #include "../init/init_utils.h"
 #include "../init/local_postopt.h"
@@ -1559,38 +1560,7 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
     }
     fprintf(fp, "],\n");
 
-    fprintf(fp, "      \"segment_distance_nm\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%.2f", sol->segment_dists[s]);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "      \"segment_transit_distance_nm\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%.2f", segment_breakdowns[s].transit_distance_nm);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "      \"segment_haul_distance_nm\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%.2f", segment_breakdowns[s].haul_distance_nm);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "      \"segment_total_distance_nm\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%.2f", segment_breakdowns[s].total_distance_nm);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "      \"transit_distance_nm\": %.2f,\n", total_breakdown.transit_distance_nm);
-    fprintf(fp, "      \"haul_distance_nm\": %.2f,\n", total_breakdown.haul_distance_nm);
-    fprintf(fp, "      \"computed_total_distance_nm\": %.2f,\n", total_breakdown.total_distance_nm);
-    fprintf(fp, "      \"total_distance_nm\": %.2f,\n", sol->total_distance);
+    gsp_write_distance_nm_json(fp, "      ", segment_breakdowns, sol->segment_count, &total_breakdown, 1);
     fprintf(fp, "      \"feasible\": %s\n", feasible ? "true" : "false");
     free(seen_waypoint_location_ids);
     free(unique_waypoint_location_ids);

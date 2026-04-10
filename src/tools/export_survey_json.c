@@ -17,6 +17,7 @@
 #include "../include/dat_parser.h"
 #include "../include/feasibility.h"
 #include "../include/init_types.h"
+#include "../include/json_utils.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -903,33 +904,7 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         fprintf(out, "%d", segment_catch[s]);
     }
     fprintf(out, "],\n");
-    fprintf(out, "      \"distance_nm\": {\n");
-    fprintf(out, "        \"segment\": {\n");
-    fprintf(out, "          \"transit\": [");
-    for (int s = 0; s < segment_count; s++) {
-        if (s) fprintf(out, ", ");
-        fprintf(out, "%.2f", segment_breakdowns[s].transit_distance_nm);
-    }
-    fprintf(out, "],\n");
-    fprintf(out, "          \"haul\": [");
-    for (int s = 0; s < segment_count; s++) {
-        if (s) fprintf(out, ", ");
-        fprintf(out, "%.2f", segment_breakdowns[s].haul_distance_nm);
-    }
-    fprintf(out, "],\n");
-    fprintf(out, "          \"total\": [");
-    for (int s = 0; s < segment_count; s++) {
-        if (s) fprintf(out, ", ");
-        fprintf(out, "%.2f", segment_breakdowns[s].total_distance_nm);
-    }
-    fprintf(out, "]\n");
-    fprintf(out, "        },\n");
-    fprintf(out, "        \"grand_total\": {\n");
-    fprintf(out, "          \"transit\": %.2f,\n", total_breakdown.transit_distance_nm);
-    fprintf(out, "          \"haul\": %.2f,\n", total_breakdown.haul_distance_nm);
-    fprintf(out, "          \"total\": %.2f\n", total_breakdown.total_distance_nm);
-    fprintf(out, "        }\n");
-    fprintf(out, "      },\n");
+    gsp_write_distance_nm_json(out, "      ", segment_breakdowns, segment_count, &total_breakdown, 1);
     fprintf(out, "      \"feasible\": %s\n", is_feasible ? "true" : "false");
     fprintf(out, "    }\n");
     fprintf(out, "  },\n");

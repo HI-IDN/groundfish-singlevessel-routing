@@ -8,6 +8,7 @@
 
 #include "../include/feasibility.h"
 #include "../include/init_types.h"
+#include "../include/json_utils.h"
 #include "../include/mip_report.h"
 #include "init_utils.h"
 #include "local_postopt.h"
@@ -152,6 +153,67 @@ static int load_distance_matrix(sqlite3 *db, nn_instance_t *inst) {
     return 0;
 }
 
+static int order_leg_is_station_haul(const nn_instance_t *inst, int from_loc_id, int to_loc_id) {
+    if (!inst) return 0;
+    for (int i = 0; i < inst->num_stations + inst->num_ports; i++) {
+        const nn_node_t *node = &inst->nodes[i];
+        if (node->is_port) continue;
+        if ((node->start_loc_id == from_loc_id && node->end_loc_id == to_loc_id) ||
+            (node->end_loc_id == from_loc_id && node->start_loc_id == to_loc_id)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static double order_distance_or_zero(const nn_instance_t *inst, int from_loc_id, int to_loc_id) {
+    if (!inst || !inst->distances) return 0.0;
+    if (from_loc_id == to_loc_id) return 0.0;
+    if (from_loc_id < 0 || from_loc_id >= inst->max_loc_id) return 0.0;
+    if (to_loc_id < 0 || to_loc_id >= inst->max_loc_id) return 0.0;
+    return (inst->distances[from_loc_id][to_loc_id] > 0.0) ?
+        inst->distances[from_loc_id][to_loc_id] : 0.0;
+}
+
+static void order_accumulate_leg_distance(const nn_instance_t *inst,
+                                          int from_loc_id,
+                                          int to_loc_id,
+                                          gsp_distance_breakdown_t *breakdown) {
+    double d;
+    if (!breakdown) return;
+    d = order_distance_or_zero(inst, from_loc_id, to_loc_id);
+    if (order_leg_is_station_haul(inst, from_loc_id, to_loc_id)) {
+        breakdown->haul_distance_nm += d;
+    } else {
+        breakdown->transit_distance_nm += d;
+    }
+    breakdown->total_distance_nm += d;
+}
+
+static void order_compute_segment_breakdowns(const nn_instance_t *inst,
+                                             const nn_solution_t *sol,
+                                             int boat_start_loc_id,
+                                             int boat_end_loc_id,
+                                             gsp_distance_breakdown_t *segment_breakdowns,
+                                             gsp_distance_breakdown_t *total_breakdown) {
+    if (!inst || !sol || !segment_breakdowns || !total_breakdown) return;
+    memset(total_breakdown, 0, sizeof(*total_breakdown));
+    for (int s = 0; s < sol->segment_count; s++) {
+        int prev_loc = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
+        memset(&segment_breakdowns[s], 0, sizeof(segment_breakdowns[s]));
+        for (int i = sol->segment_starts[s]; i <= sol->segment_ends[s]; i++) {
+            order_accumulate_leg_distance(inst, prev_loc, sol->tour[i], &segment_breakdowns[s]);
+            prev_loc = sol->tour[i];
+        }
+        if (s == sol->segment_count - 1 && prev_loc != boat_end_loc_id) {
+            order_accumulate_leg_distance(inst, prev_loc, boat_end_loc_id, &segment_breakdowns[s]);
+        }
+        total_breakdown->transit_distance_nm += segment_breakdowns[s].transit_distance_nm;
+        total_breakdown->haul_distance_nm += segment_breakdowns[s].haul_distance_nm;
+        total_breakdown->total_distance_nm += segment_breakdowns[s].total_distance_nm;
+    }
+}
+
 static int append_int_local(int **arr, int *n, int *cap, int v) {
     int *tmp;
     int new_cap;
@@ -279,10 +341,33 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     double mip_runtime_max = -1.0;
     double mip_gap_mean = -1.0;
     double mip_gap_max = -1.0;
+    gsp_distance_breakdown_t *pre_segment_breakdowns = NULL;
+    gsp_distance_breakdown_t pre_total_breakdown;
+    gsp_distance_breakdown_t *final_segment_breakdowns = NULL;
+    gsp_distance_breakdown_t final_total_breakdown;
 
     if (!fp) {
         perror("Cannot open output file");
         return;
+    }
+
+    memset(&pre_total_breakdown, 0, sizeof(pre_total_breakdown));
+    memset(&final_total_breakdown, 0, sizeof(final_total_breakdown));
+    if (has_pre_local_postopt && pre_local_postopt_sol->segment_count > 0) {
+        pre_segment_breakdowns = (gsp_distance_breakdown_t*)calloc(
+            (size_t)pre_local_postopt_sol->segment_count, sizeof(gsp_distance_breakdown_t));
+        if (pre_segment_breakdowns) {
+            order_compute_segment_breakdowns(inst, pre_local_postopt_sol, boat_start_loc_id, boat_end_loc_id,
+                                             pre_segment_breakdowns, &pre_total_breakdown);
+        }
+    }
+    if (sol->segment_count > 0) {
+        final_segment_breakdowns = (gsp_distance_breakdown_t*)calloc(
+            (size_t)sol->segment_count, sizeof(gsp_distance_breakdown_t));
+        if (final_segment_breakdowns) {
+            order_compute_segment_breakdowns(inst, sol, boat_start_loc_id, boat_end_loc_id,
+                                             final_segment_breakdowns, &final_total_breakdown);
+        }
     }
 
     fprintf(fp, "{\n");
@@ -404,18 +489,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         }
         fprintf(fp, "],\n");
 
-        fprintf(fp, "    \"segment_distance_nm\": [");
-        for (int s = 0; s < pre_local_postopt_sol->segment_count; s++) {
-            double seg_nm = pre_local_postopt_sol->segment_dists[s];
-            if (s == pre_local_postopt_sol->segment_count - 1 && pre_local_postopt_sol->tour_length > 0) {
-                double final_leg = inst->distances[pre_local_postopt_sol->tour[pre_local_postopt_sol->tour_length - 1]][boat_end_loc_id];
-                if (final_leg > 0.0) seg_nm += final_leg;
-            }
-            fprintf(fp, "%.2f", seg_nm);
-            if (s + 1 < pre_local_postopt_sol->segment_count) fprintf(fp, ", ");
-        }
-        fprintf(fp, "],\n");
-
+        gsp_write_distance_nm_json(fp, "    ", pre_segment_breakdowns,
+                                   pre_local_postopt_sol->segment_count, &pre_total_breakdown, 1);
         fprintf(fp, "    \"total_distance_nm\": %.2f,\n", pre_local_postopt_sol->total_distance);
         fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
         fprintf(fp, "    },\n");
@@ -505,18 +580,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     }
     fprintf(fp, "],\n");
 
-    fprintf(fp, "    \"segment_distance_nm\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        double seg_nm = sol->segment_dists[s];
-        if (s == sol->segment_count - 1 && sol->tour_length > 0) {
-            double final_leg = inst->distances[sol->tour[sol->tour_length - 1]][boat_end_loc_id];
-            if (final_leg > 0.0) seg_nm += final_leg;
-        }
-        fprintf(fp, "%.2f", seg_nm);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
+    gsp_write_distance_nm_json(fp, "    ", final_segment_breakdowns,
+                               sol->segment_count, &final_total_breakdown, 1);
     fprintf(fp, "    \"total_distance_nm\": %.2f,\n", sol->total_distance);
     fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
     fprintf(fp, "    }\n");
@@ -565,6 +630,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "}\n");
 
     fclose(fp);
+    free(pre_segment_breakdowns);
+    free(final_segment_breakdowns);
     free(unique_waypoint_location_ids);
     free(baseline_unique_waypoint_location_ids);
     free(original_order_variant_name);

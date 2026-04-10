@@ -1,6 +1,7 @@
 #include "../mip/include/mip_noport.h"
 #include "../include/feasibility.h"
 #include "../include/init_types.h"
+#include "../include/json_utils.h"
 #include "../include/mip_report.h"
 
 #include <sqlite3.h>
@@ -545,14 +546,8 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "    \"tour_length\": [%d],\n", solution->order_length);
     fprintf(fp, "    \"segment_count\": 1,\n");
     fprintf(fp, "    \"segment_catch_amount\": [%d],\n", total_catch);
-    fprintf(fp, "    \"segment_distance_nm\": [%.2f],\n", objective_distance_nm);
-    fprintf(fp, "    \"segment_transit_distance_nm\": [%.2f],\n", distance_breakdown->transit_distance_nm);
-    fprintf(fp, "    \"segment_haul_distance_nm\": [%.2f],\n", distance_breakdown->haul_distance_nm);
-    fprintf(fp, "    \"segment_total_distance_nm\": [%.2f],\n", distance_breakdown->total_distance_nm);
     fprintf(fp, "    \"objective_distance_nm\": %.2f,\n", objective_distance_nm);
-    fprintf(fp, "    \"transit_distance_nm\": %.2f,\n", distance_breakdown->transit_distance_nm);
-    fprintf(fp, "    \"haul_distance_nm\": %.2f,\n", distance_breakdown->haul_distance_nm);
-    fprintf(fp, "    \"total_distance_nm\": %.2f,\n", distance_breakdown->total_distance_nm);
+    gsp_write_distance_nm_json(fp, "    ", distance_breakdown, 1, distance_breakdown, 1);
     fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
     fprintf(fp, "    }\n");
     fprintf(fp, "  },\n");

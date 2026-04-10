@@ -31,6 +31,7 @@ static double elapsed_seconds(struct timespec start, struct timespec end) {
 #include "cheapest_insertion.h"
 #include "local_postopt.h"
 #include "../include/feasibility.h"
+#include "../include/json_utils.h"
 #include "../include/mip_report.h"
 
 #define MAX_LINE 1024
@@ -790,44 +791,7 @@ static void write_solution_section(FILE *fp, const char *label,
     }
     fprintf(fp, "],\n");
 
-    fprintf(fp, "    \"segment_distance_nm\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        double seg_nm = sol->segment_dists[s];
-        if (!segment_distances_include_return &&
-            s == sol->segment_count - 1 && sol->tour_length > 0) {
-            double final_leg = inst->distances[sol->tour[sol->tour_length - 1]][boat_end_loc_id];
-            if (final_leg > 0.0) seg_nm += final_leg;
-        }
-        fprintf(fp, "%.2f", seg_nm);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "    \"segment_transit_distance_nm\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%.2f", segment_breakdowns[s].transit_distance_nm);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "    \"segment_haul_distance_nm\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%.2f", segment_breakdowns[s].haul_distance_nm);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "    \"segment_total_distance_nm\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%.2f", segment_breakdowns[s].total_distance_nm);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "    \"transit_distance_nm\": %.2f,\n", total_breakdown.transit_distance_nm);
-    fprintf(fp, "    \"haul_distance_nm\": %.2f,\n", total_breakdown.haul_distance_nm);
-    fprintf(fp, "    \"computed_total_distance_nm\": %.2f,\n", total_breakdown.total_distance_nm);
-    fprintf(fp, "    \"total_distance_nm\": %.2f,\n", sol->total_distance);
+    gsp_write_distance_nm_json(fp, "    ", segment_breakdowns, sol->segment_count, &total_breakdown, 1);
     fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
     fprintf(fp, "  }");
 
@@ -1060,8 +1024,10 @@ static void write_metadata_only_json(const char *output_path,
     fprintf(fp, "      \"tour_length\": [],\n");
     fprintf(fp, "      \"segment_count\": 0,\n");
     fprintf(fp, "      \"segment_catch_amount\": [],\n");
-    fprintf(fp, "      \"segment_distance_nm\": [],\n");
-    fprintf(fp, "      \"total_distance_nm\": 0.0,\n");
+    {
+        gsp_distance_breakdown_t zero_total = {0.0, 0.0, 0.0};
+        gsp_write_distance_nm_json(fp, "      ", NULL, 0, &zero_total, 1);
+    }
     fprintf(fp, "      \"preprocessing_seconds\": 0.0,\n");
     fprintf(fp, "      \"method_runtime_seconds\": 0.0,\n");
     fprintf(fp, "      \"postprocessing_seconds\": 0.0,\n");
