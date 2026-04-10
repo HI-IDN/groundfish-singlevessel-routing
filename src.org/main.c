@@ -36,6 +36,7 @@ clang main.c \
 extern int DistanceLink(double *DistrMtrx, int *FsbleMtrx, int *Type,
                         double *LatLon[4], double *StartEnd,
                         int Size, int SelectedSize);
+extern void GetMapData(int *out_n, double **out_lat, double **out_lon);
 
 /* ---------- Constants ---------- */
 enum { tSHIP=1, tSTAT=2, tWAYP=3, tENDP=4, tPORT=5 };
@@ -494,7 +495,10 @@ static int write_distance_matrix_sqlite(const char *fname,
                                         const ExData *ex,
                                         const double *FullDist,
                                         const int *FullFsb,
-                                        int FullM)
+                                        int FullM,
+                                        const double *CoastLat,
+                                        const double *CoastLon,
+                                        int nCoast)
 {
   sqlite3 *db = NULL;
   sqlite3_stmt *stmt = NULL;
@@ -507,7 +511,6 @@ static int write_distance_matrix_sqlite(const char *fname,
 
   rc = sqlite3_exec(db,
                     "PRAGMA journal_mode=WAL;"
-                    "DROP TABLE IF EXISTS legacy_distances;"
                     "CREATE TABLE legacy_distances ("
                     "from_node INTEGER,"
                     "to_node INTEGER,"
@@ -527,12 +530,28 @@ static int write_distance_matrix_sqlite(const char *fname,
                     "feasible INTEGER"
                     ");"
                     "CREATE INDEX idx_legacy_from_to ON legacy_distances(from_node, to_node);"
-                    "CREATE INDEX idx_legacy_coords ON legacy_distances(from_lat_deg, from_lon_deg, to_lat_deg, to_lon_deg);",
+                    "CREATE INDEX idx_legacy_coords ON legacy_distances(from_lat_deg, from_lon_deg, to_lat_deg, to_lon_deg);"
+                    "CREATE TABLE coastline (id INTEGER PRIMARY KEY, seq INTEGER, lat REAL, lon REAL);",
                     NULL, NULL, NULL);
   if (rc != SQLITE_OK) {
     fprintf(stderr, "sqlite schema setup failed: %s\n", sqlite3_errmsg(db));
     sqlite3_close(db);
     return 1;
+  }
+
+  sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+
+  /* coastline */
+  if (CoastLat && CoastLon && nCoast > 0) {
+    sqlite3_stmt *cs = NULL;
+    sqlite3_prepare_v2(db, "INSERT INTO coastline(seq,lat,lon) VALUES(?,?,?);", -1, &cs, NULL);
+    for (int i = 0; i < nCoast; i++) {
+      sqlite3_bind_int(cs,    1, i);
+      sqlite3_bind_double(cs, 2, CoastLat[i]);
+      sqlite3_bind_double(cs, 3, CoastLon[i]);
+      sqlite3_step(cs); sqlite3_reset(cs); sqlite3_clear_bindings(cs);
+    }
+    sqlite3_finalize(cs);
   }
 
   rc = sqlite3_prepare_v2(db,
@@ -548,7 +567,6 @@ static int write_distance_matrix_sqlite(const char *fname,
     return 1;
   }
 
-  sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
 
   for (int i = 0; i < FullM; i++) {
     int from_loc = i / 2;
@@ -992,10 +1010,19 @@ int main(int argc, char **argv) {
   build_waypoint_dist(&ex, NULL, 0, &dist, &fsb, &full_dist, &full_fsb, &full_m);
 
   if (write_matrix) {
-    if (write_distance_matrix_sqlite(write_matrix, &items, &ex, full_dist, full_fsb, full_m) != 0) {
+    int nCoast = 0;
+    double *cLat = NULL, *cLon = NULL;
+    GetMapData(&nCoast, &cLat, &cLon);
+    if (write_distance_matrix_sqlite(write_matrix, &items, &ex,
+                                     full_dist, full_fsb, full_m,
+                                     cLat, cLon, nCoast) != 0)
       die("Failed to write legacy distance matrix export");
-    }
-    printf("Legacy distance matrix written to %s\n", write_matrix);
+    printf("Legacy DB written to %s  (coastline n=%d)\n", write_matrix, nCoast);
+    /* early exit: skip Gurobi */
+    free(dist); free(fsb); free(full_dist); free(full_fsb);
+    free_exdata(&ex);
+    vec_free(&items);
+    return 0;
   }
 
   /* special closure between nodes 0 and 1 */

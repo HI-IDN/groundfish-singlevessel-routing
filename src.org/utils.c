@@ -461,3 +461,12 @@ EXPORT int dijkstra(double *d, int *path, double **graph, int n, int src, int de
   free(nodes);
   return 0;
 }
+
+/* Expose the coastline already loaded into MAP[0] by readMAP() / DistanceLink().
+   out_lat and out_lon point into MAP-owned memory — do not free them. */
+EXPORT void GetMapData(int *out_n, double **out_lat, double **out_lon) {
+  *out_n   = MAP[0].N[0];
+  *out_lat = MAP[0].LatDeg[0];
+  *out_lon = MAP[0].LonDeg[0];
+}
+
