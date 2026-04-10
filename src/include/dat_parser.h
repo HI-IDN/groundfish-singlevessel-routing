@@ -43,6 +43,7 @@ typedef struct
 typedef struct
 {
     int station_id;
+    char *name;           /* "reitur tog", e.g. "671 5" */
     int amount;
     char *comment;
     int external_id;

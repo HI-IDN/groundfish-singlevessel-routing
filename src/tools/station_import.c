@@ -58,9 +58,13 @@ static int ensure_station_schema(sqlite3 *db) {
         "  lon REAL,"
         "  UNIQUE(easting, northing)"
         ");"
-        "CREATE TABLE IF NOT EXISTS stations ("
+        /* Always recreate stations so schema changes (e.g. added columns) take
+           effect without a manual migration.  distances is wiped on import too,
+           so dropping stations first is safe. */
+        "DROP TABLE IF EXISTS stations;"
+        "CREATE TABLE stations ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  ext_id INTEGER,"
+        "  ext_id TEXT,"
         "  start_location_id INTEGER,"
         "  end_location_id INTEGER,"
         "  amount INTEGER,"
@@ -178,10 +182,15 @@ int station_import_run(int argc, char **argv) {
     sqlite3_prepare_v2(db,
         "SELECT id FROM locations WHERE easting = ? AND northing = ?;",
         -1, &loc_select_stmt, NULL);
-    sqlite3_prepare_v2(db,
+    if (sqlite3_prepare_v2(db,
         "INSERT INTO stations (ext_id, start_location_id, end_location_id, amount, depth_thrown, depth_haul, comment) "
         "VALUES (?, ?, ?, ?, ?, ?, ?);",
-        -1, &station_stmt, NULL);
+        -1, &station_stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare station insert: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        dataset_free(&dataset);
+        return 1;
+    }
 
     sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
     sqlite3_exec(db, "DELETE FROM distances;", NULL, NULL, NULL);
@@ -206,7 +215,8 @@ int station_import_run(int argc, char **argv) {
         }
 
         parse_station_comment(station->comment, &depth_thrown, &depth_haul, &clean_comment);
-        sqlite3_bind_int(station_stmt, 1, station->external_id);
+        if (station->name) sqlite3_bind_text(station_stmt, 1, station->name, -1, SQLITE_STATIC);
+        else sqlite3_bind_null(station_stmt, 1);
         sqlite3_bind_int(station_stmt, 2, start_loc_id);
         sqlite3_bind_int(station_stmt, 3, end_loc_id);
         sqlite3_bind_int(station_stmt, 4, station->amount);

@@ -88,6 +88,7 @@ void dataset_free(DataSet *ds) {
     free(ds->ports);
 
     for (int i = 0; i < ds->n_stations; i++) {
+        free(ds->stations[i].name);
         free(ds->stations[i].comment);
     }
     free(ds->stations);
@@ -170,6 +171,7 @@ void dataset_add_station(DataSet *ds, const Item *item) {
 
     Station *station = &ds->stations[ds->n_stations];
     station->station_id = ds->n_stations;
+    station->name = item->Name ? xstrdup(item->Name) : NULL;
 
     /* StationData: [0-1]=external_id, [2]=type, [3-6]=location, [7]=amount */
     int ext_id_1 = (int)item->StationData[0];
