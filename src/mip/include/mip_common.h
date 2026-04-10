@@ -14,6 +14,7 @@ typedef struct {
     int heuristic_only;
     const int *warm_start_station_ids;
     int warm_start_order_length;
+    int exclude_haul_distance;
     GRBenv *shared_env;
 } mip_params_t;
 

@@ -1,5 +1,6 @@
 #include "../mip/include/mip_noport.h"
 #include "../include/feasibility.h"
+#include "../include/init_types.h"
 #include "../include/mip_report.h"
 
 #include <sqlite3.h>
@@ -65,7 +66,8 @@ static int read_noport_config(const char *yaml_path,
                               int *boat_id_out,
                               double *l0seg_out,
                               double *global_time_limit_out,
-                              int *thread_count_out) {
+                              int *thread_count_out,
+                              int *include_haul_distance_out) {
     FILE *fp = NULL;
     char line[1024];
     int section = 0;
@@ -74,6 +76,7 @@ static int read_noport_config(const char *yaml_path,
     if (l0seg_out) *l0seg_out = 0.0;
     if (global_time_limit_out) *global_time_limit_out = 0.0;
     if (thread_count_out) *thread_count_out = 0;
+    if (include_haul_distance_out) *include_haul_distance_out = 0;
 
     fp = fopen(yaml_path, "r");
     if (!fp) {
@@ -98,6 +101,7 @@ static int read_noport_config(const char *yaml_path,
         if (trimmed == line) {
             if (strncmp(trimmed, "boat:", 5) == 0) section = 1;
             else if (strncmp(trimmed, "gurobi:", 7) == 0) section = 2;
+            else if (strncmp(trimmed, "objective:", 10) == 0) section = 3;
             else section = 0;
             continue;
         }
@@ -113,6 +117,18 @@ static int read_noport_config(const char *yaml_path,
         }
         if (section == 2 && strncmp(trimmed, "threads:", 8) == 0 && thread_count_out) {
             *thread_count_out = atoi(trimmed + 8);
+            continue;
+        }
+        if (section == 3 && strncmp(trimmed, "include_haul_distance:", 22) == 0 && include_haul_distance_out) {
+            char *value = trim_left(trimmed + 22);
+            *include_haul_distance_out =
+                !(strncmp(value, "false", 5) == 0 ||
+                  strncmp(value, "False", 5) == 0 ||
+                  strncmp(value, "FALSE", 5) == 0 ||
+                  strncmp(value, "0", 1) == 0 ||
+                  strncmp(value, "no", 2) == 0 ||
+                  strncmp(value, "No", 2) == 0 ||
+                  strncmp(value, "NO", 2) == 0);
             continue;
         }
     }
@@ -314,7 +330,55 @@ static const Station *find_station_by_id(const app_instance_t *app, int station_
 static double distance_nm(const app_instance_t *app, int from_loc_id, int to_loc_id) {
     if (from_loc_id < 0 || from_loc_id >= app->max_location_id) return -1.0;
     if (to_loc_id < 0 || to_loc_id >= app->max_location_id) return -1.0;
+    if (from_loc_id == to_loc_id) return 0.0;
     return app->distances[from_loc_id][to_loc_id];
+}
+
+static int add_distance_component(const app_instance_t *app,
+                                  int from_loc_id,
+                                  int to_loc_id,
+                                  double *accumulator) {
+    double d = distance_nm(app, from_loc_id, to_loc_id);
+    if (d < 0.0) return 0;
+    *accumulator += d;
+    return 1;
+}
+
+static int compute_route_distance_breakdown(const app_instance_t *app,
+                                            const mip_noport_solution_t *solution,
+                                            gsp_distance_breakdown_t *breakdown) {
+    int prev_loc_id;
+
+    if (!app || !solution || !breakdown) return 0;
+    memset(breakdown, 0, sizeof(*breakdown));
+
+    prev_loc_id = app->boat.location_id;
+    for (int i = 0; i < solution->order_length; i++) {
+        int signed_station_id = solution->signed_station_ids[i];
+        const Station *station = find_station_by_id(app, abs(signed_station_id));
+        int entry_loc_id;
+        int exit_loc_id;
+
+        if (!station) return 0;
+        if (signed_station_id < 0) {
+            entry_loc_id = station->end_location_id;
+            exit_loc_id = station->start_location_id;
+        } else {
+            entry_loc_id = station->start_location_id;
+            exit_loc_id = station->end_location_id;
+        }
+
+        if (!add_distance_component(app, prev_loc_id, entry_loc_id,
+                                    &breakdown->transit_distance_nm)) return 0;
+        if (!add_distance_component(app, entry_loc_id, exit_loc_id,
+                                    &breakdown->haul_distance_nm)) return 0;
+        prev_loc_id = exit_loc_id;
+    }
+
+    if (!add_distance_component(app, prev_loc_id, app->boat.location_id,
+                                &breakdown->transit_distance_nm)) return 0;
+    breakdown->total_distance_nm = breakdown->transit_distance_nm + breakdown->haul_distance_nm;
+    return 1;
 }
 
 static int build_route_locations(const app_instance_t *app,
@@ -362,7 +426,8 @@ static int write_noport_json(sqlite3 *db,
                              double timeout_seconds,
                              double global_time_limit_seconds,
                              double preprocessing_seconds,
-                             double fixed_total_distance,
+                             const gsp_distance_breakdown_t *distance_breakdown,
+                             int include_haul_distance,
                              double total_runtime_seconds) {
     const char *final_variant_name = "capacity-infeasible";
     FILE *fp = NULL;
@@ -378,6 +443,12 @@ static int write_noport_json(sqlite3 *db,
     int mip_num_nodes = 2 * mip_seg_size;
     gsp_mip_solve_detail_t mip_detail;
     double mip_gap_percent = solution->gap * 100.0;
+    double objective_distance_nm;
+
+    if (!distance_breakdown) return 1;
+    objective_distance_nm = include_haul_distance ?
+        distance_breakdown->total_distance_nm :
+        distance_breakdown->transit_distance_nm;
 
     if (!build_route_locations(app, solution, &route, &route_len, &total_catch)) return 1;
 
@@ -412,7 +483,10 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "    \"boat_id\": %d,\n", app->boat.boat_id);
     fprintf(fp, "    \"boat_name\": \"%s\",\n", app->boat.name ? app->boat.name : "Unknown");
     fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", app->boat_start_lat, app->boat_start_lon);
-    fprintf(fp, "    \"boat_location_id\": %d\n", app->boat.location_id);
+    fprintf(fp, "    \"boat_location_id\": %d,\n", app->boat.location_id);
+    fprintf(fp, "    \"global_time_limit_seconds\": %.6f,\n", global_time_limit_seconds);
+    fprintf(fp, "    \"objective_distance_mode\": \"%s\"\n",
+            include_haul_distance ? "total" : "transit");
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"problem\": {\n");
@@ -471,8 +545,14 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "    \"tour_length\": [%d],\n", solution->order_length);
     fprintf(fp, "    \"segment_count\": 1,\n");
     fprintf(fp, "    \"segment_catch_amount\": [%d],\n", total_catch);
-    fprintf(fp, "    \"segment_distance_nm\": [%.2f],\n", fixed_total_distance);
-    fprintf(fp, "    \"total_distance_nm\": %.2f,\n", fixed_total_distance);
+    fprintf(fp, "    \"segment_distance_nm\": [%.2f],\n", objective_distance_nm);
+    fprintf(fp, "    \"segment_transit_distance_nm\": [%.2f],\n", distance_breakdown->transit_distance_nm);
+    fprintf(fp, "    \"segment_haul_distance_nm\": [%.2f],\n", distance_breakdown->haul_distance_nm);
+    fprintf(fp, "    \"segment_total_distance_nm\": [%.2f],\n", distance_breakdown->total_distance_nm);
+    fprintf(fp, "    \"objective_distance_nm\": %.2f,\n", objective_distance_nm);
+    fprintf(fp, "    \"transit_distance_nm\": %.2f,\n", distance_breakdown->transit_distance_nm);
+    fprintf(fp, "    \"haul_distance_nm\": %.2f,\n", distance_breakdown->haul_distance_nm);
+    fprintf(fp, "    \"total_distance_nm\": %.2f,\n", distance_breakdown->total_distance_nm);
     fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
     fprintf(fp, "    }\n");
     fprintf(fp, "  },\n");
@@ -493,8 +573,14 @@ static int write_noport_json(sqlite3 *db,
             (solution->status == MIP_STATUS_TIME_LIMIT) ? "time_limit" :
             (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed");
     fprintf(fp, "    \"feasible\": %s,\n", is_feasible ? "true" : "false");
-    fprintf(fp, "    \"total_distance_nm\": [%.2f],\n", fixed_total_distance);
-    fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", fixed_total_distance);
+    fprintf(fp, "    \"objective_distance_nm\": [%.2f],\n", objective_distance_nm);
+    fprintf(fp, "    \"transit_distance_nm\": [%.2f],\n", distance_breakdown->transit_distance_nm);
+    fprintf(fp, "    \"haul_distance_nm\": [%.2f],\n", distance_breakdown->haul_distance_nm);
+    fprintf(fp, "    \"total_distance_nm\": [%.2f],\n", distance_breakdown->total_distance_nm);
+    fprintf(fp, "    \"final_objective_distance_nm\": %.2f,\n", objective_distance_nm);
+    fprintf(fp, "    \"final_transit_distance_nm\": %.2f,\n", distance_breakdown->transit_distance_nm);
+    fprintf(fp, "    \"final_haul_distance_nm\": %.2f,\n", distance_breakdown->haul_distance_nm);
+    fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", distance_breakdown->total_distance_nm);
     fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
     fprintf(fp, "    \"solution_runtime_seconds\": [%.6f],\n", solution->runtime_seconds);
     fprintf(fp, "    \"mip_solves\": 1,\n");
@@ -543,7 +629,8 @@ int main(int argc, char **argv) {
     double global_time_limit_seconds = 0.0;
     double effective_time_limit_seconds = 0.0;
     int thread_count = 0;
-    double fixed_total_distance = 0.0;
+    int include_haul_distance = 1;
+    gsp_distance_breakdown_t distance_breakdown;
     double preprocessing_seconds = 0.0;
     double total_runtime_seconds = 0.0;
     clock_t preprocess_start;
@@ -553,6 +640,7 @@ int main(int argc, char **argv) {
     memset(&mip_instance, 0, sizeof(mip_instance));
     memset(&mip_params, 0, sizeof(mip_params));
     memset(&mip_solution, 0, sizeof(mip_solution));
+    memset(&distance_breakdown, 0, sizeof(distance_breakdown));
 
     for (int i = 1; i < argc - 1; i++) {
         if (strcmp(argv[i], "--database") == 0) db_path = argv[i + 1];
@@ -566,7 +654,8 @@ int main(int argc, char **argv) {
     }
 
     preprocess_start = clock();
-    read_noport_config(config_path, &boat_id, &l0seg_seconds, &global_time_limit_seconds, &thread_count);
+    read_noport_config(config_path, &boat_id, &l0seg_seconds, &global_time_limit_seconds,
+                       &thread_count, &include_haul_distance);
 
     if (sqlite3_open(db_path, &db) != SQLITE_OK) {
         fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
@@ -599,6 +688,7 @@ int main(int argc, char **argv) {
     mip_params.thread_count = thread_count;
     mip_params.verbose = 1;
     mip_params.mip_gap = 0.0;
+    mip_params.exclude_haul_distance = !include_haul_distance;
 
     preprocess_end = clock();
     preprocessing_seconds = elapsed_seconds(preprocess_start, preprocess_end);
@@ -613,6 +703,7 @@ int main(int argc, char **argv) {
            (global_time_limit_seconds > 0.0) ? "" : "none ",
            (global_time_limit_seconds > 0.0) ? global_time_limit_seconds : 0.0);
     printf("  threads: %d\n", thread_count);
+    printf("  objective distance mode: %s\n", include_haul_distance ? "total" : "transit");
 
     if (solve_mip_noport(&mip_instance, &mip_params, &mip_solution) != 0) {
         fprintf(stderr, "Gurobi no-port solve failed\n");
@@ -622,14 +713,22 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    fixed_total_distance = mip_solution.total_distance_nm;
+    if (!compute_route_distance_breakdown(&app, &mip_solution, &distance_breakdown)) {
+        fprintf(stderr, "Failed to compute no-port distance breakdown\n");
+        sqlite3_close(db);
+        free_app_instance(&app);
+        free_mip_noport_solution(&mip_solution);
+        return 1;
+    }
+
     total_runtime_seconds = preprocessing_seconds + mip_solution.runtime_seconds;
 
     if (write_noport_json(db, output_path, &app, &mip_solution,
                           l0seg_seconds,
                           global_time_limit_seconds,
                           preprocessing_seconds,
-                          fixed_total_distance,
+                          &distance_breakdown,
+                          include_haul_distance,
                           total_runtime_seconds) != 0) {
         fprintf(stderr, "Failed to write %s\n", output_path);
         sqlite3_close(db);
@@ -639,8 +738,11 @@ int main(int argc, char **argv) {
     }
 
     printf("[OK] Wrote %s\n", output_path);
-    printf("  tsp loop distance: %.2f nm\n", mip_solution.total_distance_nm);
-    printf("  full route distance: %.2f nm\n", fixed_total_distance);
+    printf("  objective distance: %.2f nm\n",
+           include_haul_distance ? distance_breakdown.total_distance_nm : distance_breakdown.transit_distance_nm);
+    printf("  transit distance: %.2f nm\n", distance_breakdown.transit_distance_nm);
+    printf("  haul distance: %.2f nm\n", distance_breakdown.haul_distance_nm);
+    printf("  total distance: %.2f nm\n", distance_breakdown.total_distance_nm);
     printf("  stations visited: %d\n", mip_solution.order_length);
     printf("  runtime: %.2f s\n", mip_solution.runtime_seconds);
     printf("  total runtime: %.2f s\n", total_runtime_seconds);

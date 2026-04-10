@@ -570,6 +570,67 @@ static const waypoint_cache_entry_t *lookup_waypoint_path_local(waypoint_cache_t
     return NULL;
 }
 
+static int init_leg_is_station_haul(const nn_instance_t *inst, int from_loc_id, int to_loc_id) {
+    if (!inst) return 0;
+    for (int i = 0; i < inst->num_stations + inst->num_ports; i++) {
+        const nn_node_t *node = &inst->nodes[i];
+        if (node->is_port) continue;
+        if ((node->start_loc_id == from_loc_id && node->end_loc_id == to_loc_id) ||
+            (node->end_loc_id == from_loc_id && node->start_loc_id == to_loc_id)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static double init_distance_or_zero(const nn_instance_t *inst, int from_loc_id, int to_loc_id) {
+    if (!inst || !inst->distances) return 0.0;
+    if (from_loc_id == to_loc_id) return 0.0;
+    if (from_loc_id < 0 || from_loc_id >= inst->max_loc_id) return 0.0;
+    if (to_loc_id < 0 || to_loc_id >= inst->max_loc_id) return 0.0;
+    return (inst->distances[from_loc_id][to_loc_id] > 0.0) ?
+        inst->distances[from_loc_id][to_loc_id] : 0.0;
+}
+
+static void init_accumulate_leg_distance(const nn_instance_t *inst,
+                                         int from_loc_id,
+                                         int to_loc_id,
+                                         gsp_distance_breakdown_t *breakdown) {
+    double d;
+    if (!breakdown) return;
+    d = init_distance_or_zero(inst, from_loc_id, to_loc_id);
+    if (init_leg_is_station_haul(inst, from_loc_id, to_loc_id)) {
+        breakdown->haul_distance_nm += d;
+    } else {
+        breakdown->transit_distance_nm += d;
+    }
+    breakdown->total_distance_nm += d;
+}
+
+static void init_compute_segment_breakdowns(const nn_instance_t *inst,
+                                            const nn_solution_t *sol,
+                                            int boat_start_loc_id,
+                                            int boat_end_loc_id,
+                                            gsp_distance_breakdown_t *segment_breakdowns,
+                                            gsp_distance_breakdown_t *total_breakdown) {
+    if (!inst || !sol || !segment_breakdowns || !total_breakdown) return;
+    memset(total_breakdown, 0, sizeof(*total_breakdown));
+    for (int s = 0; s < sol->segment_count; s++) {
+        int prev_loc = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
+        memset(&segment_breakdowns[s], 0, sizeof(segment_breakdowns[s]));
+        for (int i = sol->segment_starts[s]; i <= sol->segment_ends[s]; i++) {
+            init_accumulate_leg_distance(inst, prev_loc, sol->tour[i], &segment_breakdowns[s]);
+            prev_loc = sol->tour[i];
+        }
+        if (s == sol->segment_count - 1 && prev_loc != boat_end_loc_id) {
+            init_accumulate_leg_distance(inst, prev_loc, boat_end_loc_id, &segment_breakdowns[s]);
+        }
+        total_breakdown->transit_distance_nm += segment_breakdowns[s].transit_distance_nm;
+        total_breakdown->haul_distance_nm += segment_breakdowns[s].haul_distance_nm;
+        total_breakdown->total_distance_nm += segment_breakdowns[s].total_distance_nm;
+    }
+}
+
 static void write_solution_section(FILE *fp, const char *label,
                                    const nn_instance_t *inst, const nn_solution_t *sol,
                                    int boat_start_loc_id, int boat_end_loc_id,
@@ -585,12 +646,24 @@ static void write_solution_section(FILE *fp, const char *label,
     int *dock_location_ids = NULL;
     int dock_n = 0, dock_cap = 0;
     unsigned char *seen_waypoint_location_ids = NULL;
+    gsp_distance_breakdown_t *segment_breakdowns = NULL;
+    gsp_distance_breakdown_t total_breakdown;
 
     if (!fp || !inst || !sol || !cache) return;
+
+    memset(&total_breakdown, 0, sizeof(total_breakdown));
+    segment_breakdowns = (gsp_distance_breakdown_t*)calloc((size_t)sol->segment_count, sizeof(gsp_distance_breakdown_t));
+    if (!segment_breakdowns) {
+        fprintf(stderr, "ERROR: Failed to allocate segment distance breakdowns\n");
+        return;
+    }
+    init_compute_segment_breakdowns(inst, sol, boat_start_loc_id, boat_end_loc_id,
+                                    segment_breakdowns, &total_breakdown);
 
     seen_waypoint_location_ids = (unsigned char*)calloc((size_t)inst->max_loc_id, sizeof(unsigned char));
     if (!seen_waypoint_location_ids) {
         fprintf(stderr, "ERROR: Failed to allocate waypoint seen-set\n");
+        free(segment_breakdowns);
         return;
     }
 
@@ -616,6 +689,7 @@ static void write_solution_section(FILE *fp, const char *label,
             free(seen_waypoint_location_ids);
             free(unique_waypoint_location_ids);
             free(dock_location_ids);
+            free(segment_breakdowns);
             fprintf(stderr, "ERROR: Failed to allocate temporary segment buffer\n");
             return;
         }
@@ -729,6 +803,30 @@ static void write_solution_section(FILE *fp, const char *label,
     }
     fprintf(fp, "],\n");
 
+    fprintf(fp, "    \"segment_transit_distance_nm\": [");
+    for (int s = 0; s < sol->segment_count; s++) {
+        fprintf(fp, "%.2f", segment_breakdowns[s].transit_distance_nm);
+        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+
+    fprintf(fp, "    \"segment_haul_distance_nm\": [");
+    for (int s = 0; s < sol->segment_count; s++) {
+        fprintf(fp, "%.2f", segment_breakdowns[s].haul_distance_nm);
+        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+
+    fprintf(fp, "    \"segment_total_distance_nm\": [");
+    for (int s = 0; s < sol->segment_count; s++) {
+        fprintf(fp, "%.2f", segment_breakdowns[s].total_distance_nm);
+        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
+    }
+    fprintf(fp, "],\n");
+
+    fprintf(fp, "    \"transit_distance_nm\": %.2f,\n", total_breakdown.transit_distance_nm);
+    fprintf(fp, "    \"haul_distance_nm\": %.2f,\n", total_breakdown.haul_distance_nm);
+    fprintf(fp, "    \"computed_total_distance_nm\": %.2f,\n", total_breakdown.total_distance_nm);
     fprintf(fp, "    \"total_distance_nm\": %.2f,\n", sol->total_distance);
     fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
     fprintf(fp, "  }");
@@ -736,6 +834,7 @@ static void write_solution_section(FILE *fp, const char *label,
     free(seen_waypoint_location_ids);
     free(unique_waypoint_location_ids);
     free(dock_location_ids);
+    free(segment_breakdowns);
 }
 
 /* Write NN solution to JSON in survey format */
@@ -1144,6 +1243,7 @@ int mode_init(int argc, char **argv) {
     printf("[NN] Done in %.4f s\n", solve_runtime_seconds);
 
     double mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
+    int include_haul_distance = read_objective_include_haul_distance_from_yaml(config);
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     gsp_mip_solve_detail_t *local_postopt_details = NULL;
@@ -1156,6 +1256,7 @@ int mode_init(int argc, char **argv) {
     if (!init_apply_local_postopt(&inst, &pre_local_postopt_sol,
                                   boat_start_loc_id, boat_end_loc_id,
                                   mip_time_limit_seconds,
+                                  include_haul_distance,
                                   &sol,
                                   &local_postopt_runtime_seconds,
                                   &local_postopt_segment_solve_count,

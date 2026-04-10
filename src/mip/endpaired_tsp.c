@@ -252,6 +252,13 @@ int solve_mip_endpaired_tsp(const mip_endpaired_instance_t *instance,
         }
     }
 
+    if (local_params.exclude_haul_distance) {
+        for (int i = 1; i < seg_size; i++) {
+            dist[(2 * i + 0) * n + (2 * i + 1)] = 0.0;
+            dist[(2 * i + 1) * n + (2 * i + 0)] = 0.0;
+        }
+    }
+
     dist[1 * n + 0] = 0.0;
     dist[0 * n + 1] = 0.0;
 

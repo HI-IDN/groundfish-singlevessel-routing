@@ -24,6 +24,10 @@ init:
   ge: {}                                 # Reserved for method-specific init options
   ci: {}                                 # Reserved for method-specific init options
 
+# Objective accounting
+objective:
+  include_haul_distance: false           # false = all MIP objectives are transit-only; total/haul still reported
+
 # Phase 1: Matheuristic Sweep Parameters
 sweep:
   # Iteration control

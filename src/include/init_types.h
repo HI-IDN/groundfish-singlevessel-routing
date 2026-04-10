@@ -2,6 +2,12 @@
 #define INIT_TYPES_H
 
 typedef struct {
+    double transit_distance_nm;
+    double haul_distance_nm;
+    double total_distance_nm;
+} gsp_distance_breakdown_t;
+
+typedef struct {
     int boat_id;
     char boat_name[256];
     double boat_capacity;

@@ -103,6 +103,44 @@ double read_init_mip_time_limit_from_yaml(const char *yaml_path) {
     return time_limit;
 }
 
+int read_objective_include_haul_distance_from_yaml(const char *yaml_path) {
+    FILE *fp = fopen(yaml_path, "r");
+    char line[MAX_LINE];
+    int in_objective = 0;
+    int include_haul_distance = 0;
+
+    if (!fp) return 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        char *trimmed = line;
+        while (*trimmed && isspace((unsigned char)*trimmed)) trimmed++;
+        if (*trimmed == '#' || *trimmed == '\0' || *trimmed == '\n') continue;
+
+        if (!isspace((unsigned char)line[0])) {
+            in_objective = (strncmp(trimmed, "objective:", 10) == 0);
+            continue;
+        }
+        if (!in_objective) continue;
+
+        if (strncmp(trimmed, "include_haul_distance:", 22) == 0) {
+            char *value = trimmed + 22;
+            while (*value && isspace((unsigned char)*value)) value++;
+            include_haul_distance =
+                !(strncmp(value, "false", 5) == 0 ||
+                  strncmp(value, "False", 5) == 0 ||
+                  strncmp(value, "FALSE", 5) == 0 ||
+                  strncmp(value, "0", 1) == 0 ||
+                  strncmp(value, "no", 2) == 0 ||
+                  strncmp(value, "No", 2) == 0 ||
+                  strncmp(value, "NO", 2) == 0);
+            break;
+        }
+    }
+
+    fclose(fp);
+    return include_haul_distance;
+}
+
 static int find_station_index_local(const nn_instance_t *inst, int station_id) {
     for (int i = 0; i < inst->num_stations; i++) {
         if (inst->nodes[i].table_id == station_id) return i;
@@ -148,6 +186,7 @@ static int solve_segment_order(const nn_instance_t *inst,
                                int start_loc_id,
                                int end_loc_id,
                                double time_limit_seconds,
+                               int include_haul_distance,
                                GRBenv *env,
                                int **signed_station_ids_out,
                                double *runtime_seconds_out,
@@ -192,6 +231,7 @@ static int solve_segment_order(const nn_instance_t *inst,
     mip_params.shared_env = env;
     mip_params.verbose = 0;
     mip_params.time_limit_seconds = (time_limit_seconds > 0.0) ? time_limit_seconds : 0.0;
+    mip_params.exclude_haul_distance = !include_haul_distance;
 
     if (solve_mip_endpaired_tsp(&mip_instance, &mip_params,
                                 start_loc_id, end_loc_id, &mip_solution) != 0) {
@@ -227,6 +267,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
                              int boat_start_loc_id,
                              int boat_end_loc_id,
                              double time_limit_seconds,
+                             int include_haul_distance,
                              nn_solution_t *output,
                              double *runtime_seconds_out,
                              int *segment_solve_count_out,
@@ -316,7 +357,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
         fflush(stdout);
 
         if (!solve_segment_order(inst, station_ids, station_count, start_loc_id, end_loc_id,
-                                 time_limit_seconds, env, &signed_station_ids, &segment_runtime,
+                                 time_limit_seconds, include_haul_distance, env, &signed_station_ids, &segment_runtime,
                                  &segment_gap_percent, &segment_model_num_vars,
                                  &segment_model_num_constrs)) {
             free(station_ids);

@@ -263,7 +263,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         mip/mip_paired_tour.c
     )
 
-    add_executable(gsp_noport_opt
+    add_executable(gsp_noport
         mip/noport.c
         mip/endpaired_tsp.c
         ${GSP_MIP_SHARED_SOURCES}
@@ -273,29 +273,29 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         common/sql_utils.c
     )
 
-    target_include_directories(gsp_noport_opt PRIVATE
+    target_include_directories(gsp_noport PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/mip/include
         ${SQLITE3_INCLUDE_DIRS}
         ${GUROBI_INCLUDE_DIR}
     )
 
-    target_link_libraries(gsp_noport_opt
+    target_link_libraries(gsp_noport
         ${SQLITE3_LIBRARIES}
         -L${GUROBI_LIBRARY_DIR}
         gurobi130
         m
     )
 
-    add_custom_target(run_noport_opt
-        COMMAND $<TARGET_FILE:gsp_noport_opt> --database ${DATABASE} --config ${CONFIG_YAML} --output ${SOL_NOPORT_DIR}/noport.json
-        DEPENDS gsp_noport_opt
+    add_custom_target(run_noport
+        COMMAND $<TARGET_FILE:gsp_noport> --database ${DATABASE} --config ${CONFIG_YAML} --output ${SOL_NOPORT_DIR}/noport.json
+        DEPENDS gsp_noport
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Preprocessing: no-port optimal station ordering"
     )
 else()
-    add_custom_target(run_noport_opt
-        COMMAND ${CMAKE_COMMAND} -E echo "No-port OPT unavailable: Gurobi headers/library not found during CMake configure"
+    add_custom_target(run_noport
+        COMMAND ${CMAKE_COMMAND} -E echo "No-port unavailable: Gurobi headers/library not found during CMake configure"
         COMMAND ${CMAKE_COMMAND} -E false
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Preprocessing: no-port optimal station ordering"
@@ -310,7 +310,7 @@ add_custom_target(run_init_from_order
 )
 
 add_custom_target(run_init_noport
-    DEPENDS run_noport_opt run_init_from_order
+    DEPENDS run_noport run_init_from_order
     COMMENT "Phase 0: no-port initialization"
 )
 
@@ -363,7 +363,7 @@ install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances gsp
 )
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
-    install(TARGETS gsp_noport_opt
+    install(TARGETS gsp_noport
         RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
     )
     install(TARGETS gsp_gurobi
