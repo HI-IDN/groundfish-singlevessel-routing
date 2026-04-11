@@ -41,6 +41,16 @@ read_db_table <- function(db_path, sql, params = NULL) {
   tibble::tibble(data)
 }
 
+log_path_for_output <- function(output_file) {
+  sub("\\.[Pp][Nn][Gg]$", ".log", output_file)
+}
+
+write_log_lines <- function(log_path, lines) {
+  dir.create(dirname(log_path), recursive = TRUE, showWarnings = FALSE)
+  writeLines(lines, log_path, useBytes = TRUE)
+  cat(sprintf("Log saved to: %s\n", normalizePath(log_path, winslash = "/", mustWork = FALSE)))
+}
+
 ensure_segment_list <- function(x) {
   if (is.null(x)) return(list())
   if (is.list(x) && !is.data.frame(x)) return(x)
@@ -60,6 +70,46 @@ parse_integer_segment <- function(x) {
 
 normalize_station_segments <- function(x) {
   lapply(ensure_segment_list(x), parse_integer_segment)
+}
+
+resolve_summary_final_variant <- function(doc) {
+  final_name <- doc$summary$status$final
+  if (is.null(final_name) || !nzchar(final_name)) {
+    final_name <- doc$summary$final
+  }
+  final_name
+}
+
+extract_solution_distance <- function(solution) {
+  distance_block <- solution$distance_nm
+  if (is.null(distance_block)) {
+    stop("solution$distance_nm is missing from this JSON.", call. = FALSE)
+  }
+
+  segment_transit <- distance_block$segment$transit
+  segment_total <- distance_block$segment$total
+  grand_transit <- distance_block$grand_total$transit
+  grand_total <- distance_block$grand_total$total
+
+  if (is.null(segment_transit)) {
+    stop("solution$distance_nm$segment$transit is missing from this JSON.", call. = FALSE)
+  }
+  if (is.null(segment_total)) {
+    stop("solution$distance_nm$segment$total is missing from this JSON.", call. = FALSE)
+  }
+  if (is.null(grand_transit) || length(grand_transit) == 0) {
+    stop("solution$distance_nm$grand_total$transit is missing from this JSON.", call. = FALSE)
+  }
+  if (is.null(grand_total) || length(grand_total) == 0) {
+    stop("solution$distance_nm$grand_total$total is missing from this JSON.", call. = FALSE)
+  }
+
+  list(
+    segment_transit = as.numeric(segment_transit),
+    segment_total = as.numeric(segment_total),
+    grand_transit = as.numeric(grand_transit[[1]]),
+    grand_total = as.numeric(grand_total[[1]])
+  )
 }
 
 load_station_endpoints <- function(db_path) {
@@ -127,6 +177,20 @@ coord_fixed_for_lat <- function(lat_values, fallback_lat = 65.0) {
   }
   ratio <- 1.0 / cos(mean_lat * pi / 180.0)
   ggplot2::coord_fixed(ratio = ratio)
+}
+
+compute_interior_label_position <- function(x, y, ref_x, ref_y, x_frac = 0.07, y_frac = 0.05) {
+  x_range <- range(ref_x, na.rm = TRUE)
+  y_range <- range(ref_y, na.rm = TRUE)
+  x_span <- diff(x_range)
+  y_span <- diff(y_range)
+  x_mid <- mean(x_range)
+  y_mid <- mean(y_range)
+
+  tibble::tibble(
+    label_lon = x + ifelse(x <= x_mid, 1, -1) * x_span * x_frac,
+    label_lat = y + ifelse(y <= y_mid, 1, -1) * y_span * y_frac
+  )
 }
 
 gsp_common_theme <- function(legend_position = "right", legend_direction = "vertical") {

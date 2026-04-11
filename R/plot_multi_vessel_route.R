@@ -15,6 +15,7 @@ script_dir <- if (length(script_file_arg) > 0) {
 }
 source(file.path(script_dir, "plot_utils.R"))
 load_required_packages(required_packages)
+log_file <- log_path_for_output(output_file)
 
 cat("=== GSP Multi-Vessel Route Plotter ===\n\n")
 cat(sprintf("Input glob: %s\n", input_glob))
@@ -42,10 +43,11 @@ first_word <- function(x) {
 
 read_solution_block <- function(path) {
   survey <- jsonlite::fromJSON(path)
-  variant_name <- survey$summary$final
+  variant_name <- resolve_summary_final_variant(survey)
   if (is.null(variant_name) || is.null(survey$solution[[variant_name]])) {
     stop(sprintf("Missing final solution block in %s", path), call. = FALSE)
   }
+  distance_info <- extract_solution_distance(survey$solution[[variant_name]])
   list(
     file = path,
     boat_id = as.integer(survey$metadata$boat_id),
@@ -57,6 +59,7 @@ read_solution_block <- function(path) {
     num_nodes = as.integer(survey$problem$num_nodes),
     num_stations = as.integer(survey$problem$num_stations),
     solution = survey$solution[[variant_name]],
+    distance = distance_info,
     variant_name = variant_name
   )
 }
@@ -75,6 +78,7 @@ route_path <- tibble()
 station_lines <- tibble()
 boat_summary <- tibble()
 total_distance_nm <- 0
+total_transit_distance_nm <- 0
 total_stations <- 0
 total_segments <- 0
 capacities <- numeric()
@@ -86,7 +90,8 @@ for (idx in seq_along(boats)) {
   segment_count <- length(segments)
   station_segments <- normalize_station_segments(solution$tour_segments_station_ids)
   station_count <- sum(lengths(station_segments))
-  segment_distance <- as.numeric(solution$segment_distance_nm)
+  segment_transit_distance <- boat$distance$segment_transit
+  segment_distance <- boat$distance$segment_total
   segment_catch <- as.numeric(solution$segment_catch_amount)
   base_color <- boat_base_colors[(idx - 1) %% length(boat_base_colors) + 1]
   lighten_values <- if (segment_count <= 1) {
@@ -108,10 +113,11 @@ for (idx in seq_along(boats)) {
         segment = seg_idx,
         point_order = seq_len(n()),
         segment_key = sprintf("%s #%d", first_word(boat$boat_name), seg_idx),
-        segment_label = sprintf("%s #%d: %.0f nm, %.1f t",
+        segment_label = sprintf("%s #%d\n%.0f nm | %.0f nm | %d kg",
                                 first_word(boat$boat_name), seg_idx,
+                                segment_transit_distance[seg_idx],
                                 segment_distance[seg_idx],
-                                segment_catch[seg_idx] / 1000),
+                                segment_catch[seg_idx]),
         segment_color = segment_colors[seg_idx],
         base_color = base_color
       )
@@ -123,10 +129,11 @@ for (idx in seq_along(boats)) {
       boat_id = boat$boat_id,
       boat_name = boat$boat_name,
       segment_key = sprintf("%s #%d", first_word(boat$boat_name), segment),
-      segment_label = sprintf("%s #%d: %.0f nm, %.1f t",
+      segment_label = sprintf("%s #%d\n%.0f nm | %.0f nm | %d kg",
                               first_word(boat$boat_name), segment,
+                              segment_transit_distance[segment],
                               segment_distance[segment],
-                              segment_catch[segment] / 1000),
+                              segment_catch[segment]),
       segment_color = segment_colors[segment],
       base_color = base_color
     )
@@ -145,21 +152,26 @@ for (idx in seq_along(boats)) {
       station_count = station_count,
       capacity = boat$capacity,
       total_catch = sum(segment_catch),
-      total_distance_nm = solution$total_distance_nm
+      transit_distance_nm = boat$distance$grand_transit,
+      total_distance_nm = boat$distance$grand_total
     )
   )
 
-  total_distance_nm <- total_distance_nm + as.numeric(solution$total_distance_nm)
+  total_transit_distance_nm <- total_transit_distance_nm + boat$distance$grand_transit
+  total_distance_nm <- total_distance_nm + boat$distance$grand_total
   total_stations <- total_stations + station_count
   total_segments <- total_segments + as.integer(solution$segment_count)
   capacities <- c(capacities, boat$capacity)
 }
 
-boat_summary <- boat_summary %>%
-  mutate(
-    label_lon = boat_lon + c(-0.38, 0.38, -0.38, 0.38, -0.38, 0.38)[seq_len(n())],
-    label_lat = boat_lat + seq(0.24, -0.24, length.out = n())
-  )
+boat_label_positions <- compute_interior_label_position(
+  x = boat_summary$boat_lon,
+  y = boat_summary$boat_lat,
+  ref_x = coastline$lon,
+  ref_y = coastline$lat
+)
+
+boat_summary <- bind_cols(boat_summary, boat_label_positions)
 
 capacity_label <- if (length(unique(capacities)) > 1) {
   "mixed"
@@ -187,36 +199,81 @@ summary_table <- boat_summary %>%
     Nodes = as.integer(num_nodes),
     Stations = as.integer(station_count),
     `Total Catch` = as.integer(total_catch),
-    `Distance (nm)` = sprintf("%.2f", as.numeric(total_distance_nm)),
+    `Transit (nm)` = sprintf("%.2f", as.numeric(transit_distance_nm)),
+    `Total (nm)` = sprintf("%.2f", as.numeric(total_distance_nm)),
     Feasible = ifelse(vapply(boats, function(x) isTRUE(x$solution$feasible), logical(1)), "true", "false[^1]")
   )
 
 cat("## Combined Survey Summary\n\n")
-cat("|    ID     | Boat              | Segments |   Nodes | Stations | Total Catch | Distance (nm) | Feasible  |\n")
-cat("|:---------:|-------------------|---------:|--------:|---------:|------------:|--------------:|-----------|\n")
+cat("|    ID     | Boat              | Segments |   Nodes | Stations | Total Catch | Transit (nm) | Total (nm) | Feasible  |\n")
+cat("|:---------:|-------------------|---------:|--------:|---------:|------------:|-------------:|-----------:|-----------|\n")
 for (i in seq_len(nrow(summary_table))) {
   cat(sprintf(
-    "| %9d | %-17s | %8d | %7d | %8d | %11d | %13s | %-9s |\n",
+    "| %9d | %-17s | %8d | %7d | %8d | %11d | %12s | %10s | %-9s |\n",
     summary_table$ID[i],
     summary_table$Boat[i],
     summary_table$Segments[i],
     summary_table$Nodes[i],
     summary_table$Stations[i],
     summary_table$`Total Catch`[i],
-    summary_table$`Distance (nm)`[i],
+    summary_table$`Transit (nm)`[i],
+    summary_table$`Total (nm)`[i],
     summary_table$Feasible[i]
   ))
 }
 cat(sprintf(
-  "| **Total** |                   | **%d** | **%d** | **%d** | **%d** | **%.2f** |           |\n\n",
+  "| **Total** |                   | **%d** | **%d** | **%d** | **%d** | **%.2f** | **%.2f** |           |\n\n",
   sum(boat_summary$segment_count),
   sum(boat_summary$num_nodes),
   sum(boat_summary$station_count),
   sum(boat_summary$total_catch),
+  sum(as.numeric(boat_summary$transit_distance_nm)),
   sum(as.numeric(boat_summary$total_distance_nm))
 ))
 if (any(summary_table$Feasible == "false[^1]")) {
   cat("[^1]: The exported survey route is retained for plotting even though at least one boat exceeds capacity.\n\n")
+}
+
+combined_log_lines <- c(
+  sprintf("Input glob: %s", input_glob),
+  sprintf("Output plot: %s", output_file),
+  sprintf("Database: %s", db_path),
+  "",
+  "Combined route summary",
+  "| ID | Boat | Segments | Nodes | Stations | Total Catch | Transit (nm) | Total (nm) | Feasible |",
+  "|---:|---|---:|---:|---:|---:|---:|---:|---|"
+)
+for (i in seq_len(nrow(summary_table))) {
+  combined_log_lines <- c(
+    combined_log_lines,
+    sprintf("| %d | %s | %d | %d | %d | %d | %s | %s | %s |",
+            summary_table$ID[i],
+            summary_table$Boat[i],
+            summary_table$Segments[i],
+            summary_table$Nodes[i],
+            summary_table$Stations[i],
+            summary_table$`Total Catch`[i],
+            summary_table$`Transit (nm)`[i],
+            summary_table$`Total (nm)`[i],
+            summary_table$Feasible[i])
+  )
+}
+combined_log_lines <- c(
+  combined_log_lines,
+  sprintf("| **Total** |  | **%d** | **%d** | **%d** | **%d** | **%.2f** | **%.2f** |  |",
+          sum(boat_summary$segment_count),
+          sum(boat_summary$num_nodes),
+          sum(boat_summary$station_count),
+          sum(boat_summary$total_catch),
+          sum(as.numeric(boat_summary$transit_distance_nm)),
+          sum(as.numeric(boat_summary$total_distance_nm)))
+)
+if (any(summary_table$Feasible == "false[^1]")) {
+  combined_log_lines <- c(
+    combined_log_lines,
+    "",
+    "[^1]: The exported survey route is retained for plotting even though at least one boat exceeds capacity."
+  )
 }
 
 segment_legend <- route_path %>%
@@ -245,7 +302,7 @@ p <- base_coastline_plot(coastline) +
     values = legend_colors,
     breaks = legend_breaks,
     labels = legend_labels,
-    name = "Segment Stats"
+    name = "Segment stats\n(order | transit | total | catch)"
   ) +
   geom_segment(
     data = station_lines,
@@ -305,7 +362,8 @@ p <- base_coastline_plot(coastline) +
   labs(
     title = "Combined Survey Routes",
     subtitle = sprintf(
-      "Distance %.0f nm | Stations %d | Segments %d | Capacity: %s",
+      "Transit %.0f nm | Total %.0f nm | Stations %d | Segments %d | Capacity: %s",
+      total_transit_distance_nm,
       total_distance_nm,
       total_stations,
       total_segments,
@@ -337,3 +395,4 @@ ggsave(
 )
 
 cat(sprintf("OK Plot saved to: %s\n", normalizePath(output_file)))
+write_log_lines(log_file, combined_log_lines)

@@ -338,12 +338,49 @@ static const char *find_json_key(const char *text, const char *key) {
     return strstr(text, pattern);
 }
 
+static int parse_json_double(const char **pp, double *out_value);
+static int parse_named_double_value(const char *text, const char *key, double *out_value);
+
 static const char *find_key_in_object(const char *object_start, const char *key) {
     const char *key_pos = find_json_key(object_start, key);
     if (!key_pos) return NULL;
     key_pos = strchr(key_pos, ':');
     if (!key_pos) return NULL;
     return skip_ws(key_pos + 1);
+}
+
+static int extract_summary_final_variant_name(const char *summary_pos, char *variant_name, size_t variant_size) {
+    const char *status_pos;
+    const char *final_value;
+    int len = 0;
+
+    if (!summary_pos || !variant_name || variant_size == 0) return 0;
+    status_pos = find_key_in_object(summary_pos, "status");
+    final_value = status_pos ? find_key_in_object(status_pos, "final") : NULL;
+    if ((!final_value || *final_value != '"')) {
+        final_value = find_key_in_object(summary_pos, "final");
+    }
+    if (!final_value || *final_value != '"') return 0;
+    final_value++;
+    while (final_value[len] && final_value[len] != '"' && len < (int)variant_size - 1) {
+        variant_name[len] = final_value[len];
+        len++;
+    }
+    variant_name[len] = '\0';
+    return len > 0;
+}
+
+static int extract_summary_final_total_distance(const char *summary_pos, double *out_value) {
+    const char *distance_pos;
+    const char *final_value;
+    if (!summary_pos || !out_value) return 0;
+    distance_pos = find_key_in_object(summary_pos, "distance_nm");
+    final_value = distance_pos ? find_key_in_object(distance_pos, "final") : NULL;
+    if (final_value) {
+        const char *p = final_value;
+        return parse_json_double(&p, out_value);
+    }
+    return parse_named_double_value(summary_pos, "final_total_distance_nm", out_value);
 }
 
 static int parse_waypoint_path_json_local(const char *json_text, int **out_ids) {
@@ -715,26 +752,16 @@ static int extract_segment_arrays_from_input(const char *json_text,
                                              int *segment_count) {
     const char *summary_pos = find_json_key(json_text, "summary");
     if (summary_pos) {
-        const char *final_value = find_key_in_object(summary_pos, "final");
-        if (final_value && *final_value == '"') {
-            char variant_name[64];
-            int len = 0;
-            final_value++;
-            while (final_value[len] && final_value[len] != '"' && len < (int)sizeof(variant_name) - 1) {
-                variant_name[len] = final_value[len];
-                len++;
-            }
-            variant_name[len] = '\0';
-            if (len > 0) {
-                const char *solution_pos = find_json_key(json_text, "solution");
-                if (solution_pos) {
-                    const char *variant_pos = find_json_key(solution_pos, variant_name);
-                    if (variant_pos) {
-                        const char *candidate = find_json_key(variant_pos, key);
-                        if (candidate) {
-                            return parse_nested_int_arrays(candidate, key,
-                                                           segment_arrays, segment_sizes, segment_count);
-                        }
+        char variant_name[64];
+        if (extract_summary_final_variant_name(summary_pos, variant_name, sizeof(variant_name))) {
+            const char *solution_pos = find_json_key(json_text, "solution");
+            if (solution_pos) {
+                const char *variant_pos = find_json_key(solution_pos, variant_name);
+                if (variant_pos) {
+                    const char *candidate = find_json_key(variant_pos, key);
+                    if (candidate) {
+                        return parse_nested_int_arrays(candidate, key,
+                                                       segment_arrays, segment_sizes, segment_count);
                     }
                 }
             }
@@ -747,28 +774,18 @@ static int extract_segment_arrays_from_input(const char *json_text,
 static int extract_int_array_from_input(const char *json_text,
                                         const char *key,
                                         int **out_arr,
-                                        int *out_count) {
+    int *out_count) {
     const char *summary_pos = find_json_key(json_text, "summary");
     if (summary_pos) {
-        const char *final_value = find_key_in_object(summary_pos, "final");
-        if (final_value && *final_value == '"') {
-            char variant_name[64];
-            int len = 0;
-            final_value++;
-            while (final_value[len] && final_value[len] != '"' && len < (int)sizeof(variant_name) - 1) {
-                variant_name[len] = final_value[len];
-                len++;
-            }
-            variant_name[len] = '\0';
-            if (len > 0) {
-                const char *solution_pos = find_json_key(json_text, "solution");
-                if (solution_pos) {
-                    const char *variant_pos = find_json_key(solution_pos, variant_name);
-                    if (variant_pos) {
-                        const char *candidate = find_json_key(variant_pos, key);
-                        if (candidate && parse_named_int_array_value(candidate, key, out_arr, out_count)) {
-                            return 1;
-                        }
+        char variant_name[64];
+        if (extract_summary_final_variant_name(summary_pos, variant_name, sizeof(variant_name))) {
+            const char *solution_pos = find_json_key(json_text, "solution");
+            if (solution_pos) {
+                const char *variant_pos = find_json_key(solution_pos, variant_name);
+                if (variant_pos) {
+                    const char *candidate = find_json_key(variant_pos, key);
+                    if (candidate && parse_named_int_array_value(candidate, key, out_arr, out_count)) {
+                        return 1;
                     }
                 }
             }
@@ -839,18 +856,9 @@ static int load_segments_from_json(const char *input_path, const nn_instance_t *
         if (!parse_named_double_value(json_text, "final_total_distance_nm", input_total_distance_nm)) {
             const char *summary_pos = find_json_key(json_text, "summary");
             if (summary_pos) {
-                const char *final_value = find_key_in_object(summary_pos, "final");
-                if (final_value && *final_value == '"') {
+                if (!extract_summary_final_total_distance(summary_pos, input_total_distance_nm)) {
                     char variant_name[64];
-                    int len = 0;
-                    final_value++;
-                    while (final_value[len] && final_value[len] != '"' &&
-                           len < (int)sizeof(variant_name) - 1) {
-                        variant_name[len] = final_value[len];
-                        len++;
-                    }
-                    variant_name[len] = '\0';
-                    if (len > 0) {
+                    if (extract_summary_final_variant_name(summary_pos, variant_name, sizeof(variant_name))) {
                         const char *solution_pos = find_json_key(json_text, "solution");
                         if (solution_pos) {
                             const char *variant_pos = find_json_key(solution_pos, variant_name);
@@ -1703,61 +1711,54 @@ static int write_sweep_json(const char *output_path,
         fprintf(fp, "%s\n", (i + 1 < snapshot_count) ? "," : "");
     }
     fprintf(fp, "  },\n");
-    gsp_write_mip_section(fp, "l2seg", "endpaired_tsp",
-                          cfg ? (double)cfg->mip_time_limit_seconds : 0.0,
-                          mip_details, mip_detail_count);
+    gsp_write_boundary_mip_section(fp, "l2seg", "endpaired_tsp",
+                                   cfg ? (double)cfg->mip_time_limit_seconds : 0.0,
+                                   mip_details, mip_detail_count);
 
     if (snapshots[snapshot_count - 1].pass_index == 0) snprintf(final_pass_name, sizeof(final_pass_name), "init");
     else snprintf(final_pass_name, sizeof(final_pass_name), "pass%d", snapshots[snapshot_count - 1].pass_index);
     fprintf(fp, "  \"summary\": {\n");
-    fprintf(fp, "    \"final\": \"%s\",\n", final_pass_name);
-    fprintf(fp, "    \"status\": \"%s\",\n", is_final_write ? "sweep_complete" : "sweep_running");
-    fprintf(fp, "    \"feasible\": %s,\n", snapshots[snapshot_count - 1].feasible ? "true" : "false");
-    fprintf(fp, "    \"total_distance_nm\": [");
-    for (int i = 0; i < snapshot_count; i++) {
-        fprintf(fp, "%.2f", snapshots[i].solution.total_distance);
-        if (i + 1 < snapshot_count) fprintf(fp, ", ");
+    {
+        double *distance_trajectory = NULL;
+        double *runtime_trajectory = NULL;
+        distance_trajectory = (double*)calloc((size_t)snapshot_count, sizeof(double));
+        runtime_trajectory = (double*)calloc((size_t)snapshot_count, sizeof(double));
+        if (distance_trajectory && runtime_trajectory) {
+            for (int i = 0; i < snapshot_count; i++) {
+                distance_trajectory[i] = snapshots[i].solution.total_distance;
+                runtime_trajectory[i] = snapshots[i].pass_runtime_seconds;
+            }
+        }
+
+        gsp_write_summary_status_json(fp, "    ", final_pass_name,
+                                      is_final_write ? "sweep_complete" : "sweep_running",
+                                      snapshots[snapshot_count - 1].feasible,
+                                      strategy_name ? strategy_name : "sweep", 1);
+        gsp_write_summary_distance_json(fp, "    ", 0, 0.0,
+                                        distance_trajectory, snapshot_count,
+                                        snapshots[snapshot_count - 1].solution.total_distance, 1);
+        gsp_write_summary_runtime_json(fp, "    ", preprocessing_seconds,
+                                       runtime_trajectory, snapshot_count,
+                                       postprocessing_seconds, total_runtime_seconds, 1);
+        fprintf(fp, "    \"sweep\": {\n");
+        fprintf(fp, "      \"pass_count\": %d,\n", snapshot_count);
+        fprintf(fp, "      \"sweep_pass_count\": %d,\n", (snapshot_count > 0) ? (snapshot_count - 1) : 0);
+        fprintf(fp, "      \"stations_moved_per_pass\": {\"count\": %d, \"mean\": ",
+                station_move_pass_count);
+        gsp_write_json_double_or_null(fp, station_move_mean);
+        fprintf(fp, ", \"median\": ");
+        gsp_write_json_double_or_null(fp, station_move_median);
+        fprintf(fp, ", \"max\": %d},\n", station_move_max);
+        fprintf(fp, "      \"accepted_capacity_solves\": %d,\n", total_boundary_changes);
+        fprintf(fp, "      \"total_capacity_solves\": %d,\n", total_boundary_attempts);
+        fprintf(fp, "      \"total_capacity_mip_solves\": %d,\n", total_capacity_mip_solves);
+        fprintf(fp, "      \"total_boundary_changes\": %d\n", total_boundary_changes);
+        fprintf(fp, "    },\n");
+        gsp_write_summary_mip_json(fp, "    ", mip_detail_count,
+                                   mip_runtime_mean, mip_runtime_max, mip_gap_mean, mip_gap_max, 0);
+        free(distance_trajectory);
+        free(runtime_trajectory);
     }
-    fprintf(fp, "],\n");
-    fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", snapshots[snapshot_count - 1].solution.total_distance);
-    fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
-    fprintf(fp, "    \"pass_runtime_seconds\": [");
-    for (int i = 0; i < snapshot_count; i++) {
-        fprintf(fp, "%.6f", snapshots[i].pass_runtime_seconds);
-        if (i + 1 < snapshot_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-    fprintf(fp, "    \"solution_runtime_seconds\": [");
-    for (int i = 0; i < snapshot_count; i++) {
-        fprintf(fp, "%.6f", snapshots[i].pass_runtime_seconds);
-        if (i + 1 < snapshot_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-    fprintf(fp, "    \"postprocessing_seconds\": %.6f,\n", postprocessing_seconds);
-    fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n", total_runtime_seconds);
-    fprintf(fp, "    \"pass_count\": %d,\n", snapshot_count);
-    fprintf(fp, "    \"sweep_pass_count\": %d,\n", (snapshot_count > 0) ? (snapshot_count - 1) : 0);
-    fprintf(fp, "    \"stations_moved_per_pass\": {\"count\": %d, \"mean\": ",
-            station_move_pass_count);
-    gsp_write_json_double_or_null(fp, station_move_mean);
-    fprintf(fp, ", \"median\": ");
-    gsp_write_json_double_or_null(fp, station_move_median);
-    fprintf(fp, ", \"max\": %d},\n", station_move_max);
-    fprintf(fp, "    \"accepted_capacity_solves\": %d,\n", total_boundary_changes);
-    fprintf(fp, "    \"total_capacity_solves\": %d,\n", total_boundary_attempts);
-    fprintf(fp, "    \"total_capacity_mip_solves\": %d,\n", total_capacity_mip_solves);
-    fprintf(fp, "    \"mip_runtime_seconds\": {\"mean\": ");
-    gsp_write_json_double_or_null(fp, mip_runtime_mean);
-    fprintf(fp, ", \"max\": ");
-    gsp_write_json_double_or_null(fp, mip_runtime_max);
-    fprintf(fp, "},\n");
-    fprintf(fp, "    \"mip_gap_percent\": {\"mean\": ");
-    gsp_write_json_double_or_null(fp, mip_gap_mean);
-    fprintf(fp, ", \"max\": ");
-    gsp_write_json_double_or_null(fp, mip_gap_max);
-    fprintf(fp, "},\n");
-    fprintf(fp, "    \"total_boundary_changes\": %d,\n", total_boundary_changes);
-    fprintf(fp, "    \"method\": \"%s\"\n", strategy_name ? strategy_name : "sweep");
     fprintf(fp, "  }\n");
     fprintf(fp, "}\n");
 

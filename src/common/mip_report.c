@@ -73,17 +73,47 @@ void gsp_write_json_double_or_null(FILE *fp, double value) {
     else fprintf(fp, "%.6f", value);
 }
 
-void gsp_write_mip_section(FILE *fp,
-                           const char *phase,
-                           const char *model_name,
-                           double timeout_seconds,
-                           const gsp_mip_solve_detail_t *details,
-                           int detail_count) {
+static void gsp_write_mip_header(FILE *fp,
+                                 const char *phase,
+                                 const char *model_name,
+                                 double timeout_seconds) {
     if (!fp) return;
     fprintf(fp, "  \"mip\": {\n");
     fprintf(fp, "    \"phase\": \"%s\",\n", phase ? phase : "unknown");
     fprintf(fp, "    \"model\": \"%s\",\n", model_name ? model_name : "unknown");
     fprintf(fp, "    \"timeout_seconds\": %.6f,\n", timeout_seconds);
+}
+
+void gsp_write_segment_mip_section(FILE *fp,
+                                   const char *phase,
+                                   const char *model_name,
+                                   double timeout_seconds,
+                                   const gsp_mip_solve_detail_t *details,
+                                   int detail_count) {
+    if (!fp) return;
+    gsp_write_mip_header(fp, phase, model_name, timeout_seconds);
+    fprintf(fp, "    \"solve_detail_tuple\": [\"size\", \"runtime_seconds\", \"gap_percent\"],\n");
+    fprintf(fp, "    \"solves\": [");
+    for (int i = 0; i < detail_count; i++) {
+        const gsp_mip_solve_detail_t *detail = &details[i];
+        if (i) fprintf(fp, ", ");
+        fprintf(fp, "[%d, %.6f, %.6f]",
+                detail->station_count,
+                detail->runtime_seconds,
+                detail->gap_percent);
+    }
+    fprintf(fp, "]\n");
+    fprintf(fp, "  },\n");
+}
+
+void gsp_write_boundary_mip_section(FILE *fp,
+                                    const char *phase,
+                                    const char *model_name,
+                                    double timeout_seconds,
+                                    const gsp_mip_solve_detail_t *details,
+                                    int detail_count) {
+    if (!fp) return;
+    gsp_write_mip_header(fp, phase, model_name, timeout_seconds);
     fprintf(fp, "    \"solve_detail_tuple\": [\"pass_index\", \"boundary_index\", \"candidate_split_index\", \"segment_index\", \"segment_role\", \"station_count\", \"node_count\", \"moved_stations\", \"mip_size\", \"runtime_seconds\", \"gap_percent\"],\n");
     fprintf(fp, "    \"solves\": [");
     for (int i = 0; i < detail_count; i++) {

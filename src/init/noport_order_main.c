@@ -559,35 +559,26 @@ static int write_noport_json(sqlite3 *db,
     mip_detail.model_num_constrs = 5 * mip_seg_size;
     mip_detail.runtime_seconds = solution->runtime_seconds;
     mip_detail.gap_percent = mip_gap_percent;
-    gsp_write_mip_section(fp, "l0seg", "noport_directed_tsp", timeout_seconds, &mip_detail, 1);
+    gsp_write_segment_mip_section(fp, "l0seg", "noport_directed_tsp", timeout_seconds, &mip_detail, 1);
 
     fprintf(fp, "  \"summary\": {\n");
-    fprintf(fp, "    \"final\": \"%s\",\n", final_variant_name);
-    fprintf(fp, "    \"status\": \"%s\",\n",
+    {
+        double distance_trajectory[1] = {distance_breakdown->total_distance_nm};
+        double runtime_trajectory[1] = {solution->runtime_seconds};
+        const char *stage_name =
             (solution->status == MIP_STATUS_OPTIMAL) ? "noport_complete" :
             (solution->status == MIP_STATUS_TIME_LIMIT) ? "time_limit" :
-            (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed");
-    fprintf(fp, "    \"feasible\": %s,\n", is_feasible ? "true" : "false");
-    fprintf(fp, "    \"objective_distance_nm\": [%.2f],\n", objective_distance_nm);
-    fprintf(fp, "    \"transit_distance_nm\": [%.2f],\n", distance_breakdown->transit_distance_nm);
-    fprintf(fp, "    \"haul_distance_nm\": [%.2f],\n", distance_breakdown->haul_distance_nm);
-    fprintf(fp, "    \"total_distance_nm\": [%.2f],\n", distance_breakdown->total_distance_nm);
-    fprintf(fp, "    \"final_objective_distance_nm\": %.2f,\n", objective_distance_nm);
-    fprintf(fp, "    \"final_transit_distance_nm\": %.2f,\n", distance_breakdown->transit_distance_nm);
-    fprintf(fp, "    \"final_haul_distance_nm\": %.2f,\n", distance_breakdown->haul_distance_nm);
-    fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", distance_breakdown->total_distance_nm);
-    fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
-    fprintf(fp, "    \"solution_runtime_seconds\": [%.6f],\n", solution->runtime_seconds);
-    fprintf(fp, "    \"mip_solves\": 1,\n");
-    fprintf(fp, "    \"mip_runtime_seconds\": {\"mean\": %.6f, \"max\": %.6f},\n",
-            solution->runtime_seconds,
-            solution->runtime_seconds);
-    fprintf(fp, "    \"mip_gap_percent\": {\"mean\": %.6f, \"max\": %.6f},\n",
-            mip_gap_percent,
-            mip_gap_percent);
-    fprintf(fp, "    \"postprocessing_seconds\": 0.0,\n");
-    fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n", total_runtime_seconds);
-    fprintf(fp, "    \"method\": \"noport_mip\"\n");
+            (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed";
+        gsp_write_summary_status_json(fp, "    ", final_variant_name, stage_name,
+                                      is_feasible, "noport_mip", 1);
+        gsp_write_summary_distance_json(fp, "    ", 0, 0.0,
+                                        distance_trajectory, 1, distance_breakdown->total_distance_nm, 1);
+        gsp_write_summary_runtime_json(fp, "    ", preprocessing_seconds,
+                                       runtime_trajectory, 1, 0.0, total_runtime_seconds, 1);
+        gsp_write_summary_mip_json(fp, "    ", 1,
+                                   solution->runtime_seconds, solution->runtime_seconds,
+                                   mip_gap_percent, mip_gap_percent, 0);
+    }
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"solver_stats\": {\n");

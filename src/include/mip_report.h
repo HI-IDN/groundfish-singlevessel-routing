@@ -34,11 +34,18 @@ void gsp_compute_mip_summary(const gsp_mip_solve_detail_t *details,
 
 void gsp_write_json_double_or_null(FILE *fp, double value);
 
-void gsp_write_mip_section(FILE *fp,
-                           const char *phase,
-                           const char *model_name,
-                           double timeout_seconds,
-                           const gsp_mip_solve_detail_t *details,
-                           int detail_count);
+void gsp_write_segment_mip_section(FILE *fp,
+                                   const char *phase,
+                                   const char *model_name,
+                                   double timeout_seconds,
+                                   const gsp_mip_solve_detail_t *details,
+                                   int detail_count);
+
+void gsp_write_boundary_mip_section(FILE *fp,
+                                    const char *phase,
+                                    const char *model_name,
+                                    double timeout_seconds,
+                                    const gsp_mip_solve_detail_t *details,
+                                    int detail_count);
 
 #endif

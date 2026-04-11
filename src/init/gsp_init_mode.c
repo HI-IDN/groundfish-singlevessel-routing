@@ -921,54 +921,43 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     gsp_compute_mip_summary(local_postopt_details, local_postopt_detail_count,
                             &mip_runtime_mean, &mip_runtime_max,
                             &mip_gap_mean, &mip_gap_max);
-    gsp_write_mip_section(fp, "l1seg", "endpaired_tsp", mip_time_limit_seconds,
-                          local_postopt_details, local_postopt_detail_count);
+    gsp_write_segment_mip_section(fp, "l1seg", "endpaired_tsp", mip_time_limit_seconds,
+                                  local_postopt_details, local_postopt_detail_count);
 
     fprintf(fp, "  \"summary\": {\n");
-    fprintf(fp, "    \"final\": \"%s\",\n", final_variant_name);
-    fprintf(fp, "    \"status\": \"init_complete\",\n");
-    fprintf(fp, "    \"feasible\": %s,\n", is_feasible ? "true" : "false");
-    fprintf(fp, "    \"total_distance_nm\": [");
-    if (has_presolve) {
-        fprintf(fp, "%.2f", pre_capacity_sol->total_distance);
-        if (has_pre_local_postopt) fprintf(fp, ", %.2f", pre_local_postopt_sol->total_distance);
-        fprintf(fp, ", %.2f", sol->total_distance);
-    } else if (has_pre_local_postopt) {
-        fprintf(fp, "%.2f, %.2f", pre_local_postopt_sol->total_distance, sol->total_distance);
-    } else {
-        fprintf(fp, "%.2f", sol->total_distance);
+    {
+        double distance_trajectory[3];
+        double solution_runtime_trajectory[2];
+        int distance_count = 0;
+        int runtime_count = 0;
+        double postprocessing_seconds = elapsed_seconds(t_output_start, t_output_expand_end);
+        double total_runtime_seconds =
+            preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds +
+            check_runtime_seconds + postprocessing_seconds;
+
+        if (has_presolve) {
+            distance_trajectory[distance_count++] = pre_capacity_sol->total_distance;
+        }
+        if (has_pre_local_postopt) {
+            distance_trajectory[distance_count++] = pre_local_postopt_sol->total_distance;
+        }
+        distance_trajectory[distance_count++] = sol->total_distance;
+        solution_runtime_trajectory[runtime_count++] = solve_runtime_seconds;
+        if (has_pre_local_postopt) {
+            solution_runtime_trajectory[runtime_count++] = local_postopt_runtime_seconds;
+        }
+
+        gsp_write_summary_status_json(fp, "    ", final_variant_name, "init_complete",
+                                      is_feasible, method_name ? method_name : "unknown", 1);
+        gsp_write_summary_distance_json(fp, "    ", has_pre_local_postopt,
+                                        has_pre_local_postopt ? pre_local_postopt_sol->total_distance : 0.0,
+                                        distance_trajectory, distance_count, sol->total_distance, 1);
+        gsp_write_summary_runtime_json(fp, "    ", preprocessing_seconds,
+                                       solution_runtime_trajectory, runtime_count,
+                                       postprocessing_seconds, total_runtime_seconds, 1);
+        gsp_write_summary_mip_json(fp, "    ", local_postopt_detail_count,
+                                   mip_runtime_mean, mip_runtime_max, mip_gap_mean, mip_gap_max, 0);
     }
-    fprintf(fp, "],\n");
-    if (has_pre_local_postopt) {
-        fprintf(fp, "    \"baseline_total_distance_nm\": %.2f,\n", pre_local_postopt_sol->total_distance);
-        fprintf(fp, "    \"local_postopt_runtime_seconds\": %.6f,\n", local_postopt_runtime_seconds);
-    }
-    fprintf(fp, "    \"final_total_distance_nm\": %.2f,\n", sol->total_distance);
-    fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
-    fprintf(fp, "    \"solution_runtime_seconds\": [");
-    if (has_pre_local_postopt) {
-        fprintf(fp, "%.6f, %.6f", solve_runtime_seconds, local_postopt_runtime_seconds);
-    } else {
-        fprintf(fp, "%.6f", solve_runtime_seconds);
-    }
-    fprintf(fp, "],\n");
-    fprintf(fp, "    \"mip_solves\": %d,\n", local_postopt_detail_count);
-    fprintf(fp, "    \"mip_runtime_seconds\": {\"mean\": ");
-    gsp_write_json_double_or_null(fp, mip_runtime_mean);
-    fprintf(fp, ", \"max\": ");
-    gsp_write_json_double_or_null(fp, mip_runtime_max);
-    fprintf(fp, "},\n");
-    fprintf(fp, "    \"mip_gap_percent\": {\"mean\": ");
-    gsp_write_json_double_or_null(fp, mip_gap_mean);
-    fprintf(fp, ", \"max\": ");
-    gsp_write_json_double_or_null(fp, mip_gap_max);
-    fprintf(fp, "},\n");
-    fprintf(fp, "    \"postprocessing_seconds\": %.6f,\n",
-            elapsed_seconds(t_output_start, t_output_expand_end));
-    fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n",
-            preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds + check_runtime_seconds +
-            elapsed_seconds(t_output_start, t_output_expand_end));
-    fprintf(fp, "    \"method\": \"%s\"\n", method_name ? method_name : "unknown");
     fprintf(fp, "  }\n");
 
     fprintf(fp, "}\n");
@@ -1037,16 +1026,12 @@ static void write_metadata_only_json(const char *output_path,
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"summary\": {\n");
-    fprintf(fp, "    \"final\": \"capacity-feasible\",\n");
-    fprintf(fp, "    \"status\": \"debug_metadata_only\",\n");
-    fprintf(fp, "    \"feasible\": false,\n");
-    fprintf(fp, "    \"total_distance_nm\": [0.0],\n");
-    fprintf(fp, "    \"final_total_distance_nm\": 0.0,\n");
-    fprintf(fp, "    \"preprocessing_seconds\": 0.0,\n");
-    fprintf(fp, "    \"solution_runtime_seconds\": [0.0],\n");
-    fprintf(fp, "    \"postprocessing_seconds\": 0.0,\n");
-    fprintf(fp, "    \"total_runtime_seconds\": 0.0,\n");
-    fprintf(fp, "    \"method\": \"none\"\n");
+    {
+        double zero = 0.0;
+        gsp_write_summary_status_json(fp, "    ", "capacity-feasible", "debug_metadata_only", 0, "none", 1);
+        gsp_write_summary_distance_json(fp, "    ", 0, 0.0, &zero, 1, 0.0, 1);
+        gsp_write_summary_runtime_json(fp, "    ", 0.0, &zero, 1, 0.0, 0.0, 0);
+    }
     fprintf(fp, "  }\n");
     fprintf(fp, "}\n");
 
