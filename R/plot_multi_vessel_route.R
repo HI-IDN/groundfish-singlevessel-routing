@@ -4,7 +4,7 @@ required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite")
 
 args <- commandArgs(trailingOnly = TRUE)
 input_glob <- if (length(args) >= 1) args[1] else "sol/survey/boat*.json"
-output_file <- if (length(args) >= 2) args[2] else "sol/survey/routes_combined.png"
+output_file <- if (length(args) >= 2) args[2] else "sol/survey/multivessel.png"
 db_path <- if (length(args) >= 3) args[3] else "dat/gsp.db"
 
 script_file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)

@@ -137,15 +137,15 @@ plot-routes: $(ROUTE_PNGS)
 ../sol/survey_overview.png:
 	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R dat/gsp.db sol/survey_overview.png'
 
-../sol/survey/routes_combined.png:
-	@bash -lc 'cd .. && Rscript R/plot_multi_vessel_route.R "sol/survey/boat*.json" "sol/survey/routes_combined.png" "dat/gsp.db"'
+../sol/survey/multivessel.png:
+	@bash -lc 'cd .. && Rscript R/plot_multi_vessel_route.R "sol/survey/boat*.json" "sol/survey/multivessel.png" "dat/gsp.db"'
 
 ../sol/sweep_summary_panels.png:
 	@bash -lc 'cd .. && Rscript R/plot_sweep_summary_panels.R sol sol/sweep_summary_panels.png'
 
-plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png ../sol/survey/routes_combined.png plot-routes
+plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png ../sol/survey/multivessel.png plot-routes
 
-plot-survey-routes: ../sol/survey/routes_combined.png
+plot-survey-routes: ../sol/survey/multivessel.png
 
 plot-sweep-summary: ../sol/sweep_summary_panels.png
 
