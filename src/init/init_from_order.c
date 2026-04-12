@@ -791,6 +791,7 @@ static int parse_station_order_from_order_json(const char *json_path, int **out_
 static const char *infer_strategy_from_path(const char *path) {
     if (!path) return "noport";
     if (strstr(path, "fixedport") || strstr(path, "fixed_port") || strstr(path, "fixed-port")) return "fixedport";
+    if (strstr(path, "noport_v2") || strstr(path, "noport-v2") || strstr(path, "noportv2")) return "noport_v2";
     if (strstr(path, "noport") || strstr(path, "no_port") || strstr(path, "no-port")) return "noport";
     return "order";
 }
@@ -1008,7 +1009,7 @@ int main(int argc, char **argv) {
     }
 
     if (!database || !config || !input || !output) {
-        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <ordered.json> --output <init.json> [--strategy noport|fixedport]\n", argv[0]);
+        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <ordered.json> --output <init.json> [--strategy noport|noport_v2|fixedport]\n", argv[0]);
         return 1;
     }
     if (!strategy) strategy = infer_strategy_from_path(input);
