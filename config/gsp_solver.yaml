@@ -35,17 +35,17 @@ sweep:
 
 # Gurobi Solver Settings
 gurobi:
-  # L0SEG: time limit for the no-port MIP solve (in seconds)
-  l0seg: 0                               # 0 = no time limit
+  time_limit_seconds:
+    0seg: 0                              # No-port MIP time limit; 0 = no limit
+    1seg: 0                              # Per-segment init local postopt time limit; 0 = no limit
+    2seg: 0                              # Boundary-sweep segment MIP time limit; 0 = no limit
+    Xseg: 86400                          # Fixed-port MIP time limit after incumbent exists
 
-  # L1SEG: time limit per segment MIP solve (in seconds)
-  l1seg: 0                               # 0 = no time limit (per-segment TSP is pure TSP, no capacity)
-
-  # L2SEG: time limit for 2 segment MIP solve (in seconds) for the matheuristic sweep
-  l2seg: 0                               # 0 = no time limit
-
-  # LXSEG: time limit for the full fixed-port-order MIP solve after an incumbent exists (in seconds)
-  lXseg: 86400                           # 24 hours; fixed-port solve may run longer until first incumbent
+  haul_distance_scale:
+    0seg: 0.00001                        # No-port MIP uses near-zero haul in the objective
+    1seg: 0.00001                        # Init local postopt uses near-zero haul in the objective
+    2seg: 1.0                            # Sweep boundary MIPs use full haul distance
+    Xseg: 0.00001                        # Reserved for fixed-port/full MIP objective scaling
 
   env_log_file: log/gurobi.log           # null=no log file, or path like "log/gurobi.log"
   threads: 2                             # 0=auto-detect, >0=fixed thread count

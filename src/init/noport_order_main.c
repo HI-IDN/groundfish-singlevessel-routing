@@ -3,6 +3,7 @@
 #include "../include/init_types.h"
 #include "../include/json_utils.h"
 #include "../include/mip_report.h"
+#include "local_postopt.h"
 
 #include <sqlite3.h>
 #include <stdio.h>
@@ -68,7 +69,8 @@ static int read_noport_config(const char *yaml_path,
                               double *l0seg_out,
                               double *global_time_limit_out,
                               int *thread_count_out,
-                              int *include_haul_distance_out) {
+                              int *include_haul_distance_out,
+                              double *haul_distance_scale_out) {
     FILE *fp = NULL;
     char line[1024];
     int section = 0;
@@ -78,6 +80,7 @@ static int read_noport_config(const char *yaml_path,
     if (global_time_limit_out) *global_time_limit_out = 0.0;
     if (thread_count_out) *thread_count_out = 0;
     if (include_haul_distance_out) *include_haul_distance_out = 0;
+    if (haul_distance_scale_out) *haul_distance_scale_out = 0.0;
 
     fp = fopen(yaml_path, "r");
     if (!fp) {
@@ -112,10 +115,6 @@ static int read_noport_config(const char *yaml_path,
             continue;
         }
 
-        if (section == 2 && strncmp(trimmed, "l0seg:", 6) == 0 && l0seg_out) {
-            *l0seg_out = atof(trimmed + 6);
-            continue;
-        }
         if (section == 2 && strncmp(trimmed, "threads:", 8) == 0 && thread_count_out) {
             *thread_count_out = atoi(trimmed + 8);
             continue;
@@ -135,6 +134,10 @@ static int read_noport_config(const char *yaml_path,
     }
 
     fclose(fp);
+    if (l0seg_out) *l0seg_out = read_noport_mip_time_limit_from_yaml(yaml_path);
+    if (haul_distance_scale_out) {
+        *haul_distance_scale_out = read_noport_haul_distance_scale_from_yaml(yaml_path);
+    }
     return 0;
 }
 
@@ -638,20 +641,17 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--database") == 0) db_path = argv[i + 1];
         else if (strcmp(argv[i], "--config") == 0) config_path = argv[i + 1];
         else if (strcmp(argv[i], "--output") == 0) output_path = argv[i + 1];
-        else if (strcmp(argv[i], "--haul-distance-scale") == 0) {
-            use_scaled_haul_distance = 1;
-            haul_distance_scale = atof(argv[i + 1]);
-        }
     }
 
     if (!db_path || !config_path || !output_path) {
-        fprintf(stderr, "Usage: %s --database <gsp_data.db> --config <gsp_solver.yaml> --output <sol/noport/noport.json> [--haul-distance-scale <alpha>]\n", argv[0]);
+        fprintf(stderr, "Usage: %s --database <gsp_data.db> --config <gsp_solver.yaml> --output <sol/noport/noport.json>\n", argv[0]);
         return 1;
     }
 
     preprocess_start = clock();
     read_noport_config(config_path, &boat_id, &l0seg_seconds, &global_time_limit_seconds,
-                       &thread_count, &include_haul_distance);
+                       &thread_count, &include_haul_distance, &haul_distance_scale);
+    use_scaled_haul_distance = (!include_haul_distance && haul_distance_scale > 0.0);
 
     if (sqlite3_open(db_path, &db) != SQLITE_OK) {
         fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
@@ -685,8 +685,8 @@ int main(int argc, char **argv) {
     mip_params.verbose = 1;
     mip_params.mip_gap = 0.0;
     mip_params.exclude_haul_distance = !include_haul_distance && !use_scaled_haul_distance;
-    mip_params.use_scaled_haul_distance = !include_haul_distance && use_scaled_haul_distance;
-    mip_params.haul_distance_scale = (!include_haul_distance && use_scaled_haul_distance) ? haul_distance_scale : 0.0;
+    mip_params.use_scaled_haul_distance = use_scaled_haul_distance;
+    mip_params.haul_distance_scale = use_scaled_haul_distance ? haul_distance_scale : 0.0;
 
     preprocess_end = clock();
     preprocessing_seconds = elapsed_seconds(preprocess_start, preprocess_end);

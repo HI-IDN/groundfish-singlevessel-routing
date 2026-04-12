@@ -14,6 +14,103 @@
 
 #define MAX_LINE 1024
 
+static int count_leading_spaces_local(const char *line) {
+    int count = 0;
+    while (line && *line == ' ') {
+        count++;
+        line++;
+    }
+    return count;
+}
+
+static double read_gurobi_phase_scalar_from_yaml(const char *yaml_path,
+                                                 const char *nested_section_name,
+                                                 const char *nested_phase_key,
+                                                 const char *legacy_nested_phase_key,
+                                                 const char *flat_default_key,
+                                                 const char *flat_phase_key) {
+    FILE *fp = fopen(yaml_path, "r");
+    char line[MAX_LINE];
+    int in_gurobi = 0;
+    int in_nested = 0;
+    double value = 0.0;
+    int have_default = 0;
+    char nested_header[MAX_LINE];
+    char flat_default_header[MAX_LINE];
+    char flat_phase_header[MAX_LINE];
+    char phase_header[MAX_LINE];
+    char legacy_phase_header[MAX_LINE];
+    size_t nested_header_len;
+    size_t flat_default_header_len;
+    size_t flat_phase_header_len;
+    size_t phase_header_len;
+    size_t legacy_phase_header_len;
+
+    if (!fp || !nested_section_name || !nested_phase_key) return 0.0;
+
+    snprintf(nested_header, sizeof(nested_header), "%s:", nested_section_name);
+    snprintf(flat_default_header, sizeof(flat_default_header), "%s:", flat_default_key ? flat_default_key : "");
+    snprintf(flat_phase_header, sizeof(flat_phase_header), "%s:", flat_phase_key ? flat_phase_key : "");
+    snprintf(phase_header, sizeof(phase_header), "%s:", nested_phase_key);
+    if (legacy_nested_phase_key && *legacy_nested_phase_key) {
+        snprintf(legacy_phase_header, sizeof(legacy_phase_header), "%s:", legacy_nested_phase_key);
+    } else {
+        legacy_phase_header[0] = '\0';
+    }
+    nested_header_len = strlen(nested_header);
+    flat_default_header_len = strlen(flat_default_header);
+    flat_phase_header_len = strlen(flat_phase_header);
+    phase_header_len = strlen(phase_header);
+    legacy_phase_header_len = strlen(legacy_phase_header);
+
+    while (fgets(line, sizeof(line), fp)) {
+        char *trimmed = line;
+        int indent = count_leading_spaces_local(line);
+        while (*trimmed && isspace((unsigned char)*trimmed)) trimmed++;
+        if (*trimmed == '#' || *trimmed == '\0' || *trimmed == '\n') continue;
+
+        if (indent == 0) {
+            in_gurobi = (strncmp(trimmed, "gurobi:", 7) == 0);
+            in_nested = 0;
+            continue;
+        }
+        if (!in_gurobi) continue;
+
+        if (indent == 2) {
+            in_nested = (strncmp(trimmed, nested_header, nested_header_len) == 0);
+            if (flat_default_key && strncmp(trimmed, flat_default_header, flat_default_header_len) == 0) {
+                value = atof(trimmed + flat_default_header_len);
+                if (value < 0.0) value = 0.0;
+                have_default = 1;
+            } else if (flat_phase_key && strncmp(trimmed, flat_phase_header, flat_phase_header_len) == 0) {
+                value = atof(trimmed + flat_phase_header_len);
+                if (value < 0.0) value = 0.0;
+                have_default = 1;
+            }
+            continue;
+        }
+
+        if (indent == 4 && in_nested) {
+            if (strncmp(trimmed, phase_header, phase_header_len) == 0) {
+                value = atof(trimmed + phase_header_len);
+                if (value < 0.0) value = 0.0;
+                have_default = 1;
+                break;
+            }
+            if (legacy_phase_header_len > 0 &&
+                strncmp(trimmed, legacy_phase_header, legacy_phase_header_len) == 0) {
+                value = atof(trimmed + legacy_phase_header_len);
+                if (value < 0.0) value = 0.0;
+                have_default = 1;
+                break;
+            }
+        }
+    }
+
+    fclose(fp);
+    return have_default ? value : 0.0;
+}
+
 static void zero_solution(nn_solution_t *sol) {
     if (!sol) return;
     memset(sol, 0, sizeof(*sol));
@@ -75,32 +172,15 @@ fail:
 }
 
 double read_init_mip_time_limit_from_yaml(const char *yaml_path) {
-    FILE *fp = fopen(yaml_path, "r");
-    char line[MAX_LINE];
-    int in_gurobi = 0;
-    double time_limit = 0.0;
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "1seg", "init", "l1seg", NULL);
+}
 
-    if (!fp) return 0.0;
+double read_noport_mip_time_limit_from_yaml(const char *yaml_path) {
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "0seg", "noport", "l0seg", NULL);
+}
 
-    while (fgets(line, sizeof(line), fp)) {
-        char *trimmed = line;
-        while (*trimmed && isspace((unsigned char)*trimmed)) trimmed++;
-        if (*trimmed == '#' || *trimmed == '\0' || *trimmed == '\n') continue;
-
-        if (!isspace((unsigned char)line[0])) {
-            in_gurobi = (strncmp(trimmed, "gurobi:", 7) == 0);
-            continue;
-        }
-        if (!in_gurobi) continue;
-
-        if (strncmp(trimmed, "l1seg:", 6) == 0) {
-            time_limit = atof(trimmed + 6);
-            break;
-        }
-    }
-
-    fclose(fp);
-    return time_limit;
+double read_sweep_mip_time_limit_from_yaml(const char *yaml_path) {
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "2seg", "sweep", "l2seg", NULL);
 }
 
 int read_objective_include_haul_distance_from_yaml(const char *yaml_path) {
@@ -139,6 +219,31 @@ int read_objective_include_haul_distance_from_yaml(const char *yaml_path) {
 
     fclose(fp);
     return include_haul_distance;
+}
+
+static double read_phase_haul_distance_scale_from_yaml(const char *yaml_path, const char *phase_name) {
+    char flat_phase_key[MAX_LINE];
+    const char *nested_phase_key = phase_name;
+    const char *legacy_nested_phase_key = phase_name;
+    if (strcmp(phase_name, "noport") == 0) nested_phase_key = "0seg";
+    else if (strcmp(phase_name, "init") == 0) nested_phase_key = "1seg";
+    else if (strcmp(phase_name, "sweep") == 0) nested_phase_key = "2seg";
+    else if (strcmp(phase_name, "fixedport") == 0) nested_phase_key = "Xseg";
+    snprintf(flat_phase_key, sizeof(flat_phase_key), "%s_haul_distance_scale", phase_name);
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "haul_distance_scale", nested_phase_key,
+                                              legacy_nested_phase_key, "haul_distance_scale", flat_phase_key);
+}
+
+double read_noport_haul_distance_scale_from_yaml(const char *yaml_path) {
+    return read_phase_haul_distance_scale_from_yaml(yaml_path, "noport");
+}
+
+double read_init_haul_distance_scale_from_yaml(const char *yaml_path) {
+    return read_phase_haul_distance_scale_from_yaml(yaml_path, "init");
+}
+
+double read_sweep_haul_distance_scale_from_yaml(const char *yaml_path) {
+    return read_phase_haul_distance_scale_from_yaml(yaml_path, "sweep");
 }
 
 static int find_station_index_local(const nn_instance_t *inst, int station_id) {
@@ -187,6 +292,7 @@ static int solve_segment_order(const nn_instance_t *inst,
                                int end_loc_id,
                                double time_limit_seconds,
                                int include_haul_distance,
+                               double haul_distance_scale,
                                GRBenv *env,
                                int **signed_station_ids_out,
                                double *runtime_seconds_out,
@@ -231,7 +337,9 @@ static int solve_segment_order(const nn_instance_t *inst,
     mip_params.shared_env = env;
     mip_params.verbose = 0;
     mip_params.time_limit_seconds = (time_limit_seconds > 0.0) ? time_limit_seconds : 0.0;
-    mip_params.exclude_haul_distance = !include_haul_distance;
+    mip_params.exclude_haul_distance = !include_haul_distance && !(haul_distance_scale > 0.0);
+    mip_params.use_scaled_haul_distance = !include_haul_distance && (haul_distance_scale > 0.0);
+    mip_params.haul_distance_scale = (!include_haul_distance && (haul_distance_scale > 0.0)) ? haul_distance_scale : 0.0;
 
     if (solve_mip_endpaired_tsp(&mip_instance, &mip_params,
                                 start_loc_id, end_loc_id, &mip_solution) != 0) {
@@ -268,6 +376,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
                              int boat_end_loc_id,
                              double time_limit_seconds,
                              int include_haul_distance,
+                             double haul_distance_scale,
                              nn_solution_t *output,
                              double *runtime_seconds_out,
                              int *segment_solve_count_out,
@@ -357,7 +466,8 @@ int init_apply_local_postopt(const nn_instance_t *inst,
         fflush(stdout);
 
         if (!solve_segment_order(inst, station_ids, station_count, start_loc_id, end_loc_id,
-                                 time_limit_seconds, include_haul_distance, env, &signed_station_ids, &segment_runtime,
+                                 time_limit_seconds, include_haul_distance, haul_distance_scale,
+                                 env, &signed_station_ids, &segment_runtime,
                                  &segment_gap_percent, &segment_model_num_vars,
                                  &segment_model_num_constrs)) {
             free(station_ids);

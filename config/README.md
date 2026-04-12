@@ -62,10 +62,16 @@ sweep:
 
 ```yaml
 gurobi:
-  l0seg: 0                    # No-port MIP time limit (0 = no limit)
-  l1seg: 0                    # Per-segment TSP time limit (0 = no limit)
-  l2seg: 0                    # Two-segment sweep MIP time limit (0 = no limit)
-  lXseg: 86400                # Fixed-port MIP time limit after incumbent exists
+  time_limit_seconds:
+    0seg: 0                   # No-port MIP time limit (0 = no limit)
+    1seg: 0                   # Per-segment init local postopt time limit
+    2seg: 0                   # Two-segment sweep MIP time limit
+    Xseg: 86400               # Fixed-port MIP time limit after incumbent exists
+  haul_distance_scale:
+    0seg: 0.00001
+    1seg: 0.00001
+    2seg: 1.0
+    Xseg: 0.00001
   env_log_file: null           # null = no log file
   threads: 0                   # 0 = auto-detect CPU count
   mip_focus: 0                 # 0 = balanced search
@@ -73,10 +79,10 @@ gurobi:
 ```
 
 **Segment Time Limits**:
-- `l0seg` controls the no-port MIP solve.
-- `l1seg` controls single-segment TSP solves.
-- `l2seg` controls two-segment sweep MIP solves.
-- `lXseg` controls the full fixed-port-order MIP solve after an incumbent exists.
+- `gurobi.time_limit_seconds.0seg` controls the no-port MIP solve.
+- `gurobi.time_limit_seconds.1seg` controls single-segment init postopt TSP solves.
+- `gurobi.time_limit_seconds.2seg` controls two-segment sweep MIP solves.
+- `gurobi.time_limit_seconds.Xseg` controls the full fixed-port-order MIP solve after an incumbent exists.
 
 ### Output Configuration
 
@@ -111,7 +117,5 @@ This means:
 ## References
 
 - Gurobi Parameters: https://www.gurobi.com/documentation/
-
-
 
 

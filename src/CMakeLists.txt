@@ -271,6 +271,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         mip/endpaired_tsp.c
         ${GSP_MIP_SHARED_SOURCES}
         init/noport_order_main.c
+        init/local_postopt.c
         common/feasibility.c
         common/json_utils.c
         common/mip_report.c

@@ -1238,6 +1238,7 @@ int mode_init(int argc, char **argv) {
 
     double mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
     int include_haul_distance = read_objective_include_haul_distance_from_yaml(config);
+    double init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     gsp_mip_solve_detail_t *local_postopt_details = NULL;
@@ -1251,6 +1252,7 @@ int mode_init(int argc, char **argv) {
                                   boat_start_loc_id, boat_end_loc_id,
                                   mip_time_limit_seconds,
                                   include_haul_distance,
+                                  init_haul_distance_scale,
                                   &sol,
                                   &local_postopt_runtime_seconds,
                                   &local_postopt_segment_solve_count,

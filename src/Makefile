@@ -22,9 +22,9 @@ INIT_TARGET_RAW := $(or $(INIT),$(init),noport)
 INIT_TARGET := $(if $(filter gi,$(INIT_TARGET_RAW)),ge,$(INIT_TARGET_RAW))
 SWEEP_INIT_RAW := $(or $(INIT),$(init),noport)
 SWEEP_INIT := $(if $(filter gi,$(SWEEP_INIT_RAW)),ge,$(SWEEP_INIT_RAW))
-VALID_INIT_TYPES := nn ge ci noport noport_v2 fixedport
+VALID_INIT_TYPES := nn ge ci noport fixedport
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init noport noport_v2 sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init noport sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary help
 
 all: build
 
@@ -42,7 +42,7 @@ INIT_TARGET_JSON = ../sol/$(INIT_TARGET)/init.json
 init:
 ifeq ($(filter $(INIT_TARGET),$(VALID_INIT_TYPES)),)
 	@echo "Unsupported init type: $(INIT_TARGET_RAW)"
-	@echo "Use INIT=nn|ge|ci|noport|noport_v2|fixedport (or init=nn|ge|ci|noport|noport_v2|fixedport)."
+	@echo "Use INIT=nn|ge|ci|noport|fixedport (or init=nn|ge|ci|noport|fixedport)."
 	@exit 1
 else
 	@:
@@ -72,25 +72,14 @@ survey: $(BUILD_DIR)/CMakeCache.txt
 
 noport: ../sol/noport/noport.json
 
-noport_v2: ../sol/noport_v2/noport.json
-
 ../sol/noport/noport.json: $(COUNTRY_DB)
 	@mkdir -p ../sol/noport
 	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_noport --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --output "../sol/noport/noport.json" 2>&1 | tee -a ../sol/noport/noport.log'
-
-../sol/noport_v2/noport.json: $(COUNTRY_DB)
-	@mkdir -p ../sol/noport_v2
-	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_noport --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --output "../sol/noport_v2/noport.json" --haul-distance-scale 1e-5 2>&1 | tee -a ../sol/noport_v2/noport.log'
 
 ../sol/noport/init.json: ../sol/noport/noport.json
 	@mkdir -p ../sol/noport
 	@echo "Generating init from ordered input -> $@"
 	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_init_from_order --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/noport/noport.json" --output "../sol/noport/init.json"'
-
-../sol/noport_v2/init.json: ../sol/noport_v2/noport.json
-	@mkdir -p ../sol/noport_v2
-	@echo "Generating scaled-haul init from ordered input -> $@"
-	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_init_from_order --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/noport_v2/noport.json" --output "../sol/noport_v2/init.json" --strategy noport_v2'
 
 define init_rule
 ../sol/$(1)/init.json: $(COUNTRY_DB)
@@ -115,18 +104,13 @@ $(eval $(call sweep_config_rule,ge,GE))
 $(eval $(call sweep_config_rule,ci,CI))
 $(eval $(call sweep_config_rule,noport,noport))
 
-../sol/noport_v2/sweep.json: ../sol/noport_v2/init.json
-	@mkdir -p ../sol/noport_v2
-	@echo "Running scaled-haul noport sweep -> $@"
-	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy noport --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/noport_v2/init.json" --output "../sol/noport_v2/sweep.json" 2>&1 | tee "../sol/noport_v2/sweep.log"'
-
 SWEEP_TARGET = ../sol/$(SWEEP_INIT)/sweep.json
 
 
 sweep:
 ifeq ($(filter $(SWEEP_INIT),$(VALID_INIT_TYPES)),)
 	@echo "Unsupported init type: $(SWEEP_INIT_RAW)"
-	@echo "Use INIT=nn|ge|ci|noport|noport_v2|fixedport (or init=nn|ge|ci|noport|noport_v2|fixedport)."
+	@echo "Use INIT=nn|ge|ci|noport|fixedport (or init=nn|ge|ci|noport|fixedport)."
 	@exit 1
 else
 	@:
@@ -192,14 +176,11 @@ help:
 	@echo "  make -C src init INIT=ge"
 	@echo "  make -C src init INIT=ci"
 	@echo "  make -C src init INIT=noport"
-	@echo "  make -C src init INIT=noport_v2"
 	@echo "  make -C src noport"
-	@echo "  make -C src noport_v2"
 	@echo ""
 	@echo "Phase 1: Sweep"
 	@echo "  make -C src sweep INIT=nn      # run the single L2SEG value from config"
 	@echo "  make -C src sweep init=noport  # lowercase variable also works"
-	@echo "  make -C src sweep INIT=noport_v2"
 	@echo "  make -C src sweep INIT=ge"
 	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex"
 	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex TABLE_OUTPUT=../Paper/tables/tbl_mh_init_ci.tex"

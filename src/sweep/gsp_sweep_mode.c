@@ -48,6 +48,7 @@ typedef struct {
     int global_time_limit_seconds;
     int max_iterations;
     int include_haul_distance;
+    double haul_distance_scale;
 } sweep_config_t;
 
 static int count_segment_station_changes(const gsp_route_segment_t *before,
@@ -262,6 +263,7 @@ static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *c
     cfg->global_time_limit_seconds = 0;
     cfg->max_iterations = 0;
     cfg->include_haul_distance = read_objective_include_haul_distance_from_yaml(yaml_path);
+    cfg->haul_distance_scale = read_sweep_haul_distance_scale_from_yaml(yaml_path);
 
     fp = fopen(yaml_path, "r");
     if (!fp) return;
@@ -286,12 +288,11 @@ static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *c
 
         if (section == 1 && strncmp(trim, "max_iterations:", 15) == 0) {
             cfg->max_iterations = read_int_after_colon(trim, cfg->max_iterations);
-        } else if (section == 2 && strncmp(trim, "l2seg:", 6) == 0) {
-            cfg->mip_time_limit_seconds = read_int_after_colon(trim, cfg->mip_time_limit_seconds);
         }
     }
 
     fclose(fp);
+    cfg->mip_time_limit_seconds = (int)read_sweep_mip_time_limit_from_yaml(yaml_path);
 }
 
 static char *read_text_file(const char *path) {
@@ -904,6 +905,7 @@ static int solve_segment_tsp(GRBenv *env, const nn_instance_t *inst,
                              int *out_catch, double *out_distance,
                              int **out_signed_station_ids,
                              int include_haul_distance,
+                             double haul_distance_scale,
                              int *solve_count,
                              double *out_gap_percent,
                              double *out_runtime_seconds,
@@ -949,7 +951,9 @@ static int solve_segment_tsp(GRBenv *env, const nn_instance_t *inst,
     mip_params.verbose = 0;
     mip_params.shared_env = env;
     mip_params.time_limit_seconds = time_limit_seconds;
-    mip_params.exclude_haul_distance = !include_haul_distance;
+    mip_params.exclude_haul_distance = !include_haul_distance && !(haul_distance_scale > 0.0);
+    mip_params.use_scaled_haul_distance = !include_haul_distance && (haul_distance_scale > 0.0);
+    mip_params.haul_distance_scale = (!include_haul_distance && (haul_distance_scale > 0.0)) ? haul_distance_scale : 0.0;
 
     if (solve_mip_endpaired_tsp(&mip_instance, &mip_params,
                                 start_loc_id, end_loc_id, &mip_solution) != 0) {
@@ -1173,7 +1177,8 @@ static void write_station_mutation_ids(FILE *fp,
 #ifdef HAVE_GUROBI
 static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, gsp_route_segment_t *segment,
                               double time_limit_seconds,
-                              int include_haul_distance) {
+                              int include_haul_distance,
+                              double haul_distance_scale) {
     int *station_ids = NULL;
     int catch_amount = 0;
     double distance_nm = 0.0;
@@ -1187,7 +1192,7 @@ static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, gsp_route_
     if (!solve_segment_tsp(env, inst, segment->start_loc_id, segment->end_loc_id,
                            station_ids, segment->count,
                            &catch_amount, &distance_nm, &signed_ids,
-                           include_haul_distance, NULL, NULL, NULL, NULL, NULL,
+                           include_haul_distance, haul_distance_scale, NULL, NULL, NULL, NULL, NULL,
                            time_limit_seconds)) {
         free(station_ids);
         return 0;
@@ -1204,9 +1209,11 @@ static int reoptimize_segment(GRBenv *env, const nn_instance_t *inst, gsp_route_
 static int reoptimize_all_segments(GRBenv *env, const nn_instance_t *inst,
                                    gsp_route_segment_t *segments, int n_segments,
                                    double time_limit_seconds,
-                                   int include_haul_distance) {
+                                   int include_haul_distance,
+                                   double haul_distance_scale) {
     for (int i = 0; i < n_segments; i++) {
-        if (!reoptimize_segment(env, inst, &segments[i], time_limit_seconds, include_haul_distance)) return 0;
+        if (!reoptimize_segment(env, inst, &segments[i], time_limit_seconds,
+                                include_haul_distance, haul_distance_scale)) return 0;
     }
     return 1;
 }
@@ -1214,6 +1221,7 @@ static int reoptimize_all_segments(GRBenv *env, const nn_instance_t *inst,
 static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_boat_t *boat,
                              gsp_route_segment_t *left, gsp_route_segment_t *right,
                              int include_haul_distance,
+                             double haul_distance_scale,
                              int *solve_count,
                              gsp_mip_solve_detail_t **solve_details,
                              int *solve_detail_count,
@@ -1258,7 +1266,7 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_b
 
         if (!solve_segment_tsp(env, inst, left->start_loc_id, left->end_loc_id,
                                merged, k, &left_catch, &left_dist, &left_ids,
-                               include_haul_distance, solve_count,
+                               include_haul_distance, haul_distance_scale, solve_count,
                                &left_gap_percent, &left_runtime_seconds,
                                &left_num_vars, &left_num_constrs,
                                time_limit_seconds)) {
@@ -1287,7 +1295,7 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_b
         }
         if (!solve_segment_tsp(env, inst, right->start_loc_id, right->end_loc_id,
                                merged + k, total - k, &right_catch, &right_dist, &right_ids,
-                               include_haul_distance, solve_count,
+                               include_haul_distance, haul_distance_scale, solve_count,
                                &right_gap_percent, &right_runtime_seconds,
                                &right_num_vars, &right_num_constrs,
                                time_limit_seconds)) {
@@ -2056,6 +2064,7 @@ int mode_sweep(int argc, char **argv) {
                 fflush(stdout);
                 if (optimize_boundary(env, &inst, &boat, &segments[b], &segments[right_idx],
                                       sweep_cfg.include_haul_distance,
+                                      sweep_cfg.haul_distance_scale,
                                       &pass_mip_solve_count,
                                       &pass_mip_solve_details,
                                       &pass_mip_detail_count,

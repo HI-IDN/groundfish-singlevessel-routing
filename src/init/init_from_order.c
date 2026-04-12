@@ -791,7 +791,6 @@ static int parse_station_order_from_order_json(const char *json_path, int **out_
 static const char *infer_strategy_from_path(const char *path) {
     if (!path) return "noport";
     if (strstr(path, "fixedport") || strstr(path, "fixed_port") || strstr(path, "fixed-port")) return "fixedport";
-    if (strstr(path, "noport_v2") || strstr(path, "noport-v2") || strstr(path, "noportv2")) return "noport_v2";
     if (strstr(path, "noport") || strstr(path, "no_port") || strstr(path, "no-port")) return "noport";
     return "order";
 }
@@ -994,6 +993,7 @@ int main(int argc, char **argv) {
     nn_solution_t pre_local_postopt_sol = {0};
     double mip_time_limit_seconds = 0.0;
     int include_haul_distance = read_objective_include_haul_distance_from_yaml(config);
+    double init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     gsp_mip_solve_detail_t *local_postopt_details = NULL;
@@ -1009,7 +1009,7 @@ int main(int argc, char **argv) {
     }
 
     if (!database || !config || !input || !output) {
-        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <ordered.json> --output <init.json> [--strategy noport|noport_v2|fixedport]\n", argv[0]);
+        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <ordered.json> --output <init.json> [--strategy noport|fixedport]\n", argv[0]);
         return 1;
     }
     if (!strategy) strategy = infer_strategy_from_path(input);
@@ -1101,6 +1101,7 @@ int main(int argc, char **argv) {
                                   boat_start_loc_id, boat_end_loc_id,
                                   mip_time_limit_seconds,
                                   include_haul_distance,
+                                  init_haul_distance_scale,
                                   &sol,
                                   &local_postopt_runtime_seconds,
                                   &local_postopt_segment_solve_count,
