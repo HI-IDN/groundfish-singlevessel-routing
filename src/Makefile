@@ -23,8 +23,9 @@ INIT_TARGET := $(if $(filter gi,$(INIT_TARGET_RAW)),ge,$(INIT_TARGET_RAW))
 SWEEP_INIT_RAW := $(or $(INIT),$(init),noport)
 SWEEP_INIT := $(if $(filter gi,$(SWEEP_INIT_RAW)),ge,$(SWEEP_INIT_RAW))
 VALID_INIT_TYPES := nn ge ci noport fixedport
+EXPERIMENT_SWEEP_METHODS := noport nn ge ci
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init noport sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init noport sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
 
 all: build
 
@@ -145,6 +146,13 @@ plot-routes: $(ROUTE_PNGS)
 
 plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png ../sol/survey/multivessel.png plot-routes
 
+EXPERIMENT_TARGETS = \
+	../sol/noport/noport.json \
+	../sol/noport/init.json \
+	$(foreach method,$(EXPERIMENT_SWEEP_METHODS),../sol/$(method)/sweep.json)
+
+experiments: prepare-routing-data $(EXPERIMENT_TARGETS)
+
 plot-survey-routes: ../sol/survey/multivessel.png
 
 plot-sweep-summary: ../sol/sweep_summary_panels.png
@@ -189,6 +197,7 @@ help:
 	@echo "Other targets:"
 	@echo "  make -C src build"
 	@echo "  make -C src survey"
+	@echo "  make -C src experiments"
 	@echo "  make -C src plot"
 	@echo "  make -C src plot-routes"
 	@echo "  make -C src plot-survey-routes"
