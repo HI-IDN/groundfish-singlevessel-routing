@@ -20,6 +20,9 @@ static const char *find_matching_brace(const char *p);
 static int extract_final_solution_variant_from_json(const char *json_path,
                                                     char **out_variant_name,
                                                     char **out_variant_object);
+static int append_int_local(int **arr, int *n, int *cap, int v);
+static int append_unique_int_local(int **arr, int *n, int *cap, int v);
+static int lookup_waypoint_path_local(sqlite3 *db, int from_loc_id, int to_loc_id, int **out_ids);
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
@@ -214,6 +217,130 @@ static void order_compute_segment_breakdowns(const nn_instance_t *inst,
     }
 }
 
+static void write_order_solution_section(FILE *fp,
+                                         sqlite3 *db,
+                                         const char *label,
+                                         const char *variant_name,
+                                         const nn_instance_t *inst,
+                                         const nn_solution_t *sol,
+                                         int boat_start_loc_id,
+                                         int boat_end_loc_id,
+                                         int is_feasible,
+                                         const gsp_distance_breakdown_t *segment_breakdowns,
+                                         const gsp_distance_breakdown_t *total_breakdown) {
+    gsp_int_list_view_t *location_segments = NULL;
+    gsp_int_list_view_t *station_segments = NULL;
+    int *unique_waypoint_location_ids = NULL;
+    int uniq_wp_n = 0, uniq_wp_cap = 0;
+    int *dock_location_ids = NULL;
+    int dock_n = 0, dock_cap = 0;
+    int *tour_length = NULL;
+    (void)inst;
+
+    if (!fp || !sol) return;
+
+    location_segments = (gsp_int_list_view_t*)calloc((size_t)sol->segment_count, sizeof(gsp_int_list_view_t));
+    station_segments = (gsp_int_list_view_t*)calloc((size_t)sol->segment_count, sizeof(gsp_int_list_view_t));
+    tour_length = (int*)calloc((size_t)sol->segment_count, sizeof(int));
+    if (!location_segments || !station_segments || !tour_length) goto cleanup;
+
+    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_start_loc_id);
+    for (int s = 0; s < sol->segment_count - 1; s++) {
+        (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, sol->tour[sol->segment_ends[s]]);
+    }
+    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id);
+
+    for (int s = 0; s < sol->segment_count; s++) {
+        int start = sol->segment_starts[s];
+        int end = sol->segment_ends[s];
+        int base_cap = (end - start + 1) + 2;
+        int *base = (int*)malloc((size_t)base_cap * sizeof(int));
+        int *expanded = NULL;
+        int expanded_n = 0, expanded_cap = 0;
+        int *station_ids = NULL;
+        int station_n = 0, station_cap = 0;
+        int base_n = 0;
+        if (!base) goto cleanup;
+
+        tour_length[s] = end - start + 1;
+        base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
+        for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
+        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
+            base[base_n++] = boat_end_loc_id;
+        }
+
+        for (int i = 0; i < sol->visit_station_count; i++) {
+            if (sol->visit_station_segment[i] == s) {
+                (void)append_int_local(&station_ids, &station_n, &station_cap,
+                                       sol->visit_station_ids[i] *
+                                       ((sol->visit_station_direction &&
+                                         sol->visit_station_direction[i] < 0) ? -1 : 1));
+            }
+        }
+
+        if (base_n > 0) {
+            (void)append_int_local(&expanded, &expanded_n, &expanded_cap, base[0]);
+            for (int i = 0; i < base_n - 1; i++) {
+                int from_loc = base[i];
+                int to_loc = base[i + 1];
+                int *wps = NULL;
+                int n_wps = lookup_waypoint_path_local(db, from_loc, to_loc, &wps);
+                if (n_wps > 0) {
+                    for (int k = 0; k < n_wps; k++) {
+                        (void)append_int_local(&expanded, &expanded_n, &expanded_cap, wps[k]);
+                        (void)append_unique_int_local(&unique_waypoint_location_ids,
+                                                      &uniq_wp_n, &uniq_wp_cap, wps[k]);
+                    }
+                }
+                (void)append_int_local(&expanded, &expanded_n, &expanded_cap, to_loc);
+                free(wps);
+            }
+        }
+
+        free(base);
+        location_segments[s].values = expanded;
+        location_segments[s].count = expanded_n;
+        station_segments[s].values = station_ids;
+        station_segments[s].count = station_n;
+    }
+
+    fprintf(fp, "    \"%s\": ", label);
+    {
+        gsp_solution_json_view_t view = {0};
+        view.variant_name = variant_name ? variant_name : label;
+        view.tour_segments_location_ids = location_segments;
+        view.tour_segments_location_count = sol->segment_count;
+        view.dock_location_ids = dock_location_ids;
+        view.dock_location_count = dock_n;
+        view.unique_waypoint_location_ids = unique_waypoint_location_ids;
+        view.unique_waypoint_location_count = uniq_wp_n;
+        view.tour_segments_station_ids = station_segments;
+        view.tour_segments_station_count = sol->segment_count;
+        view.tour_length = tour_length;
+        view.tour_length_count = sol->segment_count;
+        view.segment_count = sol->segment_count;
+        view.segment_catch_amount = sol->segment_catches;
+        view.segment_catch_count = sol->segment_count;
+        view.segment_breakdowns = segment_breakdowns;
+        view.grand_total = total_breakdown;
+        view.feasible = is_feasible;
+        gsp_write_solution_json(fp, "    ", &view, 0);
+    }
+
+cleanup:
+    if (location_segments) {
+        for (int s = 0; s < sol->segment_count; s++) free((int*)location_segments[s].values);
+    }
+    if (station_segments) {
+        for (int s = 0; s < sol->segment_count; s++) free((int*)station_segments[s].values);
+    }
+    free(location_segments);
+    free(station_segments);
+    free(unique_waypoint_location_ids);
+    free(dock_location_ids);
+    free(tour_length);
+}
+
 static int append_int_local(int **arr, int *n, int *cap, int v) {
     int *tmp;
     int new_cap;
@@ -328,10 +455,6 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     const char *final_variant_name = "capacity-feasible";
     const char *pre_local_postopt_variant_name = "baseline-capacity-feasible";
     FILE *fp = fopen(output_path, "w");
-    int *unique_waypoint_location_ids = NULL;
-    int uniq_wp_n = 0, uniq_wp_cap = 0;
-    int *baseline_unique_waypoint_location_ids = NULL;
-    int baseline_uniq_wp_n = 0, baseline_uniq_wp_cap = 0;
     int has_pre_local_postopt = pre_local_postopt_sol &&
                                 pre_local_postopt_sol->visit_station_count > 0;
     char *original_order_variant_name = NULL;
@@ -400,191 +523,18 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
                 original_order_variant_object);
     }
     if (has_pre_local_postopt) {
-        fprintf(fp, "    \"%s\": {\n", pre_local_postopt_variant_name);
-        fprintf(fp, "    \"variant\": \"%s\",\n", pre_local_postopt_variant_name);
-        fprintf(fp, "    \"tour_segments_location_ids\": [\n");
-        for (int s = 0; s < pre_local_postopt_sol->segment_count; s++) {
-            int start = pre_local_postopt_sol->segment_starts[s];
-            int end = pre_local_postopt_sol->segment_ends[s];
-            int base_cap = (end - start + 1) + 2;
-            int *base = (int*)malloc((size_t)base_cap * sizeof(int));
-            int base_n = 0;
-
-            fprintf(fp, "      [");
-            base[base_n++] = (s == 0) ? boat_start_loc_id : pre_local_postopt_sol->tour[pre_local_postopt_sol->segment_ends[s - 1]];
-            for (int i = start; i <= end; i++) base[base_n++] = pre_local_postopt_sol->tour[i];
-            if (s == pre_local_postopt_sol->segment_count - 1 &&
-                (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
-                base[base_n++] = boat_end_loc_id;
-            }
-
-            if (base_n > 0) {
-                fprintf(fp, "%d", base[0]);
-                for (int i = 0; i < base_n - 1; i++) {
-                    int from_loc = base[i];
-                    int to_loc = base[i + 1];
-                    int *wps = NULL;
-                    int n_wps = lookup_waypoint_path_local(db, from_loc, to_loc, &wps);
-                    if (n_wps > 0) {
-                        for (int k = 0; k < n_wps; k++) {
-                            fprintf(fp, ", %d", wps[k]);
-                            (void)append_unique_int_local(&baseline_unique_waypoint_location_ids,
-                                                          &baseline_uniq_wp_n,
-                                                          &baseline_uniq_wp_cap,
-                                                          wps[k]);
-                        }
-                    }
-                    fprintf(fp, ", %d", to_loc);
-                    free(wps);
-                }
-            }
-            free(base);
-            fprintf(fp, "]%s\n", (s + 1 < pre_local_postopt_sol->segment_count) ? "," : "");
-        }
-        fprintf(fp, "    ],\n");
-
-        fprintf(fp, "    \"dock_location_ids\": [");
-        fprintf(fp, "%d", boat_start_loc_id);
-        for (int s = 0; s < pre_local_postopt_sol->segment_count - 1; s++) {
-            fprintf(fp, ", %d", pre_local_postopt_sol->tour[pre_local_postopt_sol->segment_ends[s]]);
-        }
-        fprintf(fp, ", %d],\n", boat_end_loc_id);
-
-        fprintf(fp, "    \"unique_waypoint_location_ids\": [");
-        for (int i = 0; i < baseline_uniq_wp_n; i++) {
-            if (i) fprintf(fp, ", ");
-            fprintf(fp, "%d", baseline_unique_waypoint_location_ids[i]);
-        }
-        fprintf(fp, "],\n");
-
-        fprintf(fp, "    \"tour_segments_station_ids\": [\n");
-        for (int s = 0; s < pre_local_postopt_sol->segment_count; s++) {
-            int first = 1;
-            fprintf(fp, "      [");
-            for (int i = 0; i < pre_local_postopt_sol->visit_station_count; i++) {
-                if (pre_local_postopt_sol->visit_station_segment[i] == s) {
-                    if (!first) fprintf(fp, ", ");
-                    fprintf(fp, "%d", pre_local_postopt_sol->visit_station_ids[i] *
-                                      ((pre_local_postopt_sol->visit_station_direction &&
-                                        pre_local_postopt_sol->visit_station_direction[i] < 0) ? -1 : 1));
-                    first = 0;
-                }
-            }
-            fprintf(fp, "]%s\n", (s + 1 < pre_local_postopt_sol->segment_count) ? "," : "");
-        }
-        fprintf(fp, "    ],\n");
-
-        fprintf(fp, "    \"tour_length\": [");
-        for (int s = 0; s < pre_local_postopt_sol->segment_count; s++) {
-            fprintf(fp, "%d", pre_local_postopt_sol->segment_ends[s] - pre_local_postopt_sol->segment_starts[s] + 1);
-            if (s + 1 < pre_local_postopt_sol->segment_count) fprintf(fp, ", ");
-        }
-        fprintf(fp, "],\n");
-
-        fprintf(fp, "    \"segment_count\": %d,\n", pre_local_postopt_sol->segment_count);
-        fprintf(fp, "    \"segment_catch_amount\": [");
-        for (int s = 0; s < pre_local_postopt_sol->segment_count; s++) {
-            fprintf(fp, "%d", pre_local_postopt_sol->segment_catches[s]);
-            if (s + 1 < pre_local_postopt_sol->segment_count) fprintf(fp, ", ");
-        }
-        fprintf(fp, "],\n");
-
-        gsp_write_distance_nm_json(fp, "    ", pre_segment_breakdowns,
-                                   pre_local_postopt_sol->segment_count, &pre_total_breakdown, 1);
-        fprintf(fp, "    \"total_distance_nm\": %.2f,\n", pre_local_postopt_sol->total_distance);
-        fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
-        fprintf(fp, "    },\n");
+        write_order_solution_section(fp, db, pre_local_postopt_variant_name,
+                                     pre_local_postopt_variant_name, inst,
+                                     pre_local_postopt_sol, boat_start_loc_id,
+                                     boat_end_loc_id, is_feasible,
+                                     pre_segment_breakdowns, &pre_total_breakdown);
+        fprintf(fp, ",\n");
     }
 
-    fprintf(fp, "    \"%s\": {\n", final_variant_name);
-    fprintf(fp, "    \"variant\": \"%s\",\n", final_variant_name);
-    fprintf(fp, "    \"tour_segments_location_ids\": [\n");
-    for (int s = 0; s < sol->segment_count; s++) {
-        int start = sol->segment_starts[s];
-        int end = sol->segment_ends[s];
-        int base_cap = (end - start + 1) + 2;
-        int *base = (int*)malloc((size_t)base_cap * sizeof(int));
-        int base_n = 0;
-
-        fprintf(fp, "      [");
-        base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
-        for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
-        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
-            base[base_n++] = boat_end_loc_id;
-        }
-
-        if (base_n > 0) {
-            fprintf(fp, "%d", base[0]);
-            for (int i = 0; i < base_n - 1; i++) {
-                int from_loc = base[i];
-                int to_loc = base[i + 1];
-                int *wps = NULL;
-                int n_wps = lookup_waypoint_path_local(db, from_loc, to_loc, &wps);
-                if (n_wps > 0) {
-                    for (int k = 0; k < n_wps; k++) {
-                        fprintf(fp, ", %d", wps[k]);
-                        (void)append_unique_int_local(&unique_waypoint_location_ids, &uniq_wp_n, &uniq_wp_cap, wps[k]);
-                    }
-                }
-                fprintf(fp, ", %d", to_loc);
-                free(wps);
-            }
-        }
-        free(base);
-        fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
-    }
-    fprintf(fp, "    ],\n");
-
-    fprintf(fp, "    \"dock_location_ids\": [");
-    fprintf(fp, "%d", boat_start_loc_id);
-    for (int s = 0; s < sol->segment_count - 1; s++) {
-        fprintf(fp, ", %d", sol->tour[sol->segment_ends[s]]);
-    }
-    fprintf(fp, ", %d],\n", boat_end_loc_id);
-
-    fprintf(fp, "    \"unique_waypoint_location_ids\": [");
-    for (int i = 0; i < uniq_wp_n; i++) {
-        if (i) fprintf(fp, ", ");
-        fprintf(fp, "%d", unique_waypoint_location_ids[i]);
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "    \"tour_segments_station_ids\": [\n");
-    for (int s = 0; s < sol->segment_count; s++) {
-        int first = 1;
-        fprintf(fp, "      [");
-        for (int i = 0; i < sol->visit_station_count; i++) {
-            if (sol->visit_station_segment[i] == s) {
-                if (!first) fprintf(fp, ", ");
-                fprintf(fp, "%d", sol->visit_station_ids[i] *
-                                  ((sol->visit_station_direction && sol->visit_station_direction[i] < 0) ? -1 : 1));
-                first = 0;
-            }
-        }
-        fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
-    }
-    fprintf(fp, "    ],\n");
-
-    fprintf(fp, "    \"tour_length\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%d", sol->segment_ends[s] - sol->segment_starts[s] + 1);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "    \"segment_count\": %d,\n", sol->segment_count);
-    fprintf(fp, "    \"segment_catch_amount\": [");
-    for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%d", sol->segment_catches[s]);
-        if (s + 1 < sol->segment_count) fprintf(fp, ", ");
-    }
-    fprintf(fp, "],\n");
-
-    gsp_write_distance_nm_json(fp, "    ", final_segment_breakdowns,
-                               sol->segment_count, &final_total_breakdown, 1);
-    fprintf(fp, "    \"total_distance_nm\": %.2f,\n", sol->total_distance);
-    fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
-    fprintf(fp, "    }\n");
+    write_order_solution_section(fp, db, final_variant_name, final_variant_name, inst,
+                                 sol, boat_start_loc_id, boat_end_loc_id, is_feasible,
+                                 final_segment_breakdowns, &final_total_breakdown);
+    fprintf(fp, "\n");
     fprintf(fp, "  },\n");
 
     gsp_compute_mip_summary(local_postopt_details, local_postopt_detail_count,
@@ -593,12 +543,12 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     gsp_write_segment_mip_section(fp, "l1seg", "endpaired_tsp", mip_time_limit_seconds,
                                   local_postopt_details, local_postopt_detail_count);
 
-    fprintf(fp, "  \"summary\": {\n");
     {
         double distance_trajectory[2];
         double solution_runtime_trajectory[2];
         int distance_count = 0;
         int runtime_count = 0;
+        gsp_summary_json_t summary = {0};
         if (has_pre_local_postopt) {
             distance_trajectory[distance_count++] = pre_local_postopt_sol->total_distance;
         }
@@ -606,27 +556,34 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         solution_runtime_trajectory[runtime_count++] = solve_runtime_seconds;
         solution_runtime_trajectory[runtime_count++] = local_postopt_runtime_seconds;
 
-        gsp_write_summary_status_json(fp, "    ", final_variant_name, "init_complete",
-                                      is_feasible, method_name ? method_name : "unknown", 1);
-        gsp_write_summary_distance_json(fp, "    ", has_pre_local_postopt,
-                                        has_pre_local_postopt ? pre_local_postopt_sol->total_distance : 0.0,
-                                        distance_trajectory, distance_count, sol->total_distance, 1);
-        gsp_write_summary_runtime_json(fp, "    ", preprocessing_seconds,
-                                       solution_runtime_trajectory, runtime_count,
-                                       0.0,
-                                       preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds,
-                                       1);
-        gsp_write_summary_mip_json(fp, "    ", local_postopt_detail_count,
-                                   mip_runtime_mean, mip_runtime_max, mip_gap_mean, mip_gap_max, 0);
+        summary.final_name = final_variant_name;
+        summary.stage_name = "init_complete";
+        summary.feasible = is_feasible;
+        summary.method_name = method_name ? method_name : "unknown";
+        summary.has_baseline = has_pre_local_postopt;
+        summary.baseline_distance_nm = has_pre_local_postopt ? pre_local_postopt_sol->total_distance : 0.0;
+        summary.distance_trajectory_nm = distance_trajectory;
+        summary.distance_trajectory_count = distance_count;
+        summary.final_distance_nm = sol->total_distance;
+        summary.preprocessing_seconds = preprocessing_seconds;
+        summary.solution_runtime_seconds = solution_runtime_trajectory;
+        summary.solution_runtime_count = runtime_count;
+        summary.postprocessing_seconds = 0.0;
+        summary.grandtotal_seconds = preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds;
+        summary.include_runtime = 1;
+        summary.include_mip = 1;
+        summary.mip_solve_count = local_postopt_detail_count;
+        summary.mip_runtime_mean = mip_runtime_mean;
+        summary.mip_runtime_max = mip_runtime_max;
+        summary.mip_gap_mean = mip_gap_mean;
+        summary.mip_gap_max = mip_gap_max;
+        gsp_write_summary_json(fp, "  ", &summary, 0);
     }
-    fprintf(fp, "  }\n");
     fprintf(fp, "}\n");
 
     fclose(fp);
     free(pre_segment_breakdowns);
     free(final_segment_breakdowns);
-    free(unique_waypoint_location_ids);
-    free(baseline_unique_waypoint_location_ids);
     free(original_order_variant_name);
     free(original_order_variant_object);
 }
