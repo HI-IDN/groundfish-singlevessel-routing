@@ -1429,13 +1429,30 @@ static void sweep_compute_segment_breakdowns(const nn_instance_t *inst,
     memset(total_breakdown, 0, sizeof(*total_breakdown));
     for (int s = 0; s < sol->segment_count; s++) {
         int prev_loc = (s == 0) ? boat_loc_id : sol->tour[sol->segment_ends[s - 1]];
+        int end_loc = (s == sol->segment_count - 1) ? boat_loc_id : sol->tour[sol->segment_ends[s]];
         memset(&segment_breakdowns[s], 0, sizeof(segment_breakdowns[s]));
-        for (int i = sol->segment_starts[s]; i <= sol->segment_ends[s]; i++) {
-            sweep_accumulate_leg_distance(inst, prev_loc, sol->tour[i], &segment_breakdowns[s]);
-            prev_loc = sol->tour[i];
+        for (int i = 0; i < sol->visit_station_count; i++) {
+            int station_idx;
+            int direction;
+            int entry_loc;
+            int exit_loc;
+
+            if (sol->visit_station_segment[i] != s) continue;
+            station_idx = find_station_index(inst, sol->visit_station_ids[i]);
+            if (station_idx < 0) continue;
+
+            direction = (sol->visit_station_direction && sol->visit_station_direction[i] < 0) ? -1 : 1;
+            entry_loc = (direction > 0) ? inst->nodes[station_idx].start_loc_id
+                                        : inst->nodes[station_idx].end_loc_id;
+            exit_loc = (direction > 0) ? inst->nodes[station_idx].end_loc_id
+                                       : inst->nodes[station_idx].start_loc_id;
+
+            sweep_accumulate_leg_distance(inst, prev_loc, entry_loc, &segment_breakdowns[s]);
+            sweep_accumulate_leg_distance(inst, entry_loc, exit_loc, &segment_breakdowns[s]);
+            prev_loc = exit_loc;
         }
-        if (s == sol->segment_count - 1 && prev_loc != boat_loc_id) {
-            sweep_accumulate_leg_distance(inst, prev_loc, boat_loc_id, &segment_breakdowns[s]);
+        if (prev_loc != end_loc) {
+            sweep_accumulate_leg_distance(inst, prev_loc, end_loc, &segment_breakdowns[s]);
         }
         total_breakdown->transit_distance_nm += segment_breakdowns[s].transit_distance_nm;
         total_breakdown->haul_distance_nm += segment_breakdowns[s].haul_distance_nm;
