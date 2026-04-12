@@ -15,6 +15,8 @@ typedef struct {
     const int *warm_start_station_ids;
     int warm_start_order_length;
     int exclude_haul_distance;
+    int use_scaled_haul_distance;
+    double haul_distance_scale;
     GRBenv *shared_env;
 } mip_params_t;
 

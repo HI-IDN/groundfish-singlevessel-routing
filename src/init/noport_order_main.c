@@ -429,6 +429,8 @@ static int write_noport_json(sqlite3 *db,
                              double preprocessing_seconds,
                              const gsp_distance_breakdown_t *distance_breakdown,
                              int include_haul_distance,
+                             int use_scaled_haul_distance,
+                             double haul_distance_scale,
                              double total_runtime_seconds) {
     const char *final_variant_name = "capacity-infeasible";
     FILE *fp = NULL;
@@ -447,9 +449,7 @@ static int write_noport_json(sqlite3 *db,
     double objective_distance_nm;
 
     if (!distance_breakdown) return 1;
-    objective_distance_nm = include_haul_distance ?
-        distance_breakdown->total_distance_nm :
-        distance_breakdown->transit_distance_nm;
+    objective_distance_nm = solution->objective_value;
 
     if (!build_route_locations(app, solution, &route, &route_len, &total_catch)) return 1;
 
@@ -487,7 +487,8 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "    \"boat_location_id\": %d,\n", app->boat.location_id);
     fprintf(fp, "    \"global_time_limit_seconds\": %.6f,\n", global_time_limit_seconds);
     fprintf(fp, "    \"objective_distance_mode\": \"%s\"\n",
-            include_haul_distance ? "total" : "transit");
+            include_haul_distance ? "total" :
+            (use_scaled_haul_distance ? "scaled_haul" : "transit"));
     fprintf(fp, "  },\n");
 
     fprintf(fp, "  \"problem\": {\n");
@@ -547,6 +548,9 @@ static int write_noport_json(sqlite3 *db,
     fprintf(fp, "    \"segment_count\": 1,\n");
     fprintf(fp, "    \"segment_catch_amount\": [%d],\n", total_catch);
     fprintf(fp, "    \"objective_distance_nm\": %.2f,\n", objective_distance_nm);
+    if (!include_haul_distance && use_scaled_haul_distance) {
+        fprintf(fp, "    \"haul_distance_scale\": %.8f,\n", haul_distance_scale);
+    }
     gsp_write_distance_nm_json(fp, "    ", distance_breakdown, 1, distance_breakdown, 1);
     fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
     fprintf(fp, "    }\n");
@@ -616,6 +620,8 @@ int main(int argc, char **argv) {
     double effective_time_limit_seconds = 0.0;
     int thread_count = 0;
     int include_haul_distance = 1;
+    int use_scaled_haul_distance = 0;
+    double haul_distance_scale = 0.0;
     gsp_distance_breakdown_t distance_breakdown;
     double preprocessing_seconds = 0.0;
     double total_runtime_seconds = 0.0;
@@ -632,10 +638,14 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--database") == 0) db_path = argv[i + 1];
         else if (strcmp(argv[i], "--config") == 0) config_path = argv[i + 1];
         else if (strcmp(argv[i], "--output") == 0) output_path = argv[i + 1];
+        else if (strcmp(argv[i], "--haul-distance-scale") == 0) {
+            use_scaled_haul_distance = 1;
+            haul_distance_scale = atof(argv[i + 1]);
+        }
     }
 
     if (!db_path || !config_path || !output_path) {
-        fprintf(stderr, "Usage: %s --database <gsp_data.db> --config <gsp_solver.yaml> --output <sol/noport/noport.json>\n", argv[0]);
+        fprintf(stderr, "Usage: %s --database <gsp_data.db> --config <gsp_solver.yaml> --output <sol/noport/noport.json> [--haul-distance-scale <alpha>]\n", argv[0]);
         return 1;
     }
 
@@ -674,7 +684,9 @@ int main(int argc, char **argv) {
     mip_params.thread_count = thread_count;
     mip_params.verbose = 1;
     mip_params.mip_gap = 0.0;
-    mip_params.exclude_haul_distance = !include_haul_distance;
+    mip_params.exclude_haul_distance = !include_haul_distance && !use_scaled_haul_distance;
+    mip_params.use_scaled_haul_distance = !include_haul_distance && use_scaled_haul_distance;
+    mip_params.haul_distance_scale = (!include_haul_distance && use_scaled_haul_distance) ? haul_distance_scale : 0.0;
 
     preprocess_end = clock();
     preprocessing_seconds = elapsed_seconds(preprocess_start, preprocess_end);
@@ -689,7 +701,12 @@ int main(int argc, char **argv) {
            (global_time_limit_seconds > 0.0) ? "" : "none ",
            (global_time_limit_seconds > 0.0) ? global_time_limit_seconds : 0.0);
     printf("  threads: %d\n", thread_count);
-    printf("  objective distance mode: %s\n", include_haul_distance ? "total" : "transit");
+    printf("  objective distance mode: %s\n",
+           include_haul_distance ? "total" :
+           (use_scaled_haul_distance ? "scaled_haul" : "transit"));
+    if (!include_haul_distance && use_scaled_haul_distance) {
+        printf("  haul distance scale: %.8f\n", haul_distance_scale);
+    }
 
     if (solve_mip_noport(&mip_instance, &mip_params, &mip_solution) != 0) {
         fprintf(stderr, "Gurobi no-port solve failed\n");
@@ -715,6 +732,8 @@ int main(int argc, char **argv) {
                           preprocessing_seconds,
                           &distance_breakdown,
                           include_haul_distance,
+                          use_scaled_haul_distance,
+                          haul_distance_scale,
                           total_runtime_seconds) != 0) {
         fprintf(stderr, "Failed to write %s\n", output_path);
         sqlite3_close(db);
@@ -724,8 +743,7 @@ int main(int argc, char **argv) {
     }
 
     printf("[OK] Wrote %s\n", output_path);
-    printf("  objective distance: %.2f nm\n",
-           include_haul_distance ? distance_breakdown.total_distance_nm : distance_breakdown.transit_distance_nm);
+    printf("  objective distance: %.2f nm\n", mip_solution.objective_value);
     printf("  transit distance: %.2f nm\n", distance_breakdown.transit_distance_nm);
     printf("  haul distance: %.2f nm\n", distance_breakdown.haul_distance_nm);
     printf("  total distance: %.2f nm\n", distance_breakdown.total_distance_nm);
