@@ -25,7 +25,6 @@ include_directories(
 set(COMMON_SOURCES
     dat_parser.c
     distance.c
-    logging.c
     sql_utils.c
     coastline_db.c
 )
@@ -34,7 +33,6 @@ set(COMMON_SOURCES
 add_executable(gsp_stations
     ../tools/station_import.c
     dat_parser.c
-    logging.c
     sql_utils.c
 )
 
@@ -48,7 +46,6 @@ add_executable(gsp_distances
     ../tools/distance_builder.c
     distance.c
     coastline_db.c
-    logging.c
     sql_utils.c
 )
 
@@ -65,7 +62,6 @@ add_executable(gsp_prepare_routing_data
     ../tools/distance_builder.c
     dat_parser.c
     distance.c
-    logging.c
     sql_utils.c
     coastline_db.c
 )

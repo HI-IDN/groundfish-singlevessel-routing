@@ -47,7 +47,7 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
         return -1;
     }
 
-    int current_anchor_idx = -1;  // -1 = boat; otherwise station/port object index for legacy NN ordering
+    int current_anchor_idx = -1;  // -1 = boat; otherwise station/port object index
     int current_loc_id = boat_start_loc_id;  // actual current emitted location for route construction
     int current_load = 0;
     double current_segment_dist = 0.0;
