@@ -25,6 +25,7 @@ Solution dir: `C:\Users\hbi3\Documents\GSP\Code\sol`
 | MH-NN | 6,911.67 | 6,264.57 | −647.10 | −9.4% |
 | MH-GE | 5,104.34 | 4,809.89 | −294.45 | −5.8% |
 | MH-CI | 5,354.93 | 5,047.00 | −307.93 | −5.8% |
+| MH-noport | 4,762.17 | 4,335.18 | −426.99 | −9.0% |
 
 
 ## Sweep: transit distance vs. legacy sweep range
@@ -34,6 +35,7 @@ Solution dir: `C:\Users\hbi3\Documents\GSP\Code\sol`
 | MH-NN | 5,842.28 | 6,057.93 | 6,263.96 | 5,932.39 | +90.11 (+1.5%) | −125.54 (−2.1%) | −331.57 (−5.3%) |
 | MH-GE | 4,746.19 | 4,795.02 | 4,853.62 | 4,643.65 | −102.54 (−2.2%) | −151.37 (−3.2%) | −209.97 (−4.3%) |
 | MH-CI | 4,886.22 | 5,033.95 | 5,108.97 | 4,975.69 | +89.47 (+1.8%) | −58.26 (−1.2%) | −133.28 (−2.6%) |
+| MH-noport | 4,390.77 | 4,518.02 | 4,604.48 | 4,300.17 | −90.60 (−2.1%) | −217.85 (−4.8%) | −304.31 (−6.6%) |
 
 ## Sources
 
@@ -45,4 +47,6 @@ Solution dir: `C:\Users\hbi3\Documents\GSP\Code\sol`
 | `sol/ge/sweep.json` | `solution.capacity-feasible.distance_nm.grand_total.transit` = 4,643.65 nm |
 | `sol/ci/init.json` | `solution.capacity-feasible.distance_nm.grand_total.transit` = 5,047.00 nm |
 | `sol/ci/sweep.json` | `solution.capacity-feasible.distance_nm.grand_total.transit` = 4,975.69 nm |
+| `sol/noport/init.json` | `solution.capacity-feasible.distance_nm.grand_total.transit` = 4,335.18 nm |
+| `sol/noport/sweep.json` | `solution.capacity-feasible.distance_nm.grand_total.transit` = 4,300.17 nm |
 | `C:\Users\hbi3\Documents\GSP\Code\docs\07-results.md` | Baseline distances table, *With port* column; `MH-*` tables, best/mean/worst `Final distance` |

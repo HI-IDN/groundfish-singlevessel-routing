@@ -35,6 +35,7 @@ STRATEGIES = [
     {"key": "nn", "doc_label": "MH-NN"},
     {"key": "ge", "doc_label": "MH-GE"},
     {"key": "ci", "doc_label": "MH-CI"},
+    {"key": "noport", "doc_label": "MH-noport"},
 ]
 
 
@@ -136,7 +137,7 @@ def parse_doc_sweep_baselines(doc_path: Path) -> dict[str, dict[str, float]]:
         for raw_line in fh:
             line = raw_line.strip()
 
-            heading = re.match(r"^##\s+(MH-[A-Z]+)\s*$", line)
+            heading = re.match(r"^##\s+(MH-[A-Za-z0-9_-]+)\s*$", line)
             if heading:
                 label = heading.group(1)
                 current_label = label if label in strategy_labels else None
