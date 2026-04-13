@@ -213,14 +213,6 @@ cleanup:
     return rc;
 }
 
-static int has_text_extension(const char *path) {
-    const char *dot;
-    if (!path) return 0;
-    dot = strrchr(path, '.');
-    if (!dot) return 0;
-    return strcmp(dot, ".tsv") == 0 || strcmp(dot, ".csv") == 0 || strcmp(dot, ".txt") == 0;
-}
-
 static int load_repaired_coastline_from_text(const char *coastline_path, CoastlinePoints *out) {
     FILE *fp = NULL;
     char line[4096];
@@ -304,65 +296,8 @@ cleanup:
     return rc;
 }
 
-static int load_repaired_coastline_from_bin(const char *island_bin_path, CoastlinePoints *out) {
-    FILE *fp = NULL;
-    float *data = NULL;
-    size_t file_size = 0;
-    size_t num_floats = 0;
-    int rc = 0;
-
-    if (!island_bin_path || !out) {
-        return 0;
-    }
-
-    memset(out, 0, sizeof(*out));
-
-    fp = fopen(island_bin_path, "rb");
-    if (!fp) {
-        fprintf(stderr, "  WARN Could not open %s for coastline import\n", island_bin_path);
-        return 0;
-    }
-
-    fseek(fp, 0, SEEK_END);
-    file_size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    if (file_size <= 0 || (file_size % sizeof(float)) != 0) {
-        fprintf(stderr, "  ERROR Invalid legacy binary coastline file size\n");
-        goto cleanup;
-    }
-
-    num_floats = file_size / sizeof(float);
-    if ((num_floats % 2) != 0) {
-        fprintf(stderr, "  ERROR Legacy binary coastline file must have even number of floats (lat/lon pairs)\n");
-        goto cleanup;
-    }
-
-    data = (float*)malloc(file_size);
-    if (!data) {
-        fprintf(stderr, "  ERROR Memory allocation failed\n");
-        goto cleanup;
-    }
-
-    if (fread(data, sizeof(float), num_floats, fp) != num_floats) {
-        fprintf(stderr, "  ERROR Failed to read legacy binary coastline file\n");
-        goto cleanup;
-    }
-
-    rc = sanitize_coastline_geometry(data, (int)(num_floats / 2), out);
-
-cleanup:
-    if (fp) fclose(fp);
-    free(data);
-    if (!rc) free_coastline_points(out);
-    return rc;
-}
-
 int load_repaired_coastline(const char *coastline_path, CoastlinePoints *out) {
-    if (has_text_extension(coastline_path)) {
-        return load_repaired_coastline_from_text(coastline_path, out);
-    }
-    return load_repaired_coastline_from_bin(coastline_path, out);
+    return load_repaired_coastline_from_text(coastline_path, out);
 }
 
 int replace_coastline_in_db(sqlite3 *db, const CoastlinePoints *coastline) {

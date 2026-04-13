@@ -25,10 +25,7 @@ static int count_leading_spaces_local(const char *line) {
 
 static double read_gurobi_phase_scalar_from_yaml(const char *yaml_path,
                                                  const char *nested_section_name,
-                                                 const char *nested_phase_key,
-                                                 const char *legacy_nested_phase_key,
-                                                 const char *flat_default_key,
-                                                 const char *flat_phase_key) {
+                                                 const char *nested_phase_key) {
     FILE *fp = fopen(yaml_path, "r");
     char line[MAX_LINE];
     int in_gurobi = 0;
@@ -36,32 +33,16 @@ static double read_gurobi_phase_scalar_from_yaml(const char *yaml_path,
     double value = 0.0;
     int have_default = 0;
     char nested_header[MAX_LINE];
-    char flat_default_header[MAX_LINE];
-    char flat_phase_header[MAX_LINE];
     char phase_header[MAX_LINE];
-    char legacy_phase_header[MAX_LINE];
     size_t nested_header_len;
-    size_t flat_default_header_len;
-    size_t flat_phase_header_len;
     size_t phase_header_len;
-    size_t legacy_phase_header_len;
 
     if (!fp || !nested_section_name || !nested_phase_key) return 0.0;
 
     snprintf(nested_header, sizeof(nested_header), "%s:", nested_section_name);
-    snprintf(flat_default_header, sizeof(flat_default_header), "%s:", flat_default_key ? flat_default_key : "");
-    snprintf(flat_phase_header, sizeof(flat_phase_header), "%s:", flat_phase_key ? flat_phase_key : "");
     snprintf(phase_header, sizeof(phase_header), "%s:", nested_phase_key);
-    if (legacy_nested_phase_key && *legacy_nested_phase_key) {
-        snprintf(legacy_phase_header, sizeof(legacy_phase_header), "%s:", legacy_nested_phase_key);
-    } else {
-        legacy_phase_header[0] = '\0';
-    }
     nested_header_len = strlen(nested_header);
-    flat_default_header_len = strlen(flat_default_header);
-    flat_phase_header_len = strlen(flat_phase_header);
     phase_header_len = strlen(phase_header);
-    legacy_phase_header_len = strlen(legacy_phase_header);
 
     while (fgets(line, sizeof(line), fp)) {
         char *trimmed = line;
@@ -78,28 +59,12 @@ static double read_gurobi_phase_scalar_from_yaml(const char *yaml_path,
 
         if (indent == 2) {
             in_nested = (strncmp(trimmed, nested_header, nested_header_len) == 0);
-            if (flat_default_key && strncmp(trimmed, flat_default_header, flat_default_header_len) == 0) {
-                value = atof(trimmed + flat_default_header_len);
-                if (value < 0.0) value = 0.0;
-                have_default = 1;
-            } else if (flat_phase_key && strncmp(trimmed, flat_phase_header, flat_phase_header_len) == 0) {
-                value = atof(trimmed + flat_phase_header_len);
-                if (value < 0.0) value = 0.0;
-                have_default = 1;
-            }
             continue;
         }
 
         if (indent == 4 && in_nested) {
             if (strncmp(trimmed, phase_header, phase_header_len) == 0) {
                 value = atof(trimmed + phase_header_len);
-                if (value < 0.0) value = 0.0;
-                have_default = 1;
-                break;
-            }
-            if (legacy_phase_header_len > 0 &&
-                strncmp(trimmed, legacy_phase_header, legacy_phase_header_len) == 0) {
-                value = atof(trimmed + legacy_phase_header_len);
                 if (value < 0.0) value = 0.0;
                 have_default = 1;
                 break;
@@ -172,19 +137,19 @@ fail:
 }
 
 double read_init_mip_time_limit_from_yaml(const char *yaml_path) {
-    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "1seg", "init", "l1seg", NULL);
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "1seg");
 }
 
 double read_noport_mip_time_limit_from_yaml(const char *yaml_path) {
-    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "0seg", "noport", "l0seg", NULL);
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "0seg");
 }
 
 double read_sweep_mip_time_limit_from_yaml(const char *yaml_path) {
-    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "2seg", "sweep", "l2seg", NULL);
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "2seg");
 }
 
 double read_fixedport_mip_time_limit_from_yaml(const char *yaml_path) {
-    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "Xseg", "fixedport", "lXseg", NULL);
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "Xseg");
 }
 
 int read_objective_include_haul_distance_from_yaml(const char *yaml_path) {
@@ -226,16 +191,12 @@ int read_objective_include_haul_distance_from_yaml(const char *yaml_path) {
 }
 
 static double read_phase_haul_distance_scale_from_yaml(const char *yaml_path, const char *phase_name) {
-    char flat_phase_key[MAX_LINE];
     const char *nested_phase_key = phase_name;
-    const char *legacy_nested_phase_key = phase_name;
     if (strcmp(phase_name, "noport") == 0) nested_phase_key = "0seg";
     else if (strcmp(phase_name, "init") == 0) nested_phase_key = "1seg";
     else if (strcmp(phase_name, "sweep") == 0) nested_phase_key = "2seg";
     else if (strcmp(phase_name, "fixedport") == 0) nested_phase_key = "Xseg";
-    snprintf(flat_phase_key, sizeof(flat_phase_key), "%s_haul_distance_scale", phase_name);
-    return read_gurobi_phase_scalar_from_yaml(yaml_path, "haul_distance_scale", nested_phase_key,
-                                              legacy_nested_phase_key, "haul_distance_scale", flat_phase_key);
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "haul_distance_scale", nested_phase_key);
 }
 
 double read_noport_haul_distance_scale_from_yaml(const char *yaml_path) {

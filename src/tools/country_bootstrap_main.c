@@ -35,7 +35,6 @@ static void die_usage(const char *argv0) {
             "\n"
             "Options:\n"
             "  --waypoint-file <datafile.dat> Optional DAT file for manual WAYP seeds\n"
-            "  --dat <datafile.dat>        Deprecated alias for --waypoint-file\n"
             "  --port-file <datafile.dat>  DAT file used to import PORT rows into DB\n"
             "  --boat-file <datafile.dat>  DAT file used to import BOAT rows into DB\n"
             "  --skip-waypoints            Only load coastline, ports, and boats\n"
@@ -826,8 +825,6 @@ int country_bootstrap_run(int argc, char **argv) {
         } else if (strcmp(argv[i], "--coastline-file") == 0 && i + 1 < argc) {
             coastline_file_path = argv[++i];
         } else if (strcmp(argv[i], "--waypoint-file") == 0 && i + 1 < argc) {
-            waypoint_file = argv[++i];
-        } else if (strcmp(argv[i], "--dat") == 0 && i + 1 < argc) {
             waypoint_file = argv[++i];
         } else if (strcmp(argv[i], "--port-file") == 0 && i + 1 < argc) {
             port_file = argv[++i];
