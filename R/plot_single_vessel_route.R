@@ -328,11 +328,19 @@ subtitle_text <- sprintf(
   capacity / 1000
 )
 
+title_text <- describe_single_route_title(survey_file)
+variant_text <- title_case_variant(variant_label)
+subtitle_parts <- c(boat_name)
+if (!is.null(variant_text) && !identical(title_text, "Observed Survey Route 2023")) {
+  subtitle_parts <- c(variant_text)
+}
+subtitle_parts <- c(subtitle_parts, subtitle_text)
+
 p <- p +
   coord_fixed_for_lat(route_path$lat, fallback_lat = 65.0) +
   labs(
-    title = sprintf("Survey Route: %s", boat_name),
-    subtitle = sprintf("%s | %s", tools::toTitleCase(gsub("[-_]", " ", variant_label)), subtitle_text),
+    title = title_text,
+    subtitle = paste(subtitle_parts, collapse = " | "),
     x = NULL,
     y = NULL
   )

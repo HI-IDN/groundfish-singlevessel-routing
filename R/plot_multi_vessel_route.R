@@ -360,7 +360,7 @@ p <- base_coastline_plot(coastline) +
   ) +
   coord_fixed_for_lat(route_path$lat, fallback_lat = 65.0) +
   labs(
-    title = "Combined Survey Routes",
+    title = "Observed Survey Routes 2023",
     subtitle = sprintf(
       "Transit %.0f nm | Total %.0f nm | Stations %d | Segments %d | Capacity: %s",
       total_transit_distance_nm,

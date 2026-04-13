@@ -80,6 +80,51 @@ resolve_summary_final_variant <- function(doc) {
   final_name
 }
 
+title_case_variant <- function(x) {
+  if (is.null(x) || !nzchar(x)) return(NULL)
+  tools::toTitleCase(gsub("[-_]", " ", x))
+}
+
+describe_solution_family <- function(path) {
+  parts <- strsplit(normalizePath(path, winslash = "/", mustWork = FALSE), "/", fixed = TRUE)[[1]]
+  if (!length(parts)) return(NULL)
+  if ("sol" %in% parts) {
+    sol_idx <- match("sol", parts)
+    if (!is.na(sol_idx) && sol_idx < length(parts)) return(parts[sol_idx + 1])
+  }
+  NULL
+}
+
+describe_single_route_title <- function(path) {
+  file_name <- basename(path)
+  family <- describe_solution_family(path)
+
+  if (grepl("^boat[0-9]+\\.json$", file_name, ignore.case = TRUE)) {
+    return("Observed Survey Route 2023")
+  }
+  if (identical(file_name, "noport.json")) {
+    return("No-Port MIP Model")
+  }
+  if (identical(file_name, "init.json")) {
+    if (identical(family, "noport")) return("Initialization from No-Port Solution")
+    if (identical(family, "nn")) return("Nearest-Neighbor Initialization")
+    if (identical(family, "ge")) return("Greedy-Edge Initialization")
+    if (identical(family, "ci")) return("Cheapest-Insertion Initialization")
+    if (identical(family, "fixedport")) return("Initialization from Fixed-Port Solution")
+    return("Initialization")
+  }
+  if (identical(file_name, "sweep.json")) {
+    if (identical(family, "noport")) return("Sweep from No-Port Initialization")
+    if (identical(family, "nn")) return("Sweep from Nearest-Neighbor Initialization")
+    if (identical(family, "ge")) return("Sweep from Greedy-Edge Initialization")
+    if (identical(family, "ci")) return("Sweep from Cheapest-Insertion Initialization")
+    if (identical(family, "fixedport")) return("Sweep from Fixed-Port Initialization")
+    return("Sweep")
+  }
+
+  title_case_variant(tools::file_path_sans_ext(file_name))
+}
+
 extract_solution_distance <- function(solution) {
   distance_block <- solution$distance_nm
   if (is.null(distance_block)) {
