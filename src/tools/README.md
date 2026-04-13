@@ -24,4 +24,5 @@ Current examples in this folder include:
 - `distance_builder.c`
 - `historical_survey_import.c`
 - `export_survey_json.c`
+- `export_fixedport_candidates.c`
 - `country_bootstrap_main.c`

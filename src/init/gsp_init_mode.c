@@ -680,12 +680,36 @@ static void write_solution_section(FILE *fp, const char *label,
         return;
     }
 
-    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_start_loc_id);
-    for (int s = 0; s < sol->segment_count - 1; s++) {
-        (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap,
-                               sol->tour[sol->segment_ends[s]]);
+    {
+        int *segment_end_location_ids = NULL;
+        segment_end_location_ids = (int*)malloc((size_t)sol->segment_count * sizeof(int));
+        if (!segment_end_location_ids) {
+            free(location_segments);
+            free(station_segments);
+            free(seen_waypoint_location_ids);
+            free(segment_breakdowns);
+            fprintf(stderr, "ERROR: Failed to allocate dock boundary buffer\n");
+            return;
+        }
+        for (int s = 0; s < sol->segment_count; s++) {
+            segment_end_location_ids[s] =
+                (s == sol->segment_count - 1) ? boat_end_loc_id : sol->tour[sol->segment_ends[s]];
+        }
+        if (!gsp_build_dock_location_ids_from_segment_ends(boat_start_loc_id,
+                                                           segment_end_location_ids,
+                                                           sol->segment_count,
+                                                           &dock_location_ids,
+                                                           &dock_n)) {
+            free(segment_end_location_ids);
+            free(location_segments);
+            free(station_segments);
+            free(seen_waypoint_location_ids);
+            free(segment_breakdowns);
+            fprintf(stderr, "ERROR: Failed to build dock_location_ids\n");
+            return;
+        }
+        free(segment_end_location_ids);
     }
-    (void)append_int_local(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id);
 
     for (int s = 0; s < sol->segment_count; s++) {
         int start = sol->segment_starts[s];

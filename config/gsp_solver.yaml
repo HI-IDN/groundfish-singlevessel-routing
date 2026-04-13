@@ -11,6 +11,7 @@ boat:
 # Phase 0: Initialization Strategies
 init:
   target_catch_slack_kg: 1000            # Reserve slack so target capacity stays below raw capacity
+  fixedport_min_segment_catch_kg: 1000   # Survey segments below this catch are ignored when deriving fixed-port candidates
   strategies:
     - noport                             # No-port MIP station ordering
     - fixedport                          # Fixed port-order MIP
@@ -61,4 +62,3 @@ database:
 output:
   verbose: true                          # Verbose stdout logging
   json_format: true                      # Output results as JSON
-

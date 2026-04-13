@@ -1548,12 +1548,33 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
     }
     fprintf(fp, "      ],\n");
 
-    fprintf(fp, "      \"dock_location_ids\": [");
-    fprintf(fp, "%d", boat->boat_loc_id);
-    for (int s = 0; s < sol->segment_count - 1; s++) {
-        fprintf(fp, ", %d", sol->tour[sol->segment_ends[s]]);
+    {
+        int *segment_end_location_ids = NULL;
+        int *dock_location_ids = NULL;
+        int dock_count = 0;
+        segment_end_location_ids = (int*)malloc((size_t)sol->segment_count * sizeof(int));
+        if (!segment_end_location_ids) return;
+        for (int s = 0; s < sol->segment_count; s++) {
+            segment_end_location_ids[s] =
+                (s == sol->segment_count - 1) ? boat->boat_loc_id : sol->tour[sol->segment_ends[s]];
+        }
+        if (!gsp_build_dock_location_ids_from_segment_ends(boat->boat_loc_id,
+                                                           segment_end_location_ids,
+                                                           sol->segment_count,
+                                                           &dock_location_ids,
+                                                           &dock_count)) {
+            free(segment_end_location_ids);
+            return;
+        }
+        free(segment_end_location_ids);
+        fprintf(fp, "      \"dock_location_ids\": [");
+        for (int i = 0; i < dock_count; i++) {
+            if (i) fprintf(fp, ", ");
+            fprintf(fp, "%d", dock_location_ids[i]);
+        }
+        fprintf(fp, "],\n");
+        free(dock_location_ids);
     }
-    fprintf(fp, ", %d],\n", boat->boat_loc_id);
 
     fprintf(fp, "      \"unique_waypoint_location_ids\": [");
     for (int i = 0; i < unique_waypoint_count; i++) {

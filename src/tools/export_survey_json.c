@@ -678,10 +678,13 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
 
     memset(&total_breakdown, 0, sizeof(total_breakdown));
 
-    /* Dock annotations: boat start, visited port boundaries, boat end. */
+    /* Dock annotations are built from the ordered segment end docks so all
+     * repeated boundary visits are preserved consistently across exporters.
+     */
     int *dock_location_ids = NULL;
-    int dock_n = 0, dock_cap = 0;
-    if (!append_int(&dock_location_ids, &dock_n, &dock_cap, boat_start_loc_id)) {
+    int dock_n = 0;
+    int *segment_end_location_ids = (int*)malloc((size_t)segment_count * sizeof(int));
+    if (!segment_end_location_ids) {
         free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids);
         free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch);
         free(force_append_boat_end_station); free(segment_distance_nm);
@@ -694,32 +697,8 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
             1, a, num_nodes, types, resolved_loc_ids, boat_start_loc_id, boat_end_loc_id);
         int end_loc = resolve_segment_boundary_loc(
             0, b, num_nodes, types, resolved_loc_ids, boat_start_loc_id, boat_end_loc_id);
-
-        int start_type = resolve_segment_boundary_type(1, a, num_nodes, types, resolved_loc_ids);
-        if (start_type == NODE_TYPE_PORT) {
-            if (dock_n == 0 || dock_location_ids[dock_n - 1] != start_loc) {
-                if (!append_int(&dock_location_ids, &dock_n, &dock_cap, start_loc)) {
-                    free(dock_location_ids);
-                    free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids);
-                    free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch);
-                    free(force_append_boat_end_station); free(segment_distance_nm);
-                    return 1;
-                }
-            }
-        }
-
-        int end_type = resolve_segment_boundary_type(0, b, num_nodes, types, resolved_loc_ids);
-        if (end_type == NODE_TYPE_PORT) {
-            if (dock_n == 0 || dock_location_ids[dock_n - 1] != end_loc) {
-                if (!append_int(&dock_location_ids, &dock_n, &dock_cap, end_loc)) {
-                    free(dock_location_ids);
-                    free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids);
-                    free(catch_amounts); free(seg_start); free(seg_end); free(segment_length); free(segment_catch);
-                    free(force_append_boat_end_station); free(segment_distance_nm);
-                    return 1;
-                }
-            }
-        }
+        (void)start_loc;
+        segment_end_location_ids[s] = end_loc;
 
         int prev = start_loc;
         for (int i = a; i <= b; i++) {
@@ -745,15 +724,18 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         total_distance += segment_distance_nm[s];
     }
 
-    if (dock_n == 0 || dock_location_ids[dock_n - 1] != boat_end_loc_id) {
-        if (!append_int(&dock_location_ids, &dock_n, &dock_cap, boat_end_loc_id)) {
-            free(dock_location_ids);
-            free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
-            free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station);
-            free(segment_breakdowns); free(segment_distance_nm);
-            return 1;
-        }
+    if (!gsp_build_dock_location_ids_from_segment_ends(boat_start_loc_id,
+                                                       segment_end_location_ids,
+                                                       segment_count,
+                                                       &dock_location_ids,
+                                                       &dock_n)) {
+        free(segment_end_location_ids);
+        free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
+        free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station);
+        free(segment_breakdowns); free(segment_distance_nm);
+        return 1;
     }
+    free(segment_end_location_ids);
 
     /* Unique waypoint IDs present in expanded tour chains. */
     int *unique_waypoint_location_ids = NULL;

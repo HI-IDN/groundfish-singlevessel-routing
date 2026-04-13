@@ -106,4 +106,10 @@ void gsp_write_summary_json(FILE *fp,
                             const gsp_summary_json_t *summary,
                             int trailing_comma);
 
+int gsp_build_dock_location_ids_from_segment_ends(int boat_start_loc_id,
+                                                  const int *segment_end_location_ids,
+                                                  int segment_count,
+                                                  int **out_dock_location_ids,
+                                                  int *out_dock_location_count);
+
 #endif

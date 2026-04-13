@@ -24,8 +24,11 @@ SWEEP_INIT_RAW := $(or $(INIT),$(init),noport)
 SWEEP_INIT := $(if $(filter gi,$(SWEEP_INIT_RAW)),ge,$(SWEEP_INIT_RAW))
 VALID_INIT_TYPES := nn ge ci noport fixedport
 EXPERIMENT_SWEEP_METHODS := noport nn ge ci
+FIXEDPORT_CANDIDATE_JSON = ../dat/candidate_ports.json
+SURVEY_DAT = ../dat/survey2023spring.dat
+SURVEY_BOAT_JSONS = ../sol/survey/boat1.json ../sol/survey/boat2.json ../sol/survey/boat3.json ../sol/survey/boat4.json
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey init noport sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates init noport sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
 
 all: build
 
@@ -70,6 +73,18 @@ preprocessing: prepare-routing-data survey
 
 survey: $(BUILD_DIR)/CMakeCache.txt
 	@cd $(BUILD_DIR) && $(MAKE) survey
+
+../sol/survey/boat%.json: $(SURVEY_DAT) $(COUNTRY_DB) $(BUILD_DIR)/CMakeCache.txt
+	@mkdir -p ../sol/survey
+	@cd $(BUILD_DIR) && $(MAKE) historical_survey
+	@bash -lc 'cd "$(BUILD_DIR)/common" && ../historical_survey "$(SURVEY_DAT)" "$(COUNTRY_DB)" "../sol/survey" "$*"'
+
+$(FIXEDPORT_CANDIDATE_JSON): $(SURVEY_BOAT_JSONS) $(CONFIG_YAML) $(BUILD_DIR)/CMakeCache.txt
+	@mkdir -p ../dat
+	@cd $(BUILD_DIR) && $(MAKE) survey_fixedport_candidates
+	@bash -lc 'cd "$(BUILD_DIR)" && ./survey_fixedport_candidates "$(CONFIG_YAML)" "$(COUNTRY_DB)" "$(FIXEDPORT_CANDIDATE_JSON)" "../sol/survey/boat1.json" "../sol/survey/boat2.json" "../sol/survey/boat3.json" "../sol/survey/boat4.json"'
+
+fixedport_candidates: $(FIXEDPORT_CANDIDATE_JSON)
 
 noport: ../sol/noport/noport.json
 
@@ -197,6 +212,7 @@ help:
 	@echo "Other targets:"
 	@echo "  make -C src build"
 	@echo "  make -C src survey"
+	@echo "  make -C src fixedport_candidates"
 	@echo "  make -C src experiments"
 	@echo "  make -C src plot"
 	@echo "  make -C src plot-routes"

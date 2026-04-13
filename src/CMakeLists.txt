@@ -341,6 +341,30 @@ target_include_directories(historical_survey PRIVATE
     ${SQLITE3_INCLUDE_DIRS}
 )
 
+add_executable(survey_fixedport_candidates
+    tools/export_fixedport_candidates.c
+)
+
+target_link_libraries(survey_fixedport_candidates
+    ${SQLITE3_LIBRARIES}
+    m
+)
+
+target_include_directories(survey_fixedport_candidates PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_custom_target(fixedport_candidates
+    COMMAND survey_fixedport_candidates ${CMAKE_CURRENT_SOURCE_DIR}/../config/gsp_solver.yaml ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp.db ${CMAKE_CURRENT_SOURCE_DIR}/../dat/candidate_ports.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey/boat1.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey/boat2.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey/boat3.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey/boat4.json
+    DEPENDS survey_fixedport_candidates
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Aggregate fixed-port candidate sequence from survey boat JSONs"
+)
+
 add_executable(gsp_country
     tools/country_bootstrap_main.c
     common/dat_parser.c
@@ -364,7 +388,7 @@ target_include_directories(gsp_country PRIVATE
 # Install
 # ============================================================
 
-install(TARGETS gsp historical_survey gsp_country gsp_stations gsp_distances gsp_prepare_routing_data
+install(TARGETS gsp historical_survey survey_fixedport_candidates gsp_country gsp_stations gsp_distances gsp_prepare_routing_data
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )
 

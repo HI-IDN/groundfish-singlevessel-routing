@@ -1,5 +1,7 @@
 #include "../include/json_utils.h"
 
+#include <stdlib.h>
+
 static void write_double_array(FILE *fp, const double *values, int count) {
     for (int i = 0; i < count; i++) {
         if (i) fprintf(fp, ", ");
@@ -248,4 +250,30 @@ void gsp_write_summary_json(FILE *fp,
                                    summary->mip_gap_mean, summary->mip_gap_max, 0);
     }
     fprintf(fp, "%s}%s\n", base, trailing_comma ? "," : "");
+}
+
+int gsp_build_dock_location_ids_from_segment_ends(int boat_start_loc_id,
+                                                  const int *segment_end_location_ids,
+                                                  int segment_count,
+                                                  int **out_dock_location_ids,
+                                                  int *out_dock_location_count) {
+    int *dock_location_ids = NULL;
+
+    if (out_dock_location_ids) *out_dock_location_ids = NULL;
+    if (out_dock_location_count) *out_dock_location_count = 0;
+    if (segment_count < 0) return 0;
+    if (segment_count > 0 && !segment_end_location_ids) return 0;
+
+    dock_location_ids = (int*)malloc((size_t)(segment_count + 1) * sizeof(int));
+    if (!dock_location_ids) return 0;
+
+    dock_location_ids[0] = boat_start_loc_id;
+    for (int s = 0; s < segment_count; s++) {
+        dock_location_ids[s + 1] = segment_end_location_ids[s];
+    }
+
+    if (out_dock_location_ids) *out_dock_location_ids = dock_location_ids;
+    else free(dock_location_ids);
+    if (out_dock_location_count) *out_dock_location_count = segment_count + 1;
+    return 1;
 }
