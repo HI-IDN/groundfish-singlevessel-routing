@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Compare initialization (and optionally sweep) transit distances against the
-legacy baselines recorded in docs/07-results.md.
+Compare initialization and sweep transit distances against the
+legacy reference values recorded in docs/07-results.md.
 
 Usage (from repo root):
     python debug/compare_experimental_results.py.py
@@ -11,9 +11,11 @@ The script reads:
   sol/<strategy>/init.json   -- always
   sol/<strategy>/sweep.json  -- if present (skipped with a note when missing)
 
-It parses the legacy "With port" baseline values straight from the
-docs/07-results.md Baseline distances table so the comparison stays
-in sync when the doc is edited.
+It parses:
+  - init baselines from the docs/07-results.md Baseline distances table
+  - sweep baselines from the best, mean, and worst `Final distance`
+    values in each docs/07-results.md `MH-<init>` sweep table
+so the comparison stays in sync when the doc is edited.
 
 Output is written to --out (default: debug/compare_legacy.md) and also
 printed to stdout.
@@ -68,7 +70,7 @@ def get_transit(data: dict) -> float | None:
     return variant.get("distance_nm", {}).get("grand_total", {}).get("transit")
 
 
-def parse_doc_baselines(doc_path: Path) -> dict[str, float]:
+def parse_doc_init_baselines(doc_path: Path) -> dict[str, float]:
     """
     Parse the 'Baseline distances' table from docs/07-results.md.
     Returns {doc_label: with_port_nm} for rows where With port is a number.
@@ -110,6 +112,92 @@ def parse_doc_baselines(doc_path: Path) -> dict[str, float]:
     return baselines
 
 
+def parse_doc_sweep_baselines(doc_path: Path) -> dict[str, dict[str, float]]:
+    """
+    Parse best/mean/worst 'Final distance' from each strategy section table:
+      ## MH-NN
+      ## MH-GE
+      ## MH-CI
+
+    Returns {doc_label: {"best": ..., "mean": ..., "worst": ...}}.
+    """
+    collected: dict[str, list[float]] = {}
+    current_label: str | None = None
+    in_table = False
+    final_distance_col: int | None = None
+
+    if not doc_path.exists():
+        print(f"  WARNING: doc not found: {doc_path}", file=sys.stderr)
+        return baselines
+
+    strategy_labels = {s["doc_label"] for s in STRATEGIES}
+
+    with open(doc_path, encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+
+            heading = re.match(r"^##\s+(MH-[A-Z]+)\s*$", line)
+            if heading:
+                label = heading.group(1)
+                current_label = label if label in strategy_labels else None
+                if current_label is not None and current_label not in collected:
+                    collected[current_label] = []
+                in_table = False
+                final_distance_col = None
+                continue
+
+            if current_label is None:
+                continue
+
+            if re.match(r"^##\s+", line):
+                current_label = None
+                in_table = False
+                final_distance_col = None
+                continue
+
+            if not in_table and line.startswith("|") and "Final distance" in line:
+                cols = [c.strip() for c in line.strip("|").split("|")]
+                for idx, col in enumerate(cols):
+                    if col.lower() == "final distance":
+                        final_distance_col = idx
+                        break
+                in_table = final_distance_col is not None
+                continue
+
+            if not in_table:
+                continue
+
+            if not line.startswith("|"):
+                in_table = False
+                final_distance_col = None
+                continue
+
+            if line.startswith("| ---") or line.startswith("|---"):
+                continue
+
+            cols = [c.strip() for c in line.strip("|").split("|")]
+            if final_distance_col is None or final_distance_col >= len(cols):
+                continue
+
+            try:
+                value = float(cols[final_distance_col].replace(",", ""))
+            except ValueError:
+                continue
+
+            collected[current_label].append(value)
+
+    baselines: dict[str, dict[str, float]] = {}
+    for label, values in collected.items():
+        if not values:
+            continue
+        baselines[label] = {
+            "best": min(values),
+            "mean": sum(values) / len(values),
+            "worst": max(values),
+        }
+    return baselines
+
+
 def fmt(val: float | None, decimals: int = 2) -> str:
     if val is None:
         return "—"
@@ -135,7 +223,8 @@ def fmt_pct(pct: float | None) -> str:
 # ---------------------------------------------------------------------------
 
 def build_report(sol_dir: Path, doc_path: Path) -> str:
-    baselines = parse_doc_baselines(doc_path)
+    init_baselines = parse_doc_init_baselines(doc_path)
+    sweep_baselines = parse_doc_sweep_baselines(doc_path)
 
     rows_init: list[dict] = []
     rows_sweep: list[dict] = []
@@ -160,13 +249,13 @@ def build_report(sol_dir: Path, doc_path: Path) -> str:
                         haul_values.append(h)
                         break
 
-        legacy = baselines.get(label)
-        delta_init = (init_transit - legacy) if (init_transit is not None and legacy is not None) else None
-        pct_init = (delta_init / legacy * 100) if (delta_init is not None and legacy) else None
+        init_legacy = init_baselines.get(label)
+        delta_init = (init_transit - init_legacy) if (init_transit is not None and init_legacy is not None) else None
+        pct_init = (delta_init / init_legacy * 100) if (delta_init is not None and init_legacy) else None
 
         rows_init.append({
             "strategy": label,
-            "legacy":   legacy,
+            "legacy":   init_legacy,
             "current":  init_transit,
             "delta":    delta_init,
             "pct":      pct_init,
@@ -175,15 +264,23 @@ def build_report(sol_dir: Path, doc_path: Path) -> str:
         # --- sweep (optional) ---
         sweep_data = load_json(sol_dir / key / "sweep.json")
         sweep_transit = get_transit(sweep_data)
-        delta_sweep = (sweep_transit - legacy) if (sweep_transit is not None and legacy is not None) else None
-        pct_sweep = (delta_sweep / legacy * 100) if (delta_sweep is not None and legacy) else None
+        sweep_legacy = sweep_baselines.get(label, {})
+        sweep_best = sweep_legacy.get("best")
+        sweep_mean = sweep_legacy.get("mean")
+        sweep_worst = sweep_legacy.get("worst")
 
         rows_sweep.append({
             "strategy": label,
-            "legacy":   legacy,
+            "best":     sweep_best,
+            "mean":     sweep_mean,
+            "worst":    sweep_worst,
             "current":  sweep_transit,
-            "delta":    delta_sweep,
-            "pct":      pct_sweep,
+            "delta_best":  (sweep_transit - sweep_best) if (sweep_transit is not None and sweep_best is not None) else None,
+            "pct_best":    ((sweep_transit - sweep_best) / sweep_best * 100) if (sweep_transit is not None and sweep_best) else None,
+            "delta_mean":  (sweep_transit - sweep_mean) if (sweep_transit is not None and sweep_mean is not None) else None,
+            "pct_mean":    ((sweep_transit - sweep_mean) / sweep_mean * 100) if (sweep_transit is not None and sweep_mean) else None,
+            "delta_worst": (sweep_transit - sweep_worst) if (sweep_transit is not None and sweep_worst is not None) else None,
+            "pct_worst":   ((sweep_transit - sweep_worst) / sweep_worst * 100) if (sweep_transit is not None and sweep_worst) else None,
             "missing":  sweep_data is None,
         })
 
@@ -210,9 +307,11 @@ def build_report(sol_dir: Path, doc_path: Path) -> str:
         "",
         "## What is being compared",
         "",
-        "- **Doc baseline** — the *With port* value in the `docs/07-results.md`",
+        "- **Doc baseline for init** — the *With port* value in the `docs/07-results.md`",
         "  Baseline distances table. This is the **transit-only** component of the",
         "  initial route (`grand_total.transit` nm), not the total distance.",
+        "- **Doc sweep references** — the best, mean, and worst `Final distance` values",
+        "  reported in the matching `## MH-<init>` section in `docs/07-results.md`.",
         "- **Current init** — `distance_nm.grand_total.transit` from the",
         "  `capacity-feasible` variant in each `sol/<strategy>/init.json`.",
         "- **Current sweep** — same field from `sol/<strategy>/sweep.json`",
@@ -238,20 +337,23 @@ def build_report(sol_dir: Path, doc_path: Path) -> str:
     lines += [
         "",
         sweep_note,
-        "## Sweep: transit distance vs. legacy baseline",
+        "## Sweep: transit distance vs. legacy sweep range",
         "",
-        "| Strategy | Doc baseline (nm) | Post-sweep (nm) | Δ (nm) | Δ (%) |",
-        "|---------:|------------------:|----------------:|-------:|------:|",
+        "| Strategy | Legacy best (nm) | Legacy mean (nm) | Legacy worst (nm) | Post-sweep (nm) | Δ vs best | Δ vs mean | Δ vs worst |",
+        "|---------:|-----------------:|-----------------:|------------------:|----------------:|----------:|----------:|-----------:|",
     ]
 
     for r in rows_sweep:
         current_str = "*(pending)*" if r["missing"] else fmt(r["current"])
         lines.append(
             f"| {r['strategy']} "
-            f"| {fmt(r['legacy'])} "
+            f"| {fmt(r['best'])} "
+            f"| {fmt(r['mean'])} "
+            f"| {fmt(r['worst'])} "
             f"| {current_str} "
-            f"| {fmt_delta(r['delta'])} "
-            f"| {fmt_pct(r['pct'])} |"
+            f"| {fmt_delta(r['delta_best'])} ({fmt_pct(r['pct_best'])}) "
+            f"| {fmt_delta(r['delta_mean'])} ({fmt_pct(r['pct_mean'])}) "
+            f"| {fmt_delta(r['delta_worst'])} ({fmt_pct(r['pct_worst'])}) |"
         )
 
     lines += [
@@ -275,7 +377,7 @@ def build_report(sol_dir: Path, doc_path: Path) -> str:
             f"`solution.capacity-feasible.distance_nm.grand_total.transit` = {sweep_val} |"
         )
 
-    lines.append(f"| `{doc_path}` | Baseline distances table, *With port* column |")
+    lines.append(f"| `{doc_path}` | Baseline distances table, *With port* column; `MH-*` tables, best/mean/worst `Final distance` |")
     lines.append("")
 
     return "\n".join(lines)
