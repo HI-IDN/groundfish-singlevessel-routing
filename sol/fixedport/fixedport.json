@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "fixedport_debug_0.1",
-    "timestamp": "1776084776",
+    "timestamp": "1776085850",
     "mode": "fixedport_debug",
     "strategy": "fixedport",
     "boat_id": 2,
@@ -12,14 +12,14 @@
   },
   "problem": {
     "num_stations": 50,
-    "num_fixed_port_visits": 13,
+    "num_fixed_port_visits": 12,
     "capacity": 45000,
     "sampled_station_ids": [143, 247, 42, 393, 567, 531, 221, 125, 53, 283, 326, 380, 573, 57, 275, 397, 77, 242, 130, 513, 354, 72, 89, 410, 68, 492, 569, 233, 223, 33, 250, 483, 199, 572, 356, 519, 532, 127, 442, 148, 164, 297, 204, 568, 538, 505, 358, 542, 417, 457],
-    "candidate_port_location_ids": [21, 13, 19, 5, 19, 19, 7, 5, 5, 11, 11, 1, 1]
+    "candidate_port_location_ids": [21, 13, 19, 5, 19, 19, 7, 5, 11, 11, 1, 1]
   },
   "port_visit_summary": [
     {"location_id": 1, "port_id": 1, "name": "Vestmannaeyjar", "visit_count": 2},
-    {"location_id": 5, "port_id": 5, "name": "Hafnarfjörður", "visit_count": 3},
+    {"location_id": 5, "port_id": 5, "name": "Hafnarfjörður", "visit_count": 2},
     {"location_id": 7, "port_id": 7, "name": "Ólafsvík", "visit_count": 1},
     {"location_id": 11, "port_id": 11, "name": "Seyðisfjörður", "visit_count": 2},
     {"location_id": 13, "port_id": 13, "name": "Akureyri", "visit_count": 1},
@@ -30,7 +30,6 @@
     "fixedport-capacity-feasible": {
   "variant": "fixedport-capacity-feasible",
 "tour_segments_location_ids": [
-  [5],
   [5],
   [5, 1038, 1039, 1020, 1021, 969, 968, 1064, 1065, 939, 938, 1080, 1081, 1],
   [1],
@@ -45,10 +44,9 @@
   [7, 1505, 1504, 604, 605, 5],
   [5]
 ],
-  "dock_location_ids": [5, 5, 5, 1, 1, 11, 11, 13, 21, 19, 19, 19, 7, 5, 5],
+  "dock_location_ids": [5, 5, 1, 1, 11, 11, 13, 21, 19, 19, 19, 7, 5, 5],
   "unique_waypoint_location_ids": [1267, 1424, 1376, 1258, 1369, 1366, 1250, 1363, 1354, 1218, 1295, 1505, 1504],
 "tour_segments_station_ids": [
-  [],
   [],
   [492, 483, 457, 505, 442, 513],
   [],
@@ -63,14 +61,14 @@
   [275],
   []
 ],
-  "tour_length": [2, 2, 8, 2, 14, 2, 15, 2, 9, 2, 2, 13, 3, 2],
-  "segment_count": 14,
-  "segment_catch_amount": [0, 0, 5670, 0, 12812, 0, 6005, 0, 3763, 0, 0, 8799, 1146, 0],
+  "tour_length": [2, 8, 2, 14, 2, 15, 2, 9, 2, 2, 13, 3, 2],
+  "segment_count": 13,
+  "segment_catch_amount": [0, 5670, 0, 12812, 0, 6005, 0, 3763, 0, 0, 8799, 1146, 0],
   "distance_nm": {
     "segment": {
-      "transit": [0.00, 0.00, 221.19, 0.00, 378.04, 0.00, 396.60, 43.55, 238.48, 0.00, 0.00, 275.36, 87.24, 0.00],
-      "haul": [0.00, 0.00, 24.15, 0.00, 45.26, 0.00, 50.39, 0.00, 27.83, 0.00, 0.00, 43.65, 4.04, 0.00],
-      "total": [0.00, 0.00, 245.34, 0.00, 423.30, 0.00, 446.99, 43.55, 266.31, 0.00, 0.00, 319.01, 91.28, 0.00]
+      "transit": [0.00, 221.19, 0.00, 378.04, 0.00, 396.60, 43.55, 238.48, 0.00, 0.00, 275.36, 87.24, 0.00],
+      "haul": [0.00, 24.15, 0.00, 45.26, 0.00, 50.39, 0.00, 27.83, 0.00, 0.00, 43.65, 4.04, 0.00],
+      "total": [0.00, 245.34, 0.00, 423.30, 0.00, 446.99, 43.55, 266.31, 0.00, 0.00, 319.01, 91.28, 0.00]
     },
     "grand_total": {
       "transit": 1640.46,
@@ -93,21 +91,31 @@
       "final": 1835.78
     },
     "runtime_seconds": {
-      "preprocessing": 1.268000,
-      "solution": [132.026000],
+      "preprocessing": 1.248000,
+      "solution": [107.967000],
       "postprocessing": 0.000000,
-      "grandtotal": 133.411000
+      "grandtotal": 109.318000
     },
     "mip": {
       "solves": 1,
       "runtime_seconds": {
-        "mean": 132.026000,
-        "max": 132.026000
+        "mean": 107.967000,
+        "max": 107.967000
       },
       "gap_percent": {
         "mean": 0.000000,
         "max": 0.000000
       }
     }
+  }
+,
+  "solver_stats": {
+    "status": "optimal",
+    "gurobi_status": "OPTIMAL",
+    "gurobi_status_code": 2,
+    "runtime_seconds": 107.967000,
+    "total_runtime_seconds": 109.318000,
+    "method": "fixedport_mip",
+    "mip_gap": 0.000000
   }
 }
