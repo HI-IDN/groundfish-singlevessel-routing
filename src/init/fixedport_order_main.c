@@ -627,6 +627,7 @@ static int write_fixedport_json(sqlite3 *db,
     int *segment_end_docks = NULL;
     int *tour_lengths = NULL;
     int *dock_location_ids = NULL;
+    int *port_visit_counts = NULL;
     int dock_location_count = 0;
     int_vec_t unique_waypoints;
     gsp_distance_breakdown_t grand_total = {0.0, 0.0, 0.0};
@@ -649,7 +650,8 @@ static int write_fixedport_json(sqlite3 *db,
     segment_catches = (int*)calloc((size_t)segment_count, sizeof(int));
     segment_end_docks = (int*)calloc((size_t)segment_count, sizeof(int));
     tour_lengths = (int*)calloc((size_t)segment_count, sizeof(int));
-    if (!segments || !location_views || !station_views || !segment_breakdowns || !segment_catches || !segment_end_docks || !tour_lengths) goto fail;
+    port_visit_counts = (int*)calloc((size_t)port_lookup_count, sizeof(int));
+    if (!segments || !location_views || !station_views || !segment_breakdowns || !segment_catches || !segment_end_docks || !tour_lengths || !port_visit_counts) goto fail;
 
     for (int s = 0; s < segment_count; s++) route_segment_init(&segments[s]);
     if (!segment_int_vec_push_if_changed(&segments[0].locations, app->boat.location_id)) goto fail;
@@ -751,13 +753,28 @@ static int write_fixedport_json(sqlite3 *db,
     }
     fprintf(fp, "]\n");
     fprintf(fp, "  },\n");
-    fprintf(fp, "  \"fixed_port_visits\": [\n");
     for (int i = 0; i < candidate_port_count; i++) {
-        const port_info_t *port = find_port_info(port_lookup, port_lookup_count, candidate_ports[i]);
-        fprintf(fp, "    {\"visit\": %d, \"location_id\": %d, \"port_id\": %d, \"name\": \"%s\"}%s\n",
-                i + 1, candidate_ports[i], port ? port->port_id : 0,
-                (port && port->name) ? port->name : "",
-                (i + 1 < candidate_port_count) ? "," : "");
+        for (int j = 0; j < port_lookup_count; j++) {
+            if (port_lookup[j].location_id == candidate_ports[i]) {
+                port_visit_counts[j]++;
+                break;
+            }
+        }
+    }
+    fprintf(fp, "  \"port_visit_summary\": [\n");
+    {
+        int emitted = 0;
+        for (int i = 0; i < port_lookup_count; i++) {
+            if (port_visit_counts[i] <= 0) continue;
+            if (emitted > 0) fprintf(fp, ",\n");
+            fprintf(fp, "    {\"location_id\": %d, \"port_id\": %d, \"name\": \"%s\", \"visit_count\": %d}",
+                    port_lookup[i].location_id,
+                    port_lookup[i].port_id,
+                    port_lookup[i].name ? port_lookup[i].name : "",
+                    port_visit_counts[i]);
+            emitted++;
+        }
+        if (emitted > 0) fprintf(fp, "\n");
     }
     fprintf(fp, "  ],\n");
     fprintf(fp, "  \"solution\": {\n");
@@ -813,6 +830,7 @@ static int write_fixedport_json(sqlite3 *db,
     free(segment_end_docks);
     free(tour_lengths);
     free(dock_location_ids);
+    free(port_visit_counts);
     int_vec_free(&unique_waypoints);
     return 1;
 
@@ -827,6 +845,7 @@ fail:
     free(segment_end_docks);
     free(tour_lengths);
     free(dock_location_ids);
+    free(port_visit_counts);
     int_vec_free(&unique_waypoints);
     return 0;
 }

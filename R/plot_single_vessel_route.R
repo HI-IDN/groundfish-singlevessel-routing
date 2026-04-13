@@ -331,10 +331,29 @@ subtitle_text <- sprintf(
 title_text <- describe_single_route_title(survey_file)
 variant_text <- title_case_variant(variant_label)
 subtitle_parts <- c(boat_name)
-if (!is.null(variant_text) && !identical(title_text, "Observed Survey Route 2023")) {
+if (identical(basename(survey_file), "fixedport.json")) {
+  mip_gap <- survey$summary$mip$gap_percent$max
+  mip_label <- if (!is.null(mip_gap) && length(mip_gap) > 0 && !is.na(mip_gap[[1]]) && as.numeric(mip_gap[[1]]) == 0) {
+    "Optimal"
+  } else {
+    "Incumbent"
+  }
+  title_text <- "Capacity MIP Based on Fixed Port Visits from 2023 Survey"
+  subtitle_text <- sprintf(
+    "%s | Transit: %.0f nm | Total: %.0f nm | Stations: %d | Segments: %d",
+    mip_label,
+    transit_distance,
+    total_distance,
+    num_stations,
+    segment_count
+  )
+  subtitle_parts <- c(subtitle_text)
+} else if (!is.null(variant_text) && !identical(title_text, "Observed Survey Route 2023")) {
   subtitle_parts <- c(variant_text)
+  subtitle_parts <- c(subtitle_parts, subtitle_text)
+} else {
+  subtitle_parts <- c(subtitle_parts, subtitle_text)
 }
-subtitle_parts <- c(subtitle_parts, subtitle_text)
 
 p <- p +
   coord_fixed_for_lat(route_path$lat, fallback_lat = 65.0) +

@@ -105,6 +105,9 @@ describe_single_route_title <- function(path) {
   if (identical(file_name, "noport.json")) {
     return("No-Port MIP Model")
   }
+  if (identical(file_name, "fixedport.json")) {
+    return("Fixed-Port Capacity Model")
+  }
   if (identical(file_name, "init.json")) {
     if (identical(family, "noport")) return("Initialization from No-Port Solution")
     if (identical(family, "nn")) return("Nearest-Neighbor Initialization")
