@@ -40,10 +40,10 @@ gurobi:
     Xseg: 86400                          # Fixed-port MIP time limit after incumbent exists
 
   haul_distance_scale:
-    0seg: 0.00001                        # No-port MIP uses near-zero haul in the objective
-    1seg: 0.00001                        # Init local postopt uses near-zero haul in the objective
+    0seg: 0.0                            # No-port MIP uses near-zero haul in the objective
+    1seg: 0.0                            # Init local postopt uses near-zero haul in the objective
     2seg: 1.0                            # Sweep boundary MIPs use full haul distance
-    Xseg: 0.00001                        # Reserved for fixed-port/full MIP objective scaling
+    Xseg: 0.0                            # Reserved for fixed-port/full MIP objective scaling
 
   env_log_file: log/gurobi.log           # null=no log file, or path like "log/gurobi.log"
   threads: 2                             # 0=auto-detect, >0=fixed thread count
