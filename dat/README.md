@@ -24,3 +24,73 @@ Input files and generated database for the GSP pipeline.
 <td align="center"><img src="survey_overview.png" width="460"/><br><sub>Survey overview — stations, ports and boats</sub></td>
 </tr>
 </table>
+
+--- 
+
+## Database schema
+
+The routing database is centered on `locations`, which acts as the shared spatial reference table for boats, ports, waypoints, distances, and station endpoints.
+
+```mermaid
+erDiagram
+    LOCATIONS {
+        INTEGER id PK
+        INT easting
+        INT northing
+        REAL lat
+        REAL lon
+    }
+
+    BOATS {
+        INTEGER id PK
+        INTEGER location_id FK
+        INTEGER capacity
+        TEXT name
+    }
+
+    PORTS {
+        INTEGER id PK
+        TEXT name
+        INTEGER location_id FK
+    }
+
+    WAYPOINTS {
+        INTEGER id PK
+        INTEGER location_id FK
+        INTEGER granularity
+    }
+
+    COASTLINE {
+        INTEGER id PK
+        REAL lat
+        REAL lon
+    }
+
+    DISTANCES {
+        INTEGER id PK
+        INTEGER from_location_id FK
+        INTEGER to_location_id FK
+        REAL distance_nm
+        INTEGER crosses_land
+        TEXT waypoint_path
+    }
+
+    STATIONS {
+        INTEGER id PK
+        TEXT ext_id
+        INTEGER start_location_id FK
+        INTEGER end_location_id FK
+        INTEGER amount
+        INTEGER depth_thrown
+        INTEGER depth_haul
+        TEXT comment
+    }
+
+    LOCATIONS ||--o{ BOATS : "location_id"
+    LOCATIONS ||--o| PORTS : "location_id"
+    LOCATIONS ||--o{ WAYPOINTS : "location_id"
+    LOCATIONS ||--o{ DISTANCES : "from_location_id"
+    LOCATIONS ||--o{ DISTANCES : "to_location_id"
+    LOCATIONS ||--o{ STATIONS : "start_location_id"
+    LOCATIONS ||--o{ STATIONS : "end_location_id"
+```
