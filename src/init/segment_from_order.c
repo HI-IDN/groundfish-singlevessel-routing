@@ -22,6 +22,7 @@ static int extract_final_solution_variant_from_json(const char *json_path,
                                                     char **out_variant_object);
 static int append_int_local(int **arr, int *n, int *cap, int v);
 static int append_unique_int_local(int **arr, int *n, int *cap, int v);
+static void free_segmented_station_order(int **segments, int *counts, int segment_count);
 static int lookup_waypoint_path_local(sqlite3 *db, int from_loc_id, int to_loc_id, int **out_ids);
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
@@ -373,6 +374,14 @@ static int append_unique_int_local(int **arr, int *n, int *cap, int v) {
         if ((*arr)[i] == v) return 1;
     }
     return append_int_local(arr, n, cap, v);
+}
+
+static void free_segmented_station_order(int **segments, int *counts, int segment_count) {
+    (void)counts;
+    if (!segments) return;
+    for (int i = 0; i < segment_count; i++) free(segments[i]);
+    free(segments);
+    free(counts);
 }
 
 static int parse_waypoint_path_json_local(const char *json_text, int **out_ids) {
@@ -801,6 +810,176 @@ static int parse_station_order_from_order_json(const char *json_path, int **out_
     return 1;
 }
 
+static int parse_int_array_after_key_text(const char *text,
+                                          const char *key_name,
+                                          int **out_ids,
+                                          int *out_n) {
+    char pattern[128];
+    char *key = NULL;
+    char *outer = NULL;
+    char *p = NULL;
+    int *ids = NULL;
+    int count = 0;
+    int cap = 0;
+    int depth = 0;
+
+    if (out_ids) *out_ids = NULL;
+    if (out_n) *out_n = 0;
+    if (!text || !key_name || !out_ids || !out_n) return 0;
+
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key_name);
+    key = strstr((char*)text, pattern);
+    if (!key) return 0;
+    outer = strchr(key, '[');
+    if (!outer) return 0;
+
+    p = outer + 1;
+    depth = 1;
+    while (*p) {
+        char *endptr = NULL;
+        long val;
+        if (*p == ']') {
+            depth--;
+            if (depth == 0) break;
+            p++;
+            continue;
+        }
+        if (*p == '[') {
+            depth++;
+            p++;
+            continue;
+        }
+        if (!((*p >= '0' && *p <= '9') || *p == '-')) {
+            p++;
+            continue;
+        }
+        val = strtol(p, &endptr, 10);
+        if (endptr == p) {
+            p++;
+            continue;
+        }
+        if (!append_int_local(&ids, &count, &cap, (int)val)) {
+            free(ids);
+            return 0;
+        }
+        p = endptr;
+    }
+
+    *out_ids = ids;
+    *out_n = count;
+    return 1;
+}
+
+static int parse_segmented_station_order_json(const char *json_path,
+                                              int ***out_segments,
+                                              int **out_counts,
+                                              int *out_segment_count,
+                                              int **out_dock_location_ids,
+                                              int *out_dock_count) {
+    char *text = NULL;
+    char *key = NULL;
+    char *outer = NULL;
+    char *p = NULL;
+    int **segments = NULL;
+    int *counts = NULL;
+    int segment_cap = 0;
+    int segment_count = 0;
+    int current_cap = 0;
+    int *current = NULL;
+    int current_n = 0;
+    int depth = 0;
+    int in_segment = 0;
+
+    if (out_segments) *out_segments = NULL;
+    if (out_counts) *out_counts = NULL;
+    if (out_segment_count) *out_segment_count = 0;
+    if (out_dock_location_ids) *out_dock_location_ids = NULL;
+    if (out_dock_count) *out_dock_count = 0;
+
+    if (!json_path || !out_segments || !out_counts || !out_segment_count) return 0;
+    if (!read_file_text(json_path, &text)) return 0;
+
+    key = strstr(text, "\"tour_segments_station_ids\"");
+    if (!key) goto fail;
+    outer = strchr(key, '[');
+    if (!outer) goto fail;
+
+    p = outer + 1;
+    depth = 1;
+    while (*p) {
+        if (*p == '[') {
+            depth++;
+            if (depth == 2) {
+                current = NULL;
+                current_cap = 0;
+                current_n = 0;
+                in_segment = 1;
+            }
+            p++;
+            continue;
+        }
+        if (*p == ']') {
+            if (depth == 2 && in_segment) {
+                int **segments_tmp;
+                int *counts_tmp;
+                if (segment_count >= segment_cap) {
+                    int new_cap = (segment_cap == 0) ? 8 : (segment_cap * 2);
+                    segments_tmp = (int**)realloc(segments, (size_t)new_cap * sizeof(int*));
+                    counts_tmp = (int*)realloc(counts, (size_t)new_cap * sizeof(int));
+                    if (!segments_tmp || !counts_tmp) {
+                        free(segments_tmp);
+                        free(counts_tmp);
+                        goto fail;
+                    }
+                    segments = segments_tmp;
+                    counts = counts_tmp;
+                    segment_cap = new_cap;
+                }
+                segments[segment_count] = current;
+                counts[segment_count] = current_n;
+                segment_count++;
+                current = NULL;
+                current_cap = 0;
+                current_n = 0;
+                in_segment = 0;
+            }
+            depth--;
+            if (depth == 0) break;
+            p++;
+            continue;
+        }
+        if (((*p >= '0' && *p <= '9') || *p == '-') && in_segment) {
+            char *endptr = NULL;
+            long val = strtol(p, &endptr, 10);
+            if (endptr != p) {
+                if (!append_int_local(&current, &current_n, &current_cap, (int)val)) goto fail;
+                p = endptr;
+                continue;
+            }
+        }
+        p++;
+    }
+
+    if (out_dock_location_ids && out_dock_count) {
+        if (!parse_int_array_after_key_text(text, "dock_location_ids", out_dock_location_ids, out_dock_count)) {
+            *out_dock_location_ids = NULL;
+            *out_dock_count = 0;
+        }
+    }
+
+    free(text);
+    *out_segments = segments;
+    *out_counts = counts;
+    *out_segment_count = segment_count;
+    return 1;
+
+fail:
+    free(current);
+    free(text);
+    free_segmented_station_order(segments, counts, segment_count);
+    return 0;
+}
+
 static const char *infer_strategy_from_path(const char *path) {
     if (!path) return "noport";
     if (strstr(path, "fixedport") || strstr(path, "fixed_port") || strstr(path, "fixed-port")) return "fixedport";
@@ -972,6 +1151,133 @@ static int segment_from_order(const nn_instance_t *inst,
     return 0;
 }
 
+static int segment_from_segmented_input(const nn_instance_t *inst,
+                                        int **station_segments,
+                                        const int *station_segment_counts,
+                                        int segment_count,
+                                        const int *dock_location_ids,
+                                        int dock_count,
+                                        nn_solution_t *sol,
+                                        int boat_start_loc_id,
+                                        int boat_end_loc_id,
+                                        int boat_capacity) {
+    int *tour = NULL, tour_cap = 0, tour_len = 0;
+    int *segment_starts = NULL, seg_starts_cap = 0;
+    int *segment_ends = NULL, seg_ends_cap = 0;
+    int *segment_catches = NULL, seg_catches_cap = 0;
+    double *segment_dists = NULL;
+    int seg_dists_cap = 0;
+    int *visit_station_ids = NULL, visit_ids_cap = 0;
+    int *visit_station_segment = NULL, visit_seg_cap = 0;
+    int *visit_station_direction = NULL, visit_dir_cap = 0;
+    int visit_station_count = 0;
+
+    if (!inst || !station_segments || !station_segment_counts || !sol) return -1;
+    if (segment_count <= 0 || !dock_location_ids || dock_count != segment_count + 1) return -1;
+
+    memset(sol, 0, sizeof(*sol));
+
+    for (int s = 0; s < segment_count; s++) {
+        int current_loc_id = dock_location_ids[s];
+        int segment_start_idx = tour_len;
+        int segment_catch = 0;
+        double segment_dist = 0.0;
+        int end_dock_loc_id = dock_location_ids[s + 1];
+
+        for (int i = 0; i < station_segment_counts[s]; i++) {
+            int signed_station_id = station_segments[s][i];
+            int station_id = abs(signed_station_id);
+            int station_idx = find_station_idx_by_table_id(inst, station_id);
+            int stat_entry;
+            int stat_exit;
+            int stat_dir;
+            double transit_dist;
+            double haul_dist;
+
+            if (station_idx < 0) goto fail;
+
+            stat_dir = (signed_station_id < 0) ? -1 : 1;
+            stat_entry = (stat_dir < 0) ? inst->nodes[station_idx].end_loc_id : inst->nodes[station_idx].start_loc_id;
+            stat_exit = (stat_dir < 0) ? inst->nodes[station_idx].start_loc_id : inst->nodes[station_idx].end_loc_id;
+            transit_dist = order_distance_or_zero(inst, current_loc_id, stat_entry);
+            haul_dist = order_distance_or_zero(inst, stat_entry, stat_exit);
+
+            if (!grow_int_array(&tour, &tour_cap, tour_len + ((stat_exit != stat_entry) ? 2 : 1)) ||
+                !grow_int_array(&visit_station_ids, &visit_ids_cap, visit_station_count + 1) ||
+                !grow_int_array(&visit_station_segment, &visit_seg_cap, visit_station_count + 1) ||
+                !grow_int_array(&visit_station_direction, &visit_dir_cap, visit_station_count + 1)) goto fail;
+
+            segment_dist += transit_dist + haul_dist;
+            tour[tour_len++] = stat_entry;
+            if (stat_exit != stat_entry) tour[tour_len++] = stat_exit;
+            current_loc_id = stat_exit;
+
+            visit_station_ids[visit_station_count] = station_id;
+            visit_station_segment[visit_station_count] = s;
+            visit_station_direction[visit_station_count] = stat_dir;
+            visit_station_count++;
+            segment_catch += inst->nodes[station_idx].amount;
+        }
+
+        if (segment_catch > boat_capacity) goto fail;
+
+        if (s < segment_count - 1) {
+            double dock_dist = order_distance_or_zero(inst, current_loc_id, end_dock_loc_id);
+            if (!grow_int_array(&tour, &tour_cap, tour_len + 1)) goto fail;
+            segment_dist += dock_dist;
+            tour[tour_len++] = end_dock_loc_id;
+        }
+
+        if (!grow_int_array(&segment_starts, &seg_starts_cap, s + 1) ||
+            !grow_int_array(&segment_ends, &seg_ends_cap, s + 1) ||
+            !grow_int_array(&segment_catches, &seg_catches_cap, s + 1) ||
+            !grow_dist_array(&segment_dists, &seg_dists_cap, s + 1)) goto fail;
+
+        segment_starts[s] = segment_start_idx;
+        segment_ends[s] = (tour_len > segment_start_idx) ? (tour_len - 1) : (segment_start_idx - 1);
+        segment_catches[s] = segment_catch;
+        segment_dists[s] = segment_dist;
+    }
+
+    sol->tour = tour;
+    sol->tour_length = tour_len;
+    sol->visit_station_ids = visit_station_ids;
+    sol->visit_station_count = visit_station_count;
+    sol->visit_station_segment = visit_station_segment;
+    sol->visit_station_direction = visit_station_direction;
+    sol->segment_count = segment_count;
+    sol->segment_starts = segment_starts;
+    sol->segment_ends = segment_ends;
+    sol->segment_catches = segment_catches;
+    sol->segment_dists = segment_dists;
+    sol->total_catch = 0;
+    sol->total_distance = 0.0;
+    for (int s = 0; s < segment_count; s++) {
+        sol->total_catch += segment_catches[s];
+        sol->total_distance += segment_dists[s];
+    }
+    if (segment_count > 0) {
+        int last_loc_id = (tour_len > 0) ? tour[tour_len - 1] : boat_start_loc_id;
+        sol->total_distance += order_distance_or_zero(inst, last_loc_id, boat_end_loc_id);
+    } else {
+        sol->total_distance += order_distance_or_zero(inst, boat_start_loc_id, boat_end_loc_id);
+    }
+
+    return 0;
+
+fail:
+    free(tour);
+    free(segment_starts);
+    free(segment_ends);
+    free(segment_catches);
+    free(segment_dists);
+    free(visit_station_ids);
+    free(visit_station_segment);
+    free(visit_station_direction);
+    memset(sol, 0, sizeof(*sol));
+    return -1;
+}
+
 static void free_solution(nn_solution_t *sol) {
     init_free_solution(sol);
 }
@@ -1005,10 +1311,15 @@ int main(int argc, char **argv) {
     int boat_id;
     int *station_order = NULL;
     int station_order_n = 0;
+    int **station_segments = NULL;
+    int *station_segment_counts = NULL;
+    int station_segment_count = 0;
+    int *dock_location_ids = NULL;
+    int dock_location_count = 0;
     int is_feasible = 1;
     nn_solution_t pre_local_postopt_sol = {0};
     double mip_time_limit_seconds = 0.0;
-    double init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
+    double init_haul_distance_scale = 0.0;
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     gsp_mip_solve_detail_t *local_postopt_details = NULL;
@@ -1028,6 +1339,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (!strategy) strategy = infer_strategy_from_path(input);
+    init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
 
     clock_gettime(CLOCK_MONOTONIC, &t0);
     boat_id = read_boat_id_from_yaml(config);
@@ -1035,6 +1347,18 @@ int main(int argc, char **argv) {
     if (!parse_station_order_from_order_json(input, &station_order, &station_order_n)) {
         fprintf(stderr, "Failed to read station order from %s\n", input);
         return 1;
+    }
+    if (!parse_segmented_station_order_json(input,
+                                            &station_segments,
+                                            &station_segment_counts,
+                                            &station_segment_count,
+                                            &dock_location_ids,
+                                            &dock_location_count)) {
+        station_segments = NULL;
+        station_segment_counts = NULL;
+        station_segment_count = 0;
+        dock_location_ids = NULL;
+        dock_location_count = 0;
     }
 
     if (sqlite3_open(database, &db) != SQLITE_OK) {
@@ -1084,17 +1408,33 @@ int main(int argc, char **argv) {
     printf("  boat:     %s (id=%d)\n", boat_name, boat_id);
     printf("  stations: %d\n", station_order_n);
     printf("  capacity: %.0f\n", boat_capacity);
-    printf("[INIT] Building capacity-feasible segmentation from ordered station input\n");
+    printf("[INIT] Building capacity-feasible segmentation from construction input\n");
     fflush(stdout);
 
-    if (segment_from_order(&inst, station_order, station_order_n, &sol,
-                           boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
-        fprintf(stderr, "Failed to segment ordered station input\n");
-        sqlite3_close(db);
-        free(station_order);
-        free_solution(&sol);
-        free_instance(&inst);
-        return 1;
+    if (station_segment_count > 1 &&
+        segment_from_segmented_input(&inst,
+                                     station_segments,
+                                     station_segment_counts,
+                                     station_segment_count,
+                                     dock_location_ids,
+                                     dock_location_count,
+                                     &sol,
+                                     boat_start_loc_id,
+                                     boat_end_loc_id,
+                                     (int)boat_capacity) == 0) {
+        printf("[INIT] Preserved %d pre-segmented construction segments\n", station_segment_count);
+    } else {
+        if (segment_from_order(&inst, station_order, station_order_n, &sol,
+                               boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
+            fprintf(stderr, "Failed to segment construction input\n");
+            sqlite3_close(db);
+            free(station_order);
+            free_segmented_station_order(station_segments, station_segment_counts, station_segment_count);
+            free(dock_location_ids);
+            free_solution(&sol);
+            free_instance(&inst);
+            return 1;
+        }
     }
     clock_gettime(CLOCK_MONOTONIC, &t_seg_end);
 
@@ -1102,6 +1442,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to copy pre-local-postopt init solution\n");
         sqlite3_close(db);
         free(station_order);
+        free_segmented_station_order(station_segments, station_segment_counts, station_segment_count);
+        free(dock_location_ids);
         free_solution(&sol);
         free_instance(&inst);
         return 1;
@@ -1124,6 +1466,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to apply local post optimization to init solution\n");
         sqlite3_close(db);
         free(station_order);
+        free_segmented_station_order(station_segments, station_segment_counts, station_segment_count);
+        free(dock_location_ids);
         free_solution(&sol);
         free_solution(&pre_local_postopt_sol);
         free_instance(&inst);
@@ -1160,6 +1504,8 @@ int main(int argc, char **argv) {
 
     sqlite3_close(db);
     free(station_order);
+    free_segmented_station_order(station_segments, station_segment_counts, station_segment_count);
+    free(dock_location_ids);
     free_solution(&sol);
     free_solution(&pre_local_postopt_sol);
     free(local_postopt_details);

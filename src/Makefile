@@ -156,11 +156,7 @@ $(eval $(call construction_rule,ci,CI))
 $(eval $(call segment_from_construction_rule,nn,NN))
 $(eval $(call segment_from_construction_rule,ge,GE))
 $(eval $(call segment_from_construction_rule,ci,CI))
-
-../sol/fixedport/segment.json: ../sol/fixedport/construction.json
-	@mkdir -p ../sol/fixedport
-	@echo "Promoting fixedport construction to segmented baseline -> $@"
-	@cp "../sol/fixedport/construction.json" "../sol/fixedport/segment.json"
+$(eval $(call segment_from_construction_rule,fixedport,fixedport))
 
 $(eval $(call refinement_rule,nn,NN))
 $(eval $(call refinement_rule,ge,GE))
