@@ -16,7 +16,7 @@ Main Components
 
 ```text
 init/
-|-- gsp_init_mode.c         entrypoint for gsp --mode init
+|-- gsp_init_mode.c         entrypoint for heuristic construction and segment generation
 |-- construction_nn.c       nearest-neighbor construction
 |-- construction_ge.c       greedy-edge construction
 |-- construction_ci.c       cheapest-insertion construction

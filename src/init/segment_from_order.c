@@ -519,7 +519,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     fprintf(fp, "  \"metadata\": {\n");
     fprintf(fp, "    \"solver_version\": \"init_from_order_1.0\",\n");
     fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"init_%s\",\n", strategy_name ? strategy_name : "unknown");
+    fprintf(fp, "    \"mode\": \"segment_%s\",\n", strategy_name ? strategy_name : "unknown");
     fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
     fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
     fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
@@ -579,7 +579,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         solution_runtime_trajectory[runtime_count++] = local_postopt_runtime_seconds;
 
         summary.final_name = final_variant_name;
-        summary.stage_name = "init_complete";
+        summary.stage_name = "segment_complete";
         summary.feasible = is_feasible;
         summary.method_name = method_name ? method_name : "unknown";
         summary.has_baseline = has_pre_local_postopt;
@@ -1401,7 +1401,7 @@ int main(int argc, char **argv) {
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
 
-    printf("Init from ordered input\n");
+    printf("Segment from construction input\n");
     printf("  input:    %s\n", input);
     printf("  output:   %s\n", output);
     printf("  strategy: %s\n", strategy);

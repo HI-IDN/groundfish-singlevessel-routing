@@ -1721,10 +1721,10 @@ static int write_sweep_json(const char *output_path,
 
     fprintf(fp, "{\n");
     fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"sweep_1.0\",\n");
+    fprintf(fp, "    \"solver_version\": \"refinement_1.0\",\n");
     fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"sweep\",\n");
-    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "sweep");
+    fprintf(fp, "    \"mode\": \"refinement\",\n");
+    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "refinement");
     fprintf(fp, "    \"boat_id\": %d,\n", boat->boat_id);
     fprintf(fp, "    \"boat_name\": \"%s\",\n", boat->boat_name);
     fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n",
@@ -1770,9 +1770,9 @@ static int write_sweep_json(const char *output_path,
         }
 
         gsp_write_summary_status_json(fp, "    ", final_pass_name,
-                                      is_final_write ? "sweep_complete" : "sweep_running",
+                                      is_final_write ? "refinement_complete" : "refinement_running",
                                       snapshots[snapshot_count - 1].feasible,
-                                      strategy_name ? strategy_name : "sweep", 1);
+                                      strategy_name ? strategy_name : "refinement", 1);
         gsp_write_summary_distance_json(fp, "    ", 0, 0.0,
                                         distance_trajectory, snapshot_count,
                                         snapshots[snapshot_count - 1].solution.total_distance, 1);

@@ -1005,7 +1005,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         }
 
         summary.final_name = final_variant_name;
-        summary.stage_name = "init_complete";
+        summary.stage_name = "segment_complete";
         summary.feasible = is_feasible;
         summary.method_name = method_name ? method_name : "unknown";
         summary.has_baseline = has_pre_local_postopt;

@@ -10,7 +10,7 @@ Main Component
 
 ```text
 sweep/
-`-- gsp_sweep_mode.c  entrypoint for gsp --mode sweep
+`-- gsp_sweep_mode.c  entrypoint for matheuristic refinement
 ```
 
 Role In The Workflow
