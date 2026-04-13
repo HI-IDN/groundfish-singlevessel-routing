@@ -1,24 +1,45 @@
 # `common`
 
-Shared infrastructure that does not belong to a specific init strategy, sweep pass, or MIP model.
+Shared implementation used across preprocessing, initialization, sweep, and reporting.
 
-This folder is the right home for:
+This directory is the right place for code that is reused across multiple parts
+of the workflow and does not belong to a single solver phase.
+
+Current Contents
+----------------
+
+```text
+common/
+├── coastline_db.c   coastline import and DB replacement helpers
+├── dat_parser.c     DAT parsing utilities
+├── distance.c       distance and routing support
+├── feasibility.c    shared feasibility checks
+├── json_utils.c     shared JSON writing helpers
+├── mip_report.c     shared MIP reporting helpers
+└── sql_utils.c      shared SQLite helpers
+```
+
+What Belongs Here
+-----------------
 
 - shared database and data-loading support
 - distance and waypoint-routing support
-- shared feasibility checks
-- reusable parsing and utility code
-- future shared JSON / route-expansion helpers
+- feasibility checks
+- reusable JSON/statistics helpers
+- shared MIP reporting helpers
 
-This folder is not meant to hold:
+What Does Not Belong Here
+-------------------------
 
 - strategy-specific init logic
 - sweep search logic
-- Gurobi model implementations
-- standalone application entrypoints unless they are truly generic utilities
+- model-specific Gurobi formulations
+- standalone CLI entrypoints
 
-The stable target is:
+Design Rule
+-----------
 
-- reusable implementation stays in `common/`
-- shared interfaces stay in `include/`
-- executable entrypoints live outside `common/`
+If code is shared by more than one solver path and is not specific to a single
+model, it should usually move into `common/`. The JSON writer helpers are a
+good example: `survey`, `init`, `noport`, `fixedport`, and `sweep` should use
+shared utilities here rather than each assembling its own schema.

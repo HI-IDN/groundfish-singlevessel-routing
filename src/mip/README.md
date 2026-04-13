@@ -2,34 +2,62 @@
 
 Gurobi-backed model implementations.
 
-This folder should contain solver logic only, not workflow entrypoints.
+This directory should contain solver formulations only. It is not the place for
+workflow entrypoints, JSON writers, or phase-specific orchestration.
 
-Intended contents:
+Current Models
+--------------
 
-- no-port ordering model
-- end-paired TSP subsolver
-- capacity-aware local model
-- any future exact or hybrid subproblems used by `init/` or `sweep/`
+```text
+mip/
+├── noport.c            no-port ordering model
+├── endpaired_tsp.c     exact segment solver used by init local post-optimization and sweep
+├── fixedport.c         fixed-port capacity model
+├── mip_common.c        shared Gurobi environment, parameter, and status helpers
+├── mip_paired_tour.c   shared paired-tour extraction and callback support
+└── include/            model-specific headers and shared MIP interfaces
+```
 
-Current status:
+Objective Scaling
+-----------------
 
-- `noport.c`
-  implemented no-port paired-end model
-- `endpaired_tsp.c`
-  model surface for exact segment solves
-- `capacity_aware.c`
-  placeholder for the capacity-aware local model
-- `mip_common.c`
-  shared Gurobi/MIP helpers and parameter handling
-- `mip_paired_tour.c`
-  shared paired-end tour extraction and lazy-subtour callback helpers
-- `mip/include/`
-  model-specific headers plus shared MIP utility headers
+The models in this directory use `haul_distance_scale` to control how haul legs
+enter the MIP objective.
+
+Purpose:
+
+- `0.0`
+  removes haul distance from the objective
+- a small positive value such as `1e-5`
+  keeps haul distance only as a tie-breaker while preserving its relative scale
+- `1.0`
+  uses full haul distance
+
+Recommended phase settings in the current workflow:
+
+- `0seg = 1e-5`
+  for `noport`
+- `1seg = 1e-5`
+  for init local post-optimization
+- `2seg = 1.0`
+  for sweep
+- `Xseg = 1e-5`
+  for fixed-port
+
+Boundary
+--------
+
+What belongs here:
+
+- exact MIP formulations
+- model-specific callbacks
+- shared Gurobi utilities
 
 What does not belong here:
 
-- JSON writers
 - CLI entrypoints
-- init- or sweep-specific orchestration
+- init or sweep orchestration
+- report formatting
+- JSON assembly
 
-Those should live in `init/`, `sweep/`, or shared utilities in `common/`.
+Those responsibilities should stay in `init/`, `sweep/`, `tools/`, or `common/`.

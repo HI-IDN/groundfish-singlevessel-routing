@@ -2,17 +2,27 @@
 
 Project-wide shared headers.
 
-Use this folder for interfaces that are consumed by more than one module, for example:
+This directory contains interfaces used across more than one module in the
+workflow.
 
-- shared data types
-- feasibility interfaces
-- database helpers
-- routing and preprocessing interfaces
+Typical contents:
 
-Guideline:
+```text
+include/
+├── shared data types
+├── database helpers
+├── feasibility interfaces
+├── routing and preprocessing interfaces
+└── shared JSON/reporting interfaces
+```
 
-- `include/` is for general shared headers
-- `mip/include/` is for MIP-model-specific interfaces only
+Guideline
+---------
 
-If a header is only used by one module, it should usually live next to that module instead of here.
+- `include/`
+  general shared headers used across the project
+- `mip/include/`
+  MIP-model-specific headers only
 
+If a header is only used by a single implementation file or a single module, it
+should usually live next to that module rather than here.

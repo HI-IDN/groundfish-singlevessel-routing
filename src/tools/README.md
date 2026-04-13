@@ -1,28 +1,35 @@
 # `tools`
 
-Standalone utilities outside the main `gsp` init/sweep solve flow.
+Standalone utilities outside the main init/sweep solve loop.
 
-Examples:
+These programs are part of the overall workflow, but they are not themselves
+the main optimization entrypoints.
 
-- survey export utilities
-- country / coastline / waypoint bootstrap tools
-- station import and distance rebuild entrypoints
-- one-off converters or inspection helpers
+Current Utilities
+-----------------
 
-Rule of thumb:
+```text
+tools/
+├── country_bootstrap_main.c      coastline and waypoint bootstrap into the routing database
+├── station_import.c              station import utility
+├── distance_builder.c            distance rebuild utility
+├── prepare_routing_data_main.c   one-pass preprocessing wrapper
+├── export_survey_json.c          export observed survey routes to JSON
+└── export_fixedport_candidates.c derive fixed-port candidate sequences from survey JSON
+```
 
-- if it is part of the main solve pipeline, it should usually live in `init/`, `sweep/`, `mip/`, or
-  `common/`
-- if it is a separate utility program, it belongs in `tools/`
+Rule Of Thumb
+-------------
 
-This separation matters because `tools/` may share code with the solver, but it should not define
+- if it is a standalone utility program, it belongs in `tools/`
+- if it is part of the main solve loop, it should usually live in `init/`, `sweep/`, `mip/`, or `common/`
+
+Typical Outputs
+---------------
+
+- `dat/gsp.db`
+- `sol/survey/boat*.json`
+- `dat/candidate_ports.json`
+
+These utilities feed the main optimization pipeline, but they should not define
 the solver architecture.
-
-Current examples in this folder include:
-
-- `station_import.c`
-- `distance_builder.c`
-- `historical_survey_import.c`
-- `export_survey_json.c`
-- `export_fixedport_candidates.c`
-- `country_bootstrap_main.c`
