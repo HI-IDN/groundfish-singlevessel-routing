@@ -1216,6 +1216,72 @@ static void write_metadata_only_json(const char *output_path,
     printf("[OUTPUT] Metadata-only JSON written to %s\n", output_path);
 }
 
+static int run_construction_strategy(const char *strategy,
+                                     int construction_output,
+                                     const nn_instance_t *inst,
+                                     nn_solution_t *sol,
+                                     nn_solution_t *pre_capacity_sol,
+                                     int boat_start_loc_id,
+                                     int boat_end_loc_id,
+                                     int target_capacity,
+                                     const char **out_method_name) {
+    const char *method_name = NULL;
+    int rc = -1;
+
+    if (strcmp(strategy, "nn") == 0) {
+        method_name = "nearest_neighbor";
+        rc = construction_output
+            ? nn_construction_solve(inst, sol, boat_start_loc_id, boat_end_loc_id)
+            : nn_solve(inst, sol, boat_start_loc_id, boat_end_loc_id, target_capacity);
+    } else if (strcmp(strategy, "ge") == 0) {
+        method_name = "greedy_edge";
+        rc = construction_output
+            ? ge_construction_solve(inst, sol, boat_start_loc_id, boat_end_loc_id)
+            : gi_solve(inst, sol, pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, target_capacity);
+    } else if (strcmp(strategy, "ci") == 0) {
+        method_name = "cheapest_insertion";
+        rc = construction_output
+            ? ci_construction_solve(inst, sol, boat_start_loc_id, boat_end_loc_id)
+            : ci_solve(inst, sol, pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, target_capacity);
+    }
+
+    if (out_method_name) *out_method_name = method_name;
+    return rc;
+}
+
+static int run_segment_postopt(const char *config,
+                               const nn_instance_t *inst,
+                               int boat_start_loc_id,
+                               int boat_end_loc_id,
+                               nn_solution_t *sol,
+                               nn_solution_t *pre_local_postopt_sol,
+                               double *out_mip_time_limit_seconds,
+                               double *out_local_postopt_runtime_seconds,
+                               int *out_local_postopt_segment_solve_count,
+                               gsp_mip_solve_detail_t **out_local_postopt_details,
+                               int *out_local_postopt_detail_count) {
+    double mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
+    double init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
+
+    if (!init_copy_solution(sol, pre_local_postopt_sol)) {
+        return 0;
+    }
+    if (!init_apply_local_postopt(inst, pre_local_postopt_sol,
+                                  boat_start_loc_id, boat_end_loc_id,
+                                  mip_time_limit_seconds,
+                                  init_haul_distance_scale,
+                                  sol,
+                                  out_local_postopt_runtime_seconds,
+                                  out_local_postopt_segment_solve_count,
+                                  out_local_postopt_details,
+                                  out_local_postopt_detail_count)) {
+        return 0;
+    }
+
+    if (out_mip_time_limit_seconds) *out_mip_time_limit_seconds = mip_time_limit_seconds;
+    return 1;
+}
+
 /* Parse command-line arguments */
 static void parse_args(int argc, char **argv,
                        const char **strategy, const char **database,
@@ -1344,62 +1410,35 @@ int mode_init(int argc, char **argv) {
     int construction_output = output_path_is_construction_json(output);
     struct timespec t_solve_start;
     clock_gettime(CLOCK_MONOTONIC, &t_solve_start);
-    if (strcmp(strategy, "nn") == 0) {
-        method_name = "nearest_neighbor";
-        if ((construction_output
-                ? nn_construction_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id)
-                : nn_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity)) != 0) {
-            fprintf(stderr, "ERROR: Failed to solve NN\n");
-            sqlite3_close(db);
-            return 1;
-        }
-    } else if (strcmp(strategy, "ge") == 0) {
-        method_name = "greedy_edge";
-        if ((construction_output
-                ? ge_construction_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id)
-                : gi_solve(&inst, &sol, &pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity)) != 0) {
-            fprintf(stderr, "ERROR: Failed to solve GE\n");
-            sqlite3_close(db);
-            return 1;
-        }
-    } else {
-        method_name = "cheapest_insertion";
-        if ((construction_output
-                ? ci_construction_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id)
-                : ci_solve(&inst, &sol, &pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity)) != 0) {
-            fprintf(stderr, "ERROR: Failed to solve CI\n");
-            sqlite3_close(db);
-            return 1;
-        }
+    if (run_construction_strategy(strategy, construction_output,
+                                  &inst, &sol, &pre_capacity_sol,
+                                  boat_start_loc_id, boat_end_loc_id,
+                                  (int)target_capacity,
+                                  &method_name) != 0) {
+        fprintf(stderr, "ERROR: Failed to solve %s\n", strategy ? strategy : "construction");
+        sqlite3_close(db);
+        return 1;
     }
     struct timespec t_solve_end;
     clock_gettime(CLOCK_MONOTONIC, &t_solve_end);
     double solve_runtime_seconds = elapsed_seconds(t_solve_start, t_solve_end);
-    printf("[NN] Done in %.4f s\n", solve_runtime_seconds);
+    printf("[CONSTRUCTION] %s done in %.4f s\n",
+           method_name ? method_name : (strategy ? strategy : "unknown"),
+           solve_runtime_seconds);
 
     double mip_time_limit_seconds = 0.0;
-    double init_haul_distance_scale = 0.0;
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     gsp_mip_solve_detail_t *local_postopt_details = NULL;
     int local_postopt_detail_count = 0;
     if (!construction_output) {
-        mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
-        init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
-        if (!init_copy_solution(&sol, &pre_local_postopt_sol)) {
-            fprintf(stderr, "ERROR: Failed to copy pre-local-postopt init solution\n");
-            sqlite3_close(db);
-            return 1;
-        }
-        if (!init_apply_local_postopt(&inst, &pre_local_postopt_sol,
-                                      boat_start_loc_id, boat_end_loc_id,
-                                      mip_time_limit_seconds,
-                                      init_haul_distance_scale,
-                                      &sol,
-                                      &local_postopt_runtime_seconds,
-                                      &local_postopt_segment_solve_count,
-                                      &local_postopt_details,
-                                      &local_postopt_detail_count)) {
+        if (!run_segment_postopt(config, &inst, boat_start_loc_id, boat_end_loc_id,
+                                 &sol, &pre_local_postopt_sol,
+                                 &mip_time_limit_seconds,
+                                 &local_postopt_runtime_seconds,
+                                 &local_postopt_segment_solve_count,
+                                 &local_postopt_details,
+                                 &local_postopt_detail_count)) {
             fprintf(stderr, "ERROR: Failed to apply local post optimization to init solution\n");
             sqlite3_close(db);
             return 1;
@@ -1467,7 +1506,7 @@ int mode_init(int argc, char **argv) {
         }
     }
 
-    printf("\n[SUCCESS] %s complete!\n", construction_output ? "Construction" : "Initialization");
+    printf("\n[SUCCESS] %s complete!\n", construction_output ? "Construction" : "Segment");
     printf("============================================================\n");
 
     /* Cleanup */
