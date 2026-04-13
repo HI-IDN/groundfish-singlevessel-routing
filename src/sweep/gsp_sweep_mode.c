@@ -1628,7 +1628,6 @@ static void write_pass_entry(FILE *fp,
     fprintf(fp, "      \"boundary_changes\": %d,\n", snapshot->boundary_changes);
     fprintf(fp, "      \"accepted_capacity_solves\": %d,\n", snapshot->boundary_changes);
     fprintf(fp, "      \"total_capacity_solves\": %d,\n", snapshot->boundary_attempts);
-    fprintf(fp, "      \"capacity_mip_solves\": %d,\n", snapshot->mip_solve_count);
     fprintf(fp, "      \"mip_solves\": %d,\n", snapshot->mip_solve_count);
     fprintf(fp, "      \"pass_runtime_seconds\": %.6f,\n", snapshot->pass_runtime_seconds);
     write_station_mutation_ids(fp, prev_solution, &snapshot->solution);
@@ -1669,7 +1668,7 @@ static int write_sweep_json(const char *output_path,
                             int snapshot_count,
                             int total_boundary_attempts,
                             int total_boundary_changes,
-                            int total_capacity_mip_solves,
+                            int total_mip_solves,
                             double preprocessing_seconds,
                             double total_runtime_seconds,
                             const char *strategy_name,
@@ -1776,7 +1775,7 @@ static int write_sweep_json(const char *output_path,
         fprintf(fp, ", \"max\": %d},\n", station_move_max);
         fprintf(fp, "      \"accepted_capacity_solves\": %d,\n", total_boundary_changes);
         fprintf(fp, "      \"total_capacity_solves\": %d,\n", total_boundary_attempts);
-        fprintf(fp, "      \"total_capacity_mip_solves\": %d,\n", total_capacity_mip_solves);
+        fprintf(fp, "      \"total_mip_solves\": %d,\n", total_mip_solves);
         fprintf(fp, "      \"total_boundary_changes\": %d\n", total_boundary_changes);
         fprintf(fp, "    },\n");
         gsp_write_summary_mip_json(fp, "    ", mip_detail_count,
@@ -1834,7 +1833,7 @@ int mode_sweep(int argc, char **argv) {
     int snapshot_count = 0, snapshot_capacity = 0;
     int total_boundary_attempts = 0;
     int total_boundary_changes = 0;
-    int total_capacity_mip_solves = 0;
+    int total_mip_solves = 0;
     int rc = 1;
     struct timespec t_start, t_pass_start, t_pass_end, t_now, t_preproc_end;
     double preprocessing_seconds = 0.0;
@@ -1935,7 +1934,7 @@ int mode_sweep(int argc, char **argv) {
                                       snapshots, snapshot_count,
                                       total_boundary_attempts,
                                       total_boundary_changes,
-                                      total_capacity_mip_solves,
+                                      total_mip_solves,
                                       preprocessing_seconds,
                                       snapshot.total_runtime_seconds,
                                       strategy, 0)) {
@@ -2140,14 +2139,14 @@ int mode_sweep(int argc, char **argv) {
                 GRBfreeenv(env);
                 goto cleanup;
             }
-            total_capacity_mip_solves += pass_mip_solve_count;
+            total_mip_solves += pass_mip_solve_count;
             if (debug_mode) {
                 if (!write_sweep_json(output, db, &boat, &inst,
                                       &sweep_cfg,
                                       snapshots, snapshot_count,
                                       total_boundary_attempts,
                                       total_boundary_changes,
-                                      total_capacity_mip_solves,
+                                      total_mip_solves,
                                       preprocessing_seconds,
                                       snapshot.total_runtime_seconds,
                                       strategy, 0)) {
@@ -2185,7 +2184,7 @@ int mode_sweep(int argc, char **argv) {
                               snapshots, snapshot_count,
                               total_boundary_attempts,
                               total_boundary_changes,
-                              total_capacity_mip_solves,
+                              total_mip_solves,
                               preprocessing_seconds,
                               elapsed_seconds(t_start, t_now),
                               strategy, 1)) {
