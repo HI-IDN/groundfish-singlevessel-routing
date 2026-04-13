@@ -118,6 +118,18 @@ Configure the build directory once:
 make -C src config
 ```
 
+Before the full build, you can verify that SQLite, GEOS, and Gurobi are all
+correctly linked on your system:
+
+```bash
+make -C tools test-env
+```
+
+This compiles and runs three small smoke-tests (`test_sqlite`, `test_geos`,
+`test_gurobi`) and reports PASS/FAIL for each. Fix any failures before
+proceeding — the main pipeline will not build or run correctly without all
+three libraries.
+
 Build everything:
 
 ```bash

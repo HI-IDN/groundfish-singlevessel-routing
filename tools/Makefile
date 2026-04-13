@@ -28,7 +28,7 @@ else
     GUROBI_LIB = -L$(GUROBI_HOME)/lib -lgurobi130 -Wl,-rpath,$(GUROBI_HOME)/lib
 endif
 
-.PHONY: all test-sqlite test-gurobi test-env clean
+.PHONY: all test-sqlite test-gurobi test-geos test-env clean
 all: test-env
 
 # Compile and run the sqlite smoke test
@@ -37,6 +37,13 @@ test-sqlite:
 	$(CC) $(CFLAGS) -o test_sqlite test_sqlite.c -lsqlite3 $(LDFLAGS)
 	@echo "Running sqlite test..."
 	./test_sqlite
+
+# Compile and run the geos smoke test
+test-geos:
+	@echo "Compiling geos test..."
+	$(CC) $(CFLAGS) -o test_geos test_geos.c -lgeos_c $(LDFLAGS)
+	@echo "Running geos test..."
+	./test_geos
 
 # Compile and run the gurobi smoke test
 test-gurobi:
@@ -55,11 +62,11 @@ else
 	LD_LIBRARY_PATH=$(GUROBI_HOME)/lib:$$LD_LIBRARY_PATH ./test_gurobi
 endif
 
-# Run both tests
-test-env: test-sqlite test-gurobi
+# Run all three tests
+test-env: test-sqlite test-geos test-gurobi
 	@echo "Environment smoke-tests complete."
 
 clean:
-	@rm -f test_sqlite test_gurobi
+	@rm -f test_sqlite test_geos test_gurobi
 	@echo "cleaned"
 
