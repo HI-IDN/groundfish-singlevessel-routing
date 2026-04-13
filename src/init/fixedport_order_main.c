@@ -504,43 +504,13 @@ static const port_info_t *find_port_info(const port_info_t *ports, int count, in
     return NULL;
 }
 
-static int sample_debug_stations(const app_instance_t *app,
-                                 Station **out_stations,
-                                 int *out_count,
-                                 int *sampled_station_ids,
-                                 int *sampled_station_id_count) {
-    int sample_count;
-    int *indices = NULL;
-    Station *selected = NULL;
-    *out_stations = NULL;
-    *out_count = 0;
-    *sampled_station_id_count = 0;
-    if (!app || app->n_stations <= 0) return 0;
-    sample_count = app->n_stations < 50 ? app->n_stations : 50;
-    indices = (int*)malloc((size_t)app->n_stations * sizeof(int));
-    selected = (Station*)calloc((size_t)sample_count, sizeof(Station));
-    if (!indices || !selected) {
-        free(indices);
-        free(selected);
-        return 0;
-    }
-    for (int i = 0; i < app->n_stations; i++) indices[i] = i;
-    srand(12345u);
-    for (int i = app->n_stations - 1; i > 0; i--) {
-        int j = rand() % (i + 1);
-        int tmp = indices[i];
-        indices[i] = indices[j];
-        indices[j] = tmp;
-    }
-    for (int i = 0; i < sample_count; i++) {
-        selected[i] = app->stations[indices[i]];
-        sampled_station_ids[i] = selected[i].station_id;
-    }
-    free(indices);
-    *out_stations = selected;
-    *out_count = sample_count;
-    *sampled_station_id_count = sample_count;
-    return 1;
+static int use_all_stations(const app_instance_t *app,
+                            const Station **out_stations,
+                            int *out_count) {
+    if (!app || !out_stations || !out_count) return 0;
+    *out_stations = app->stations;
+    *out_count = app->n_stations;
+    return app->n_stations > 0;
 }
 
 static int parse_waypoint_path_json(const char *json_text, int **out_ids) {
@@ -620,8 +590,6 @@ static int write_fixedport_json(sqlite3 *db,
                                 const app_instance_t *app,
                                 const Station *stations,
                                 int station_count,
-                                const int *sampled_station_ids,
-                                int sampled_station_id_count,
                                 const int *candidate_ports,
                                 int candidate_port_count,
                                 const port_info_t *port_lookup,
@@ -744,18 +712,12 @@ static int write_fixedport_json(sqlite3 *db,
     fprintf(fp, "    \"boat_name\": \"%s\",\n", app->boat.name ? app->boat.name : "Unknown");
     fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", app->boat_start_lat, app->boat_start_lon);
     fprintf(fp, "    \"boat_location_id\": %d,\n", app->boat.location_id);
-    fprintf(fp, "    \"debug_station_sample_size\": %d\n", station_count);
+    fprintf(fp, "    \"station_selection\": \"all\"\n");
     fprintf(fp, "  },\n");
     fprintf(fp, "  \"problem\": {\n");
     fprintf(fp, "    \"num_stations\": %d,\n", station_count);
     fprintf(fp, "    \"num_fixed_port_visits\": %d,\n", candidate_port_count);
     fprintf(fp, "    \"capacity\": %d,\n", app->boat.capacity);
-    fprintf(fp, "    \"sampled_station_ids\": [");
-    for (int i = 0; i < sampled_station_id_count; i++) {
-        if (i) fprintf(fp, ", ");
-        fprintf(fp, "%d", sampled_station_ids[i]);
-    }
-    fprintf(fp, "],\n");
     fprintf(fp, "    \"candidate_port_location_ids\": [");
     for (int i = 0; i < candidate_port_count; i++) {
         if (i) fprintf(fp, ", ");
@@ -884,10 +846,8 @@ int main(int argc, char **argv) {
     int port_lookup_count = 0;
     int *candidate_ports = NULL;
     int candidate_port_count = 0;
-    Station *debug_stations = NULL;
-    int debug_station_count = 0;
-    int sampled_station_ids[50];
-    int sampled_station_id_count = 0;
+    const Station *fixedport_stations = NULL;
+    int fixedport_station_count = 0;
     mip_fixedport_instance_t mip_instance;
     mip_fixedport_solution_t mip_solution;
     mip_params_t mip_params;
@@ -934,7 +894,7 @@ int main(int argc, char **argv) {
         load_distances(db, &app) != 0 ||
         !load_port_lookup(db, &port_lookup, &port_lookup_count) ||
         !load_candidate_port_location_ids(candidate_path, &candidate_ports, &candidate_port_count) ||
-        !sample_debug_stations(&app, &debug_stations, &debug_station_count, sampled_station_ids, &sampled_station_id_count)) {
+        !use_all_stations(&app, &fixedport_stations, &fixedport_station_count)) {
         fprintf(stderr, "Failed to initialize fixedport debug instance\n");
         goto cleanup;
     }
@@ -943,8 +903,8 @@ int main(int argc, char **argv) {
 
     t_after_load = clock();
     mip_instance.boat = &app.boat;
-    mip_instance.stations = debug_stations;
-    mip_instance.n_stations = debug_station_count;
+    mip_instance.stations = fixedport_stations;
+    mip_instance.n_stations = fixedport_station_count;
     mip_instance.candidate_port_location_ids = candidate_ports;
     mip_instance.candidate_port_count = candidate_port_count;
     mip_instance.distances = app.distances;
@@ -963,8 +923,7 @@ int main(int argc, char **argv) {
 
     t_done = clock();
     if (!write_fixedport_json(db, output_path, &app,
-                              debug_stations, debug_station_count,
-                              sampled_station_ids, sampled_station_id_count,
+                              fixedport_stations, fixedport_station_count,
                               candidate_ports, candidate_port_count,
                               port_lookup, port_lookup_count,
                               &mip_solution,
@@ -975,14 +934,13 @@ int main(int argc, char **argv) {
     }
 
     printf("Wrote %s\n", output_path);
-    printf("  debug_station_sample_size: %d\n", debug_station_count);
+    printf("  stations: %d\n", fixedport_station_count);
     printf("  fixed_port_visits: %d\n", candidate_port_count);
     printf("  objective_distance_nm: %.2f\n", mip_solution.objective_value);
     ok = 1;
 
 cleanup:
     free(candidate_ports);
-    free(debug_stations);
     free_port_info_array(port_lookup, port_lookup_count);
     free_mip_fixedport_solution(&mip_solution);
     if (db) sqlite3_close(db);
