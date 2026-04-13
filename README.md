@@ -1,428 +1,290 @@
-Repository overview
-===================
+# Repository Overview
 
-This folder is the root for the build and test workflow described below. It contains the
-survey-routing matheuristic codebase and a small, pure-C toolchain for preprocessing,
-initialization, and sweep evaluation.
+This repository accompanies the paper  
+**_A Scalable Matheuristic for Routing Capacity-Constrained Groundfish Surveys_**  
+(Ingimundardóttir et al., LION 2026).
 
-This README documents the environment checks you should run first, how to build the minimal
-smoke-tests (SQLite + Gurobi), and how to proceed once the environment is confirmed. These checks
-ensure the system has the required C development libraries and solver available before you perform
-larger refactors.
+It contains the full pipeline used in the study, including:
 
-Layout
+- data preprocessing
+- initialization heuristics
+- MIP-based optimization
+- sweep-based improvement
+- plotting and reporting tools
+
+The workflow is file-based:
+
+- routing data is stored in `dat/gsp.db`
+- solution outputs are written to `sol/`
+- figures and summaries are generated from these outputs
+
+---
+
+## Workflow (TL;DR)
+
+- `prepare-routing-data`  
+  Builds the routing database used in all subsequent steps
+
+- `survey`  
+  Exports observed 2023 survey routes for comparison
+
+- `init`  
+  Constructs a capacity-feasible segmented baseline solution
+
+- `sweep`  
+  Improves an existing solution via local re-optimization of segment boundaries
+
+---
+
+## Paper
+
+- **Title:** A Scalable Matheuristic for Routing Capacity-Constrained Groundfish Surveys
+- **Authors:** Helga Ingimundardóttir, Margrét Vala Þórisdóttir, Bjarki Elvarsson, Thomas Philip Runarsson
+- **Conference:** LION 2026 (accepted)
+
+### Keywords
+
+- Groundfish Survey Problem
+- Multi-trip VRP
+- Capacitated Routing with Replenishment
+- Segment-Based Decomposition
+- Matheuristics
+
+### Summary
+
+- Scalable matheuristic for single-vessel survey routing
+- Builds and refines capacity-feasible tours
+- Produces reproducible routing plans
+- Achieves consistent distance reductions over strong baselines
+
+> **Abstract**  
+> Bottom trawl groundfish surveys are planned around a fixed set of sampling stations, but the order of visits and the timing of port returns strongly affect total travel distance and operational feasibility. Although mixed-integer programming (MIP) models can encode capacity and port-call constraints directly, solving the full model to optimality is often impractical at realistic scales.
+>
+> We propose a matheuristic that combines fast tour construction with repeated calls to a time-limited capacity MIP subproblem. Starting from an initial segmented tour, the algorithm iteratively examines boundaries between adjacent segments separated by a port visit and solves a restricted two-segment capacity MIP on the union of stations in the two segments, with fixed endpoints and a single intermediate port call.
+>
+> The MIP reallocates stations between segments subject to capacity, and the best incumbent found within a time limit is accepted if it improves total distance. Across initialization strategies and time limits, the method consistently improves baseline plans and provides a fast, reproducible tool for scenario analysis.
+
+---
+
+## How to Cite
+
+If you use this repository, please cite:
+> Ingimundardóttir et al. (2026), *A Scalable Matheuristic for Routing Capacity-Constrained 
+> Groundfish Surveys*, LION Conference.
+
+```bib 
+@inproceedings{Ingimundardottir2026LION,
+  author    = {Ingimundardóttir, Helga and Þórisdóttir, Margrét Vala and Elvarsson, Bjarki and Runarsson, Thomas Philip},
+  title     = {A Scalable Matheuristic for Routing Capacity-Constrained Groundfish Surveys},
+  booktitle = {Learning and Intelligent Optimization Conference (LION)},
+  year      = {2026},
+  note      = {Accepted for publication},
+}
+```
+
+
+Repository Layout
 ------
-
-- `src/` - pure-C implementation and Makefile (build targets and tests live here).
-- `src-old/` - previous source tree (kept as reference).
-- `dat/` - raw .dat files (e.g. `singleboatdata2023spring.dat`).
-- `sol/` - solutions and outputs produced by runs.
-- `bin/` - legacy binaries (kept for compatibility).
-- `tools/` - small helper programs and environment smoke-tests.
-- `config/` - YAML experiment configuration files.
+```plaintext
+.
+├── src/        # core implementation (C + build system)
+├── dat/        # raw inputs and generated database (gsp.db)
+├── sol/        # outputs (solutions, logs, plots)
+├── config/     # solver parameters (YAML)
+├── R/          # analysis and visualization scripts
+└── docs/       # documentation and experiment summaries
+```
 
 Prerequisites
 -------------
-You need a C toolchain (GCC/Clang), the SQLite development headers and library, and Gurobi (headers,
-libs and a valid license). These instructions assume Linux/macOS or Windows under MSYS2/WSL.
 
-1) C toolchain
+You need:
 
-- Linux (Debian/Ubuntu): `sudo apt install build-essential`
-- macOS (Homebrew): `brew install gcc`
-- Windows (MSYS2/MinGW): use the MSYS2 package manager to install `mingw-w64-x86_64-gcc`.
+- a C toolchain
+- SQLite development headers and library
+- GEOS
+- Gurobi with a valid license for the MIP-based targets
+- R for the plotting scripts
 
-2) SQLite (development headers)
+This workflow has been tested in an MSYS2 / MinGW environment on Windows. 
+It is expected to also work cleanly in Unix-like shells.
 
-- Linux (Debian/Ubuntu): `sudo apt install libsqlite3-dev`
-- macOS (Homebrew): `brew install sqlite`
-- Windows (MSYS2): `pacman -S mingw-w64-x86_64-sqlite3`
+Build
+-----
 
-3) Gurobi
-
-- Download and install Gurobi for your platform from https://www.gurobi.com/downloads/.
-- Ensure you have a functioning license (for example, a `gurobi.lic` file or `GRB_LICENSE_FILE`
-  pointing to a license).
-- Set `GUROBI_HOME` to the installation directory. Example you provided in MSYS:
-  ```bash
-  export GUROBI_HOME="/c/gurobi1301/win64"
-  export PATH="$GUROBI_HOME/bin:$PATH"
-  export LD_LIBRARY_PATH="$GUROBI_HOME/lib:${LD_LIBRARY_PATH:-}"
-  ```
-- Ensure the compiler can find headers at `$GUROBI_HOME/include` and the linker at
-  `$GUROBI_HOME/lib`.
-
-Smoke-tests (verify environment)
---------------------------------
-Two tiny C programs and a shell runner validate SQLite and Gurobi are available and linkable from
-your C toolchain.
-
-Run the tests from this directory (the project root):
+Configure the build directory once:
 
 ```bash
-make -C tools test-env
+make -C src config
 ```
 
-Expected output (both tests must PASS):
-
-- `SQLITE_TEST: PASS` — SQLite headers and library are usable.
-- `GUROBI_TEST: PASS - status=<status> elapsed=<s> s` — Gurobi headers and basic env allocation
-  succeed.
-
-If those tests pass, you can proceed to building and running the full pipeline.
-
-Troubleshooting
----------------
-
-- If the sqlite test fails: ensure `sqlite3.h` is installed and the `-lsqlite3` library is
-  available. On Debian/Ubuntu install `libsqlite3-dev`.
-- If the Gurobi test fails: ensure `GUROBI_HOME` is set and points to your Gurobi installation (
-  headers under `$GUROBI_HOME/include` and libs under `$GUROBI_HOME/lib`). Also verify your Gurobi
-  license is valid.
-
-Building the GSP Solver
------------------------
-
-Once environment tests pass, build the solver:
+Build everything:
 
 ```bash
 make -C src build
 ```
 
-The compiled binaries will be placed under `build/`.
+The build products are written under `build/`.
 
-Groundfish Survey Routing Solver: Complete Workflow
-====================================================
+Current Pipeline
+----------------
 
-The GSP solver optimizes groundfish survey routes for Icelandic research vessels using a two-phase
-approach:
+1. Prepare routing data:
 
-- **Phase 0 (INIT)**: Generate initialization strategies (noport, fixedport, NN, GE, CI). Run once, solutions
-  cached in database.
-- **Phase 1 (MH)**: Improve from cached init solutions using matheuristic sweep.
+```bash
+make -C src prepare-routing-data
+```
 
-### Problem Instance
+This creates `dat/gsp.db` from:
 
-**Vessel**: Árni Friðriksson (boat_id=2)
+- `dat/island.tsv`
+- `dat/waypoints.dat`
+- `dat/ports.dat`
+- `dat/boats.dat`
+- `dat/stations.dat`
 
-- **Capacity**: 45 tonnes maximum cargo
-- **Home Port**: Hafnarfjörður
-- **Survey Stations**: 580 total
-- **Total Expected Catch**: ~528 tonnes
-- **Minimum Segments**: N_min = 12 (ceil(528/45))
-- **Target Segments**: N = 13
+2. Export observed survey routes:
 
-### Phase 0: Generate Initialization Solutions (Run Once)
+```bash
+make -C src survey
+```
 
-All 4 initialization strategies must be run once. Results are cached in the database and reused by
-Phase 1.
+This writes the observed boat routes to:
 
-Each initialization method now ends with a shared local post-optimization step that re-solves each
-capacity-feasible segment while keeping the imported segment boundaries fixed. The pre-postopt and
-post-postopt distances are both reported in `init.json`, and sweep assumes this post-optimization
-has already been done.
+- `sol/survey/boat1.json`
+- `sol/survey/boat2.json`
+- `sol/survey/boat3.json`
+- `sol/survey/boat4.json`
 
-Configure that step with `gurobi.l1seg` in `config/gsp_solver.yaml`:
+3. Optional: run the expensive MIP-based preprocessing paths:
+
+ - *No-port model*: Ignores capacity constraints to produce a global baseline: 
+    
+    ```bash
+    make -C src noport
+    ```
+    Output: 
+     - `sol/noport/noport.json`
+
+ - *Fixed-port model*: Solves a capacity-constrained model with predefined port visits:
+
+    ```bash
+    make -C src fixedport_candidates
+    make -C src fixedport
+    ```
+
+    Output:
+     - `dat/candidate_ports.json` 
+    - `sol/fixedport/fixedport.json`
+
+4. Initialization
+
+    Constructs a capacity-feasible segmented solution using either:
+    - MIP-based input (`noport`, `fixedport`)
+    - Heuristic ordering:
+      - `nn` (nearest neighbor)
+      - `ci` (cheapest insertion)
+      - `ge` (greedy edge)
+    ```bash
+    make -C src init INIT=noport|nn|ge|ci|fixedport
+    ```
+    Outputs: 
+    ```bash 
+    sol/<strategy>/init.json
+    ```
+
+5. Sweep improvement
+
+    Performs local re-optimization over adjacent segments
+    ```bash
+    make -C src sweep INIT=noport|nn|ge|ci|fixedport
+    ```
+    Outputs:
+    ```bash 
+    sol/<strategy>/sweep.json
+    ```
+
+6. Generate plots:
+
+    ```bash
+    make -C src plot
+    ```
+
+    This generates route figures and survey overview figures from the JSON files
+    currently present under `sol/`.
+
+Batch Run
+---------
+
+To run the current experiment chain in one command:
+
+```bash
+make -C src experiments
+```
+
+This runs:
+
+- routing-data preparation
+- survey export
+- noport and fixedport presolve
+- initialization outputs
+- sweep outputs
+
+Then generate figures separately with:
+
+```bash
+make -C src plot
+```
+
+Configuration
+-------------
+
+The solver reads configuration from:
+
+- `config/gsp_solver.yaml`
+
+Current Gurobi phase parameters are organized by segment model:
 
 ```yaml
 gurobi:
-  l1seg: 0   # 0 = uncapped per-segment post-opt
+  haul_distance_scale:
+    0seg: 0.00001
+    1seg: 0.00001
+    2seg: 1.0
+    Xseg: 0.00001
+
+  time_limit_seconds:
+    0seg: 0
+    1seg: 0
+    2seg: 0
+    Xseg: 86400
 ```
 
-#### Single Strategy
+Where:
+
+- `0seg` = noport
+- `1seg` = init local post-optimization
+- `2seg` = sweep boundary optimization
+- `Xseg` = fixed-port model
+
+Useful Targets
+--------------
 
 ```bash
-make -C src noport
-make -C src init INIT=noport
-make -C src init INIT=nn
-make -C src init INIT=ge
-make -C src init INIT=ci
+make -C src help
 ```
 
-#### Batch: All 4 Strategies
-
-```bash
-bash scripts/run_phase0_init.sh
-```
-
-**Expected Output (noport strategy)**:
-
-```
-============================================================
-GSP Solver - Phase 0: Initialization
-============================================================
-Boat: Árni Friðriksson (ID=2)
-Capacity: 45 tonnes
-Home Port: Hafnarfjörður
-Database: dat/gsp.db
-
-Strategy: noport (NP-MIP station order)
-Solver: Gurobi 11.0
-CPUs Available: 8 cores
-Threads: 4 (Gurobi)
-Time Limit: 600.0 seconds
-
-[LOADING] Stations: 580 | Ports: 5 | Waypoints: 8
-[LOADING] Distance matrix: 593x593 (2.82 MB)
-[BUILDING] MIP model...
-[SOLVING] NP-MIP (no capacity constraints, fixed start/end)
-[PROGRESS] Status=OPTIMAL Gap=0.00% Nodes=45000 Runtime=425.3s
-
-Results:
-  Total Distance: 8742.15 nm
-  Total Load: 528 tonnes (12 segments minimum)
-  Stations: 580
-  Segments: 13 (optimal segmentation)
-  Runtime: 425.3 seconds (7.1 minutes)
-  Solver Gap: 0.00%
-
-[DATABASE] Storing solution to init_runs table...
-[SUCCESS] Initialization complete! (init_run_id=1)
-============================================================
-```
-
-#### Verify Phase 0 Completion
-
-```bash
-sqlite3 dat/gsp.db \
-  "SELECT strategy, total_distance, num_stations, num_segments, runtime_seconds 
-   FROM init_runs 
-   WHERE boat_id = 2 
-   ORDER BY total_distance;"
-```
-
-Sample output:
-
-```
-ci|8654.32|580|13|87.4
-ge|8698.15|580|13|15.3
-nn|8721.45|580|13|8.2
-noport|8742.15|580|13|425.3
-```
-
-### Phase 1: Matheuristic Sweep (Reusable)
-
-The MH sweep improves a cached Phase 0 solution through iterative segment refinement using
-capacity-aware MIP solves.
-
-#### Single Sweep
-
-```bash
-./build/gsp_gurobi --mode sweep \
-  --strategy noport \
-  --database dat/gsp.db \
-  --config config/gsp_solver.yaml \
-  --input sol/noport/init.json \
-  --output sol/noport/sweep.json \
-  --time-limit 120
-```
-
-Parameters:
-
-- `--init-strategy noport` - Use noport init (looks up boat_id + strategy in database)
-- `gurobi.l2seg` - Time limit per two-segment MIP solve (seconds)
-- `--max-iterations 100` - Maximum iterations to run
-
-#### Batch Sweep
-
-```bash
-bash scripts/run_phase1_sweep.sh
-```
-
-Runs the sweep workflow using cached noport initialization.
-
-**Expected Output (Sweep Progress)**:
-
-```
-============================================================
-GSP Solver - Phase 1: Matheuristic Sweep
-============================================================
-Init Strategy: noport (init_run_id=1)
-Initial Distance: 8742.15 nm | Segments: 13
-
-Configuration:
-  MIP Time Limit: 120.0 s per two-segment solve
-  Max Iterations: 100
-  CPUs Available: 8 cores
-  Gurobi Threads: 4
-
-[INIT] Loading cached init solution (noport, boat_id=2)...
-[INIT] Distance: 8742.15 nm | Segments: 13 | Load: 528 tonnes
-
-[STARTING] Matheuristic iteration sweep...
-
-Iteration   1 | Segments:  13 | Distance: 8742.15 | Best: 8742.15 | Δ:     0.00 | Time:  0.1s
-Iteration   2 | Segments:  13 | Distance: 8698.45 | Best: 8698.45 | Δ:    43.70 | Time: 62.3s
-Iteration   3 | Segments:  13 | Distance: 8698.45 | Best: 8698.45 | Δ:     0.00 | Time: 58.1s
-Iteration   4 | Segments:  13 | Distance: 8651.22 | Best: 8651.22 | Δ:    47.23 | Time: 71.2s
-...
-Iteration 100 | Segments:  13 | Distance: 8312.45 | Best: 8312.45 | Δ:     0.00 | Time: 45.7s
-
-[SUMMARY] Matheuristic Sweep Complete
-Initial Distance:      8742.15 nm
-Final Distance:        8312.45 nm
-Total Improvement:     429.70 nm (4.91%)
-Iterations:            100 (67 with improvement)
-Stalled Iterations:    33
-Final Segments:        13
-Total Runtime:         6847.2 seconds (114.1 minutes)
-
-[DATABASE] Storing results to mh_runs, mh_iterations tables...
-[SUCCESS] Sweep complete! (mh_run_id=1)
-============================================================
-```
-
-### Configuration
-
-The solver reads configuration from `config/gsp_solver.yaml`:
-
-```yaml
-boat:
-  id: 2
-  name: "Árni Friðriksson"
-  # capacity, home_port loaded from database
-
-init:
-  strategies: [ noport, fixedport, nn, ge, ci ]
-  noport: {}
-  fixedport: {}
-  nn: {}
-  ge: {}
-  ci: {}
-
-sweep:
-  max_iterations: 100
-
-gurobi:
-  l0seg: 0
-  l1seg: 0
-  l2seg: 0
-  lXseg: 86400
-```
-
-### Querying Results
-
-**Compare all INIT strategies:**
-
-```bash
-sqlite3 dat/gsp.db \
-  "SELECT 
-     strategy,
-     total_distance,
-     num_segments,
-     runtime_seconds
-   FROM init_runs
-   WHERE boat_id = 2
-   ORDER BY total_distance ASC;"
-```
-
-**Best MH result by run:**
-
-```bash
-sqlite3 dat/gsp.db \
-  "SELECT 
-     init.strategy,
-     mh.final_distance,
-     ROUND(100.0*(init.total_distance - mh.final_distance) / init.total_distance, 2) AS improvement_pct,
-     mh.iterations_completed,
-     ROUND(mh.total_runtime_seconds/60.0, 1) AS runtime_min
-   FROM mh_runs mh
-   JOIN init_runs init ON mh.init_run_id = init.id
-   WHERE init.boat_id = 2 AND init.strategy = 'noport'
-   ORDER BY mh.final_distance;"
-```
-
-**Track convergence:**
-
-```bash
-sqlite3 dat/gsp.db \
-  "SELECT 
-     iteration,
-     total_distance,
-     best_distance,
-     num_changed,
-     ROUND(elapsed_seconds/60.0, 2) AS elapsed_min
-   FROM mh_iterations
-   WHERE mh_run_id = 1
-   ORDER BY iteration;"
-```
-
-### Shell Scripts
-
-**`scripts/run_phase0_init.sh`** - Run all 4 initialization strategies:
-
-```bash
-bash scripts/run_phase0_init.sh
-```
-
-**`scripts/run_phase1_sweep.sh`** - Run MH sweeps:
-
-```bash
-bash scripts/run_phase1_sweep.sh
-```
-
-**`scripts/batch_all.sh`** - Complete pipeline (Phase 0 → Phase 1):
-
-```bash
-bash scripts/batch_all.sh
-```
-
-### Performance Expectations
-
-Typical runtimes on 8-core system (Árni Friðriksson, 580 stations, 45 tonne capacity):
-
-**Phase 0 (INIT):**
-
-- noport: 400-500 seconds (~7-8 minutes)
-- NN: <1 second
-- GE: 5-10 seconds
-- CI: 45-60 seconds
-- **Total Phase 0**: ~10 minutes
-
-**Phase 1 (MH):**
-
-- Runtime depends mainly on `gurobi.l2seg`, active boundaries, and `sweep.max_iterations`.
-
-**Complete Pipeline**: ~10-13 hours total
-
-### Database Tables
-
-Solution tracking uses 8 tables in `dat/gsp.db`:
-
-- `init_runs` - One entry per boat/strategy combination
-- `init_tours` - Tour waypoints for each init solution
-- `init_segments` - Segments created during initialization
-- `mh_runs` - Configuration and final results for each sweep
-- `mh_iterations` - Per-iteration progress tracking
-- `mh_iteration_segments` - Per-segment stats for each iteration
-- `mh_capacity_solves` - Gurobi MIP solver details
-- `mh_improvements` - Solution snapshots on improvement
-- `metadata` - Configuration and runtime parameters
-
-### Troubleshooting
-
-**Problem: "init_run_id not found"**
-
-- Solution: Run Phase 0 first: `bash scripts/run_phase0_init.sh`
-
-**Problem: "No noport solution available"**
-
-- Solution: noport takes ~7 minutes. Use `--init-strategy nn` or `--init-strategy ge` for quick
-  testing.
-
-**Problem: Phase 1 taking very long**
-
-- Solution: Reduce `--max-iterations` or decrease `--mip-time-limit` for faster (lower quality)
-  results.
-
-**Problem: "Gurobi license error"**
-
-- Solution: Verify `GUROBI_HOME` is set and license is valid: `gurobi_cl --license`
-
-### References
-
-- Configuration: `config/gsp_solver.yaml`
-- Boat info: `SELECT id, name, capacity FROM boats;`
-- Station count: `SELECT boat_id, COUNT(*) FROM survey_2023 WHERE location_type=1 GROUP BY boat_id;`
-- Total catch: `SELECT SUM(amount) FROM stations;`
-
+Common targets:
+
+- `make -C src build`
+- `make -C src prepare-routing-data`
+- `make -C src survey`
+- `make -C src experiments`
+- `make -C src plot`
+
+Notes
+-----
+
+- `src/Makefile` is a lightweight wrapper around the CMake build in `build/`.
+- Long MIP runs can be expensive. Prefer targeted runs over rebuilding or rerunning the full pipeline.
+- Route JSON files under `sol/` are the current source of truth for plotting and result summaries.
