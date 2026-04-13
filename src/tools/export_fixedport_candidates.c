@@ -22,6 +22,10 @@ typedef struct {
     int segment_count;
     int kept_segment_count;
     int_vec_t kept_end_docks;
+    int dropped_segment_count;
+    int_vec_t dropped_segment_indices;
+    int_vec_t dropped_segment_catches;
+    int_vec_t dropped_end_docks;
 } boat_candidate_t;
 
 typedef struct {
@@ -79,6 +83,9 @@ static void free_boat_candidate(boat_candidate_t *boat) {
     free(boat->segment_end_dock_location_ids);
     free(boat->segment_catch_amount);
     int_vec_free(&boat->kept_end_docks);
+    int_vec_free(&boat->dropped_segment_indices);
+    int_vec_free(&boat->dropped_segment_catches);
+    int_vec_free(&boat->dropped_end_docks);
     memset(boat, 0, sizeof(*boat));
 }
 
@@ -406,6 +413,9 @@ static int load_boat_candidate(const char *json_path, int min_segment_catch_kg, 
     if (!json_path || !boat) return 0;
     memset(boat, 0, sizeof(*boat));
     int_vec_init(&boat->kept_end_docks);
+    int_vec_init(&boat->dropped_segment_indices);
+    int_vec_init(&boat->dropped_segment_catches);
+    int_vec_init(&boat->dropped_end_docks);
     boat->path = dup_cstr_local(json_path);
     if (!boat->path) return 0;
 
@@ -432,7 +442,16 @@ static int load_boat_candidate(const char *json_path, int min_segment_catch_kg, 
     }
 
     for (int i = 0; i < boat->segment_count; i++) {
-        if (boat->segment_catch_amount[i] < min_segment_catch_kg) continue;
+        if (boat->segment_catch_amount[i] < min_segment_catch_kg) {
+            boat->dropped_segment_count++;
+            if (!int_vec_push(&boat->dropped_segment_indices, i + 1) ||
+                !int_vec_push(&boat->dropped_segment_catches, boat->segment_catch_amount[i]) ||
+                !int_vec_push(&boat->dropped_end_docks, boat->segment_end_dock_location_ids[i])) {
+                free_boat_candidate(boat);
+                return 0;
+            }
+            continue;
+        }
         if (!int_vec_push(&boat->kept_end_docks, boat->segment_end_dock_location_ids[i])) {
             free_boat_candidate(boat);
             return 0;
@@ -511,10 +530,21 @@ static int write_output_json(const char *output_path,
         }
         fprintf(fp, "],\n");
         fprintf(fp, "      \"kept_segment_count\": %d,\n", boats[i].kept_segment_count);
+        fprintf(fp, "      \"dropped_segment_count\": %d,\n", boats[i].dropped_segment_count);
         fprintf(fp, "      \"kept_end_dock_location_ids\": [");
         for (int j = 0; j < boats[i].kept_end_docks.count; j++) {
             if (j) fprintf(fp, ", ");
             fprintf(fp, "%d", boats[i].kept_end_docks.data[j]);
+        }
+        fprintf(fp, "],\n");
+        fprintf(fp, "      \"dropped_segments\": [");
+        for (int j = 0; j < boats[i].dropped_segment_count; j++) {
+            if (j) fprintf(fp, ", ");
+            fprintf(fp,
+                    "{\"segment\": %d, \"catch_kg\": %d, \"end_dock_location_id\": %d}",
+                    boats[i].dropped_segment_indices.data[j],
+                    boats[i].dropped_segment_catches.data[j],
+                    boats[i].dropped_end_docks.data[j]);
         }
         fprintf(fp, "]\n");
         fprintf(fp, "    }%s\n", (i + 1 < boat_count) ? "," : "");
