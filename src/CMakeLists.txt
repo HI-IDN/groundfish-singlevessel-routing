@@ -298,12 +298,51 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Preprocessing: no-port optimal station ordering"
     )
+
+    add_executable(gsp_fixedport
+        mip/fixedport.c
+        mip/endpaired_tsp.c
+        ${GSP_MIP_SHARED_SOURCES}
+        init/fixedport_order_main.c
+        init/local_postopt.c
+        common/json_utils.c
+        common/mip_report.c
+        common/sql_utils.c
+    )
+
+    target_include_directories(gsp_fixedport PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/mip/include
+        ${SQLITE3_INCLUDE_DIRS}
+        ${GUROBI_INCLUDE_DIR}
+    )
+
+    target_link_libraries(gsp_fixedport
+        ${SQLITE3_LIBRARIES}
+        -L${GUROBI_LIBRARY_DIR}
+        gurobi130
+        m
+    )
+
+    add_custom_target(run_fixedport
+        COMMAND $<TARGET_FILE:gsp_fixedport> --database ${DATABASE} --config ${CONFIG_YAML} --candidates ${CMAKE_CURRENT_SOURCE_DIR}/../dat/candidate_ports.json --output ${SOL_FIXEDPORT_DIR}/fixedport.json
+        DEPENDS gsp_fixedport
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Preprocessing: fixed-port debug optimization"
+    )
 else()
     add_custom_target(run_noport
         COMMAND ${CMAKE_COMMAND} -E echo "No-port unavailable: Gurobi headers/library not found during CMake configure"
         COMMAND ${CMAKE_COMMAND} -E false
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Preprocessing: no-port optimal station ordering"
+    )
+
+    add_custom_target(run_fixedport
+        COMMAND ${CMAKE_COMMAND} -E echo "Fixed-port unavailable: Gurobi headers/library not found during CMake configure"
+        COMMAND ${CMAKE_COMMAND} -E false
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Preprocessing: fixed-port debug optimization"
     )
 endif()
 
@@ -394,6 +433,9 @@ install(TARGETS gsp historical_survey survey_fixedport_candidates gsp_country gs
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     install(TARGETS gsp_noport
+        RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
+    )
+    install(TARGETS gsp_fixedport
         RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
     )
     install(TARGETS gsp_gurobi

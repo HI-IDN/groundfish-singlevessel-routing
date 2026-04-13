@@ -183,6 +183,10 @@ double read_sweep_mip_time_limit_from_yaml(const char *yaml_path) {
     return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "2seg", "sweep", "l2seg", NULL);
 }
 
+double read_fixedport_mip_time_limit_from_yaml(const char *yaml_path) {
+    return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "Xseg", "fixedport", "lXseg", NULL);
+}
+
 int read_objective_include_haul_distance_from_yaml(const char *yaml_path) {
     FILE *fp = fopen(yaml_path, "r");
     char line[MAX_LINE];
@@ -244,6 +248,10 @@ double read_init_haul_distance_scale_from_yaml(const char *yaml_path) {
 
 double read_sweep_haul_distance_scale_from_yaml(const char *yaml_path) {
     return read_phase_haul_distance_scale_from_yaml(yaml_path, "sweep");
+}
+
+double read_fixedport_haul_distance_scale_from_yaml(const char *yaml_path) {
+    return read_phase_haul_distance_scale_from_yaml(yaml_path, "fixedport");
 }
 
 static int find_station_index_local(const nn_instance_t *inst, int station_id) {

@@ -9,10 +9,12 @@ void init_free_solution(nn_solution_t *sol);
 double read_init_mip_time_limit_from_yaml(const char *yaml_path);
 double read_noport_mip_time_limit_from_yaml(const char *yaml_path);
 double read_sweep_mip_time_limit_from_yaml(const char *yaml_path);
+double read_fixedport_mip_time_limit_from_yaml(const char *yaml_path);
 int read_objective_include_haul_distance_from_yaml(const char *yaml_path);
 double read_noport_haul_distance_scale_from_yaml(const char *yaml_path);
 double read_init_haul_distance_scale_from_yaml(const char *yaml_path);
 double read_sweep_haul_distance_scale_from_yaml(const char *yaml_path);
+double read_fixedport_haul_distance_scale_from_yaml(const char *yaml_path);
 int init_apply_local_postopt(const nn_instance_t *inst,
                              const nn_solution_t *input,
                              int boat_start_loc_id,

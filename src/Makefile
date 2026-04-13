@@ -28,7 +28,7 @@ FIXEDPORT_CANDIDATE_JSON = ../dat/candidate_ports.json
 SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_BOAT_JSONS = ../sol/survey/boat1.json ../sol/survey/boat2.json ../sol/survey/boat3.json ../sol/survey/boat4.json
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates init noport sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport init noport sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
 
 all: build
 
@@ -85,6 +85,12 @@ $(FIXEDPORT_CANDIDATE_JSON): $(SURVEY_BOAT_JSONS) $(CONFIG_YAML) $(BUILD_DIR)/CM
 	@bash -lc 'cd "$(BUILD_DIR)" && ./survey_fixedport_candidates "$(CONFIG_YAML)" "$(COUNTRY_DB)" "$(FIXEDPORT_CANDIDATE_JSON)" "../sol/survey/boat1.json" "../sol/survey/boat2.json" "../sol/survey/boat3.json" "../sol/survey/boat4.json"'
 
 fixedport_candidates: $(FIXEDPORT_CANDIDATE_JSON)
+
+fixedport: ../sol/fixedport/fixedport.json
+
+../sol/fixedport/fixedport.json: $(COUNTRY_DB) $(FIXEDPORT_CANDIDATE_JSON)
+	@mkdir -p ../sol/fixedport
+	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_fixedport --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --candidates "$(FIXEDPORT_CANDIDATE_JSON)" --output "../sol/fixedport/fixedport.json" 2>&1 | tee -a ../sol/fixedport/fixedport.log'
 
 noport: ../sol/noport/noport.json
 
@@ -213,6 +219,7 @@ help:
 	@echo "  make -C src build"
 	@echo "  make -C src survey"
 	@echo "  make -C src fixedport_candidates"
+	@echo "  make -C src fixedport"
 	@echo "  make -C src experiments"
 	@echo "  make -C src plot"
 	@echo "  make -C src plot-routes"
