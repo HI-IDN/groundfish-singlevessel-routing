@@ -18,14 +18,16 @@ particularly in regions where many similar‑length edges compete.
 
 ## Route Plotting
 
-![GE Initialization](init.png)
-![GE Sweep Adjustment](sweep.png)
+<table><tr>
+<td align="center"><img src="init.png" width="460"/><br><sub>Initialization — transit 4,809.89 nm · total 7,052.74 nm</sub></td>
+<td align="center"><img src="sweep.png" width="460"/><br><sub>Sweep (pass 6) — transit 4,643.65 nm · total 6,886.50 nm</sub></td>
+</tr></table>
 
 ## Segment Summary
 
 ### Initialization (capacity feasible)
 
-|   Segment |   Length | Stations |      Catch | Transit (nm) | Distance (nm) |
+5|   Segment |   Length | Stations |      Catch | Transit (nm) | Distance (nm) |
 |----------:|---------:|---------:|-----------:|-------------:|--------------:|
 |         1 |      175 |       87 |      43418 |       802.03 |       1132.15 |
 |         2 |      117 |       58 |      43833 |       423.08 |        646.73 |

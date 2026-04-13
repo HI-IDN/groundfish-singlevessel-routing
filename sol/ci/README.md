@@ -20,8 +20,10 @@ default initialization for downstream refinement.
 
 ## Route Plotting
 
-![CI Initialization](init.png)
-![CI Sweep Adjustment](sweep.png)
+<table><tr>
+<td align="center"><img src="init.png" width="460"/><br><sub>Initialization — transit 5,047.00 nm · total 7,289.85 nm</sub></td>
+<td align="center"><img src="sweep.png" width="460"/><br><sub>Sweep (pass 3) — transit 4,975.69 nm · total 7,218.55 nm</sub></td>
+</tr></table>
 
 ## Segment Summary
 

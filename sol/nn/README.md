@@ -13,23 +13,14 @@ behavior can lead to noisy or irregular segmentations, especially in regions wit
 stations or sharp load gradients. Despite this, NN provides a lightweight deterministic baseline
 that is useful for benchmarking more sophisticated initialization strategies.
 
-The current NN output is:
-
-- `sol/nn/init.json`
-- `sol/nn/init.png`
-
-Produced by:
-
-```bash
-make -C src init_nn
-```
-
 -----
 
 ## Route Plotting
 
-![NN Initialization](init.png)
-![NN Sweep Adjustment](sweep.png)
+<table><tr>
+<td align="center"><img src="init.png" width="460"/><br><sub>Initialization — transit 6,264.57 nm · total 8,507.42 nm</sub></td>
+<td align="center"><img src="sweep.png" width="460"/><br><sub>Sweep (pass 4) — transit 5,932.39 nm · total 8,175.24 nm</sub></td>
+</tr></table>
 
 ## Segment Summary
 
