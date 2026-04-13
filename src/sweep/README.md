@@ -1,22 +1,22 @@
 # `sweep`
 
-Matheuristic improvement logic for the survey-routing workflow.
+Matheuristic refinement logic for the survey-routing workflow.
 
-This directory owns the phase that starts from an existing initialization and
-improves it through repeated local boundary re-optimization.
+This directory owns the phase that starts from an existing segmented baseline
+and improves it through repeated local boundary re-optimization.
 
 Main Component
 --------------
 
 ```text
 sweep/
-└── gsp_sweep_mode.c  entrypoint for gsp --mode sweep
+`-- gsp_sweep_mode.c  entrypoint for gsp --mode sweep
 ```
 
 Role In The Workflow
 --------------------
 
-Sweep starts from an existing `init.json` and explores improvements around
+Refinement starts from an existing `segment.json` and explores improvements around
 adjacent segment boundaries. The high-level orchestration lives here:
 
 - choose which boundary neighborhood to examine
@@ -32,7 +32,7 @@ This phase is reported as:
 Configuration
 -------------
 
-Sweep uses:
+Refinement uses:
 
 - `gurobi.time_limit_seconds.2seg`
 - `gurobi.haul_distance_scale.2seg`
@@ -41,28 +41,28 @@ Sweep uses:
 `haul_distance_scale.2seg` controls how haul distance enters the boundary MIP objective:
 
 - `0.0`
-  removes haul distance from the sweep MIP objective
+  removes haul distance from the refinement MIP objective
 - `1e-5`
   keeps haul only as a weak tie-breaker
 - `1.0`
   uses full haul distance
 
-The recommended setting for sweep is `1.0`, so accepted improvements are judged
+The recommended setting for refinement is `1.0`, so accepted improvements are judged
 using the real haul-distance contribution in the local MIP objective.
 
 JSON Notes
 ----------
 
 - `solution.init`
-  the starting segmented route loaded from the init phase
+  the starting segmented route loaded from the segment phase
 - `solution.pass1`, `solution.pass2`, ...
-  later accepted sweep states
+  later accepted refinement states
 - `tour_segments_station_ids`
   signed station visit order for each segment
 - `tour_segments_station_mutation_ids`
-  only the station changes relative to the previous sweep state
+  only the station changes relative to the previous refinement state
 - `mip`
-  sweep-level solve details and aggregate MIP reporting
+  refinement-level solve details and aggregate MIP reporting
 
 Boundary
 --------

@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "nearest_neighbor.h"
+#include "construction_nn.h"
 #include "init_utils.h"
 
 int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,

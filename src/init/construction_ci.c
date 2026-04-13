@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "cheapest_insertion.h"
+#include "construction_ci.h"
 #include "init_utils.h"
 
 static double min_dist_station_pair(const nn_instance_t *inst, int a_idx, int b_idx)

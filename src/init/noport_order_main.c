@@ -3,7 +3,7 @@
 #include "../include/init_types.h"
 #include "../include/json_utils.h"
 #include "../include/mip_report.h"
-#include "local_postopt.h"
+#include "segment_postopt.h"
 
 #include <sqlite3.h>
 #include <stdio.h>

@@ -15,9 +15,9 @@ args <- commandArgs(trailingOnly = TRUE)
 sol_dir <- if (length(args) >= 1) args[1] else "sol"
 output_file <- if (length(args) >= 2) args[2] else file.path(sol_dir, "sweep_summary_panels.png")
 
-methods <- c("nn", "ci", "ge", "opt")
-method_labels <- c(nn = "NN", ci = "CI", ge = "GE", opt = "OPT")
-method_colors <- c(nn = "#355070", ci = "#6D597A", ge = "#B56576", opt = "#E56B6F")
+methods <- c("nn", "ci", "ge", "noport")
+method_labels <- c(nn = "NN", ci = "CI", ge = "GE", noport = "NOPORT")
+method_colors <- c(nn = "#355070", ci = "#6D597A", ge = "#B56576", noport = "#E56B6F")
 
 read_json_safe <- function(path) {
   tryCatch(jsonlite::fromJSON(path, simplifyVector = FALSE), error = function(e) NULL)
@@ -124,12 +124,12 @@ extract_mip_rows <- function(method, path) {
 }
 
 station_rows <- bind_rows(lapply(methods, function(method) {
-  extract_station_rows(method, file.path(sol_dir, method, "sweep.json"))
+  extract_station_rows(method, file.path(sol_dir, method, "refinement.json"))
 })) %>%
   mutate(method = factor(method, levels = methods, labels = unname(method_labels[methods])))
 
 distance_rows <- bind_rows(lapply(methods, function(method) {
-  extract_distance_rows(method, file.path(sol_dir, method, "sweep.json"))
+  extract_distance_rows(method, file.path(sol_dir, method, "refinement.json"))
 })) %>%
   group_by(method) %>%
   mutate(
@@ -144,7 +144,7 @@ distance_rows <- bind_rows(lapply(methods, function(method) {
   mutate(method = factor(method, levels = methods, labels = unname(method_labels[methods])))
 
 mip_lists <- lapply(methods, function(method) {
-  extract_mip_rows(method, file.path(sol_dir, method, "sweep.json"))
+  extract_mip_rows(method, file.path(sol_dir, method, "refinement.json"))
 })
 
 mip_runtime_rows <- bind_rows(lapply(mip_lists, `[[`, "runtime")) %>%
@@ -157,7 +157,7 @@ solve_rows <- bind_rows(lapply(mip_lists, `[[`, "solves")) %>%
   mutate(method = factor(method, levels = methods, labels = unname(method_labels[methods])))
 
 if (nrow(station_rows) == 0 || nrow(distance_rows) == 0) {
-  stop("Missing sweep.json data needed for combined sweep summary figure.", call. = FALSE)
+  stop("Missing refinement.json data needed for combined sweep summary figure.", call. = FALSE)
 }
 
 station_summary <- station_rows %>%

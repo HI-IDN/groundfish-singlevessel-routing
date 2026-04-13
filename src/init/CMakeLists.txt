@@ -1,6 +1,6 @@
 add_executable(gsp_init_from_order
-    init_from_order.c
-    local_postopt.c
+    segment_from_order.c
+    segment_postopt.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/feasibility.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/json_utils.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/mip_report.c
@@ -38,7 +38,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         ${GSP_MIP_ENDPAIRED_SOURCE}
         ${GSP_MIP_SHARED_SOURCES}
         noport_order_main.c
-        local_postopt.c
+        segment_postopt.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/feasibility.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/json_utils.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/mip_report.c
@@ -75,7 +75,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         ${GSP_MIP_ENDPAIRED_SOURCE}
         ${GSP_MIP_SHARED_SOURCES}
         fixedport_order_main.c
-        local_postopt.c
+        segment_postopt.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/json_utils.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/mip_report.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/sql_utils.c
@@ -166,7 +166,7 @@ else()
 endif()
 
 add_custom_target(run_init_from_order
-    COMMAND $<TARGET_FILE:gsp_init_from_order> --database ${DATABASE} --config ${CONFIG_YAML} --input ${SOL_NOPORT_DIR}/noport.json --output ${SOL_NOPORT_DIR}/init.json
+    COMMAND $<TARGET_FILE:gsp_init_from_order> --database ${DATABASE} --config ${CONFIG_YAML} --input ${SOL_NOPORT_DIR}/construction.json --output ${SOL_NOPORT_DIR}/segment.json
     DEPENDS gsp_init_from_order
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Phase 0: initialization from ordered input"

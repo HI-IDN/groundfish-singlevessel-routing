@@ -1,10 +1,10 @@
 add_executable(gsp
     ${CMAKE_CURRENT_SOURCE_DIR}/../gsp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../init/gsp_init_mode.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../init/local_postopt.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../init/nearest_neighbor.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../init/greedy_insertion.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../init/cheapest_insertion.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../init/segment_postopt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../init/construction_nn.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../init/construction_ge.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../init/construction_ci.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/feasibility.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/json_utils.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/mip_report.c
@@ -25,10 +25,10 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     add_executable(gsp_gurobi
         ${CMAKE_CURRENT_SOURCE_DIR}/../gsp.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../init/gsp_init_mode.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/../init/local_postopt.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/../init/nearest_neighbor.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/../init/greedy_insertion.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/../init/cheapest_insertion.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../init/segment_postopt.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../init/construction_nn.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../init/construction_ge.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../init/construction_ci.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/feasibility.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/json_utils.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/mip_report.c

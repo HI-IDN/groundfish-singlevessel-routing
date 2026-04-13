@@ -187,9 +187,9 @@ This writes the observed boat routes to:
 
     Output:
      - `dat/candidate_ports.json` 
-    - `sol/fixedport/fixedport.json`
+    - `sol/fixedport/construction.json`
 
-4. Initialization
+4. Segmentation
 
     Constructs a capacity-feasible segmented solution using either:
     - MIP-based input (`noport`, `fixedport`)
@@ -198,22 +198,22 @@ This writes the observed boat routes to:
       - `ci` (cheapest insertion)
       - `ge` (greedy edge)
     ```bash
-    make -C src init INIT=noport|nn|ge|ci|fixedport
+    make -C src segment METHOD=noport|nn|ge|ci|fixedport
     ```
     Outputs: 
     ```bash 
-    sol/<strategy>/init.json
+    sol/<strategy>/segment.json
     ```
 
-5. Sweep improvement
+5. Refinement
 
     Performs local re-optimization over adjacent segments
     ```bash
-    make -C src sweep INIT=noport|nn|ge|ci|fixedport
+    make -C src refinement METHOD=noport|nn|ge|ci
     ```
     Outputs:
     ```bash 
-    sol/<strategy>/sweep.json
+    sol/<strategy>/refinement.json
     ```
 
 6. Generate plots:

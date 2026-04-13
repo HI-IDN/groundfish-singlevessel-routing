@@ -26,10 +26,10 @@ static double elapsed_seconds(struct timespec start, struct timespec end) {
            (double)(end.tv_nsec - start.tv_nsec) / 1e9;
 }
 
-#include "nearest_neighbor.h"
-#include "greedy_insertion.h"
-#include "cheapest_insertion.h"
-#include "local_postopt.h"
+#include "construction_nn.h"
+#include "construction_ge.h"
+#include "construction_ci.h"
+#include "segment_postopt.h"
 #include "../include/feasibility.h"
 #include "../include/json_utils.h"
 #include "../include/mip_report.h"

@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 
-#include "greedy_insertion.h"
+#include "construction_ge.h"
 #include "init_utils.h"
 
 /* get_distance, find_nearest_port, grow_int_array, grow_dist_array

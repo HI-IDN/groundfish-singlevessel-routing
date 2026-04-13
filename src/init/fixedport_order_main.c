@@ -1,7 +1,7 @@
 #include "../include/dat_parser.h"
 #include "../include/json_utils.h"
 #include "../mip/include/mip_fixedport.h"
-#include "local_postopt.h"
+#include "segment_postopt.h"
 
 #include <sqlite3.h>
 #include <stdio.h>

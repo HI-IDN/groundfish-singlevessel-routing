@@ -11,7 +11,7 @@
 #include "../include/json_utils.h"
 #include "../include/mip_report.h"
 #include "../init/init_utils.h"
-#include "../init/local_postopt.h"
+#include "../init/segment_postopt.h"
 
 #ifdef HAVE_GUROBI
 #include <gurobi_c.h>

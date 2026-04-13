@@ -108,21 +108,29 @@ describe_single_route_title <- function(path) {
   if (identical(file_name, "fixedport.json")) {
     return("Fixed-Port Capacity Model")
   }
-  if (identical(file_name, "init.json")) {
-    if (identical(family, "noport")) return("Initialization from No-Port Solution")
-    if (identical(family, "nn")) return("Nearest-Neighbor Initialization")
-    if (identical(family, "ge")) return("Greedy-Edge Initialization")
-    if (identical(family, "ci")) return("Cheapest-Insertion Initialization")
-    if (identical(family, "fixedport")) return("Initialization from Fixed-Port Solution")
-    return("Initialization")
+  if (identical(file_name, "construction.json")) {
+    if (identical(family, "noport")) return("No-Port Construction")
+    if (identical(family, "nn")) return("Nearest-Neighbor Construction")
+    if (identical(family, "ge")) return("Greedy-Edge Construction")
+    if (identical(family, "ci")) return("Cheapest-Insertion Construction")
+    if (identical(family, "fixedport")) return("Fixed-Port Construction")
+    return("Construction")
   }
-  if (identical(file_name, "sweep.json")) {
-    if (identical(family, "noport")) return("Sweep from No-Port Initialization")
-    if (identical(family, "nn")) return("Sweep from Nearest-Neighbor Initialization")
-    if (identical(family, "ge")) return("Sweep from Greedy-Edge Initialization")
-    if (identical(family, "ci")) return("Sweep from Cheapest-Insertion Initialization")
-    if (identical(family, "fixedport")) return("Sweep from Fixed-Port Initialization")
-    return("Sweep")
+  if (identical(file_name, "segment.json") || identical(file_name, "init.json")) {
+    if (identical(family, "noport")) return("Segmentation from No-Port Construction")
+    if (identical(family, "nn")) return("Segmented Nearest-Neighbor Construction")
+    if (identical(family, "ge")) return("Segmented Greedy-Edge Construction")
+    if (identical(family, "ci")) return("Segmented Cheapest-Insertion Construction")
+    if (identical(family, "fixedport")) return("Segmented Fixed-Port Construction")
+    return("Segmentation")
+  }
+  if (identical(file_name, "refinement.json") || identical(file_name, "sweep.json")) {
+    if (identical(family, "noport")) return("Refinement from No-Port Segmentation")
+    if (identical(family, "nn")) return("Refinement from Nearest-Neighbor Segmentation")
+    if (identical(family, "ge")) return("Refinement from Greedy-Edge Segmentation")
+    if (identical(family, "ci")) return("Refinement from Cheapest-Insertion Segmentation")
+    if (identical(family, "fixedport")) return("Refinement from Fixed-Port Segmentation")
+    return("Refinement")
   }
 
   title_case_variant(tools::file_path_sans_ext(file_name))

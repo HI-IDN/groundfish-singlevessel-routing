@@ -11,7 +11,7 @@
 #include "../include/json_utils.h"
 #include "../include/mip_report.h"
 #include "init_utils.h"
-#include "local_postopt.h"
+#include "segment_postopt.h"
 
 #define MAX_LINE 1024
 
@@ -1021,7 +1021,7 @@ int main(int argc, char **argv) {
     }
 
     if (!database || !config || !input || !output) {
-        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <ordered.json> --output <init.json> [--strategy noport|fixedport]\n", argv[0]);
+        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <construction.json> --output <segment.json> [--strategy noport|fixedport]\n", argv[0]);
         return 1;
     }
     if (!strategy) strategy = infer_strategy_from_path(input);
