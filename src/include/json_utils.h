@@ -54,10 +54,52 @@ typedef struct {
     double mip_gap_max;
 } gsp_summary_json_t;
 
+typedef void (*gsp_json_extra_writer_fn)(FILE *fp, const char *indent, const void *ctx);
+
+typedef struct {
+    const char *solver_version;
+    const char *mode_name;
+    const char *strategy_name;
+    int boat_id;
+    const char *boat_name;
+    double boat_lat;
+    double boat_lon;
+    int boat_location_id;
+    gsp_json_extra_writer_fn extra_writer;
+    const void *extra_ctx;
+} gsp_metadata_json_t;
+
+typedef struct {
+    int has_num_nodes;
+    int num_nodes;
+    int has_num_stations;
+    int num_stations;
+    int has_num_ports;
+    int num_ports;
+    int has_capacity;
+    double capacity;
+    int has_target_capacity;
+    double target_capacity;
+    int has_target_catch_slack_kg;
+    int target_catch_slack_kg;
+    gsp_json_extra_writer_fn extra_writer;
+    const void *extra_ctx;
+} gsp_problem_json_t;
+
 void gsp_write_solution_json(FILE *fp,
                              const char *indent,
                              const gsp_solution_json_view_t *view,
                              int trailing_comma);
+
+void gsp_write_metadata_json(FILE *fp,
+                             const char *indent,
+                             const gsp_metadata_json_t *metadata,
+                             int trailing_comma);
+
+void gsp_write_problem_json(FILE *fp,
+                            const char *indent,
+                            const gsp_problem_json_t *problem,
+                            int trailing_comma);
 
 void gsp_write_distance_nm_json(FILE *fp,
                                 const char *indent,

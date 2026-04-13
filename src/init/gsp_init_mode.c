@@ -916,24 +916,31 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
            elapsed_seconds(t_output_start, t_output_preload_end));
 
     fprintf(fp, "{\n");
-    fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"init_nn_1.0\",\n");
-    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"init_%s\",\n", strategy_name ? strategy_name : "unknown");
-    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
-    fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
-    fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
-    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
-    fprintf(fp, "    \"boat_location_id\": %d\n", boat_start_loc_id);
-    fprintf(fp, "  },\n");
+    {
+        gsp_metadata_json_t metadata = {0};
+        gsp_problem_json_t problem = {0};
+        metadata.solver_version = "init_nn_1.0";
+        metadata.mode_name = "segment";
+        metadata.strategy_name = strategy_name ? strategy_name : "unknown";
+        metadata.boat_id = boat_id;
+        metadata.boat_name = boat_name;
+        metadata.boat_lat = boat_start_lat;
+        metadata.boat_lon = boat_start_lon;
+        metadata.boat_location_id = boat_start_loc_id;
+        gsp_write_metadata_json(fp, "  ", &metadata, 1);
 
-    fprintf(fp, "  \"problem\": {\n");
-    fprintf(fp, "    \"num_nodes\": %d,\n", sol->tour_length);
-    fprintf(fp, "    \"num_stations\": %d,\n", inst->num_stations);
-    fprintf(fp, "    \"capacity\": %.0f,\n", boat_capacity);
-    fprintf(fp, "    \"target_capacity\": %.0f,\n", target_capacity);
-    fprintf(fp, "    \"target_catch_slack_kg\": %d\n", target_catch_slack_kg);
-    fprintf(fp, "  },\n");
+        problem.has_num_nodes = 1;
+        problem.num_nodes = sol->tour_length;
+        problem.has_num_stations = 1;
+        problem.num_stations = inst->num_stations;
+        problem.has_capacity = 1;
+        problem.capacity = boat_capacity;
+        problem.has_target_capacity = 1;
+        problem.target_capacity = target_capacity;
+        problem.has_target_catch_slack_kg = 1;
+        problem.target_catch_slack_kg = target_catch_slack_kg;
+        gsp_write_problem_json(fp, "  ", &problem, 1);
+    }
     has_presolve = pre_capacity_sol &&
                    pre_capacity_sol->visit_station_count > 0 &&
                    (strcmp(strategy_name ? strategy_name : "", "ci") == 0 ||
@@ -1074,24 +1081,31 @@ static void write_construction_json(sqlite3 *db, const char *output_path, const 
 
     clock_gettime(CLOCK_MONOTONIC, &t_output_preload_end);
     fprintf(fp, "{\n");
-    fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"construction_1.0\",\n");
-    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"construction_%s\",\n", strategy_name ? strategy_name : "unknown");
-    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
-    fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
-    fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
-    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
-    fprintf(fp, "    \"boat_location_id\": %d\n", boat_start_loc_id);
-    fprintf(fp, "  },\n");
+    {
+        gsp_metadata_json_t metadata = {0};
+        gsp_problem_json_t problem = {0};
+        metadata.solver_version = "construction_1.0";
+        metadata.mode_name = "construction";
+        metadata.strategy_name = strategy_name ? strategy_name : "unknown";
+        metadata.boat_id = boat_id;
+        metadata.boat_name = boat_name;
+        metadata.boat_lat = boat_start_lat;
+        metadata.boat_lon = boat_start_lon;
+        metadata.boat_location_id = boat_start_loc_id;
+        gsp_write_metadata_json(fp, "  ", &metadata, 1);
 
-    fprintf(fp, "  \"problem\": {\n");
-    fprintf(fp, "    \"num_nodes\": %d,\n", sol->tour_length);
-    fprintf(fp, "    \"num_stations\": %d,\n", inst->num_stations);
-    fprintf(fp, "    \"capacity\": %.0f,\n", boat_capacity);
-    fprintf(fp, "    \"target_capacity\": %.0f,\n", target_capacity);
-    fprintf(fp, "    \"target_catch_slack_kg\": %d\n", target_catch_slack_kg);
-    fprintf(fp, "  },\n");
+        problem.has_num_nodes = 1;
+        problem.num_nodes = sol->tour_length;
+        problem.has_num_stations = 1;
+        problem.num_stations = inst->num_stations;
+        problem.has_capacity = 1;
+        problem.capacity = boat_capacity;
+        problem.has_target_capacity = 1;
+        problem.target_capacity = target_capacity;
+        problem.has_target_catch_slack_kg = 1;
+        problem.target_catch_slack_kg = target_catch_slack_kg;
+        gsp_write_problem_json(fp, "  ", &problem, 1);
+    }
 
     fprintf(fp, "  \"solution\": {\n");
     write_solution_section(fp, "construction", inst, sol, boat_start_loc_id, boat_end_loc_id,

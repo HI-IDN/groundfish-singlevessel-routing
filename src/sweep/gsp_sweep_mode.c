@@ -50,8 +50,23 @@ typedef struct {
     double haul_distance_scale;
 } sweep_config_t;
 
+typedef struct {
+    int mip_time_limit_seconds;
+    int global_time_limit_seconds;
+    int max_iterations;
+} sweep_metadata_extra_t;
+
 static int count_segment_station_changes(const gsp_route_segment_t *before,
                                          const gsp_route_segment_t *after);
+
+static void write_sweep_metadata_extra(FILE *fp, const char *indent, const void *ctx) {
+    const sweep_metadata_extra_t *extra = (const sweep_metadata_extra_t*)ctx;
+    const char *base = indent ? indent : "";
+    if (!fp || !extra) return;
+    fprintf(fp, "%s  \"mip_time_limit_seconds\": %d,\n", base, extra->mip_time_limit_seconds);
+    fprintf(fp, "%s  \"global_time_limit_seconds\": %d,\n", base, extra->global_time_limit_seconds);
+    fprintf(fp, "%s  \"max_iterations\": %d", base, extra->max_iterations);
+}
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
@@ -1720,25 +1735,32 @@ static int write_sweep_json(const char *output_path,
                             &mip_gap_mean, &mip_gap_max);
 
     fprintf(fp, "{\n");
-    fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"refinement_1.0\",\n");
-    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"refinement\",\n");
-    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "refinement");
-    fprintf(fp, "    \"boat_id\": %d,\n", boat->boat_id);
-    fprintf(fp, "    \"boat_name\": \"%s\",\n", boat->boat_name);
-    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n",
-            boat->boat_lat, boat->boat_lon);
-    fprintf(fp, "    \"boat_location_id\": %d,\n", boat->boat_loc_id);
-    fprintf(fp, "    \"mip_time_limit_seconds\": %d,\n", cfg ? cfg->mip_time_limit_seconds : 0);
-    fprintf(fp, "    \"global_time_limit_seconds\": %d,\n", cfg ? cfg->global_time_limit_seconds : 0);
-    fprintf(fp, "    \"max_iterations\": %d\n", cfg ? cfg->max_iterations : 0);
-    fprintf(fp, "  },\n");
+    {
+        gsp_metadata_json_t metadata = {0};
+        gsp_problem_json_t problem = {0};
+        sweep_metadata_extra_t metadata_extra = {
+            cfg ? cfg->mip_time_limit_seconds : 0,
+            cfg ? cfg->global_time_limit_seconds : 0,
+            cfg ? cfg->max_iterations : 0
+        };
+        metadata.solver_version = "refinement_1.0";
+        metadata.mode_name = "refinement";
+        metadata.strategy_name = strategy_name ? strategy_name : "refinement";
+        metadata.boat_id = boat->boat_id;
+        metadata.boat_name = boat->boat_name;
+        metadata.boat_lat = boat->boat_lat;
+        metadata.boat_lon = boat->boat_lon;
+        metadata.boat_location_id = boat->boat_loc_id;
+        metadata.extra_writer = write_sweep_metadata_extra;
+        metadata.extra_ctx = &metadata_extra;
+        gsp_write_metadata_json(fp, "  ", &metadata, 1);
 
-    fprintf(fp, "  \"problem\": {\n");
-    fprintf(fp, "    \"num_stations\": %d,\n", inst->num_stations);
-    fprintf(fp, "    \"capacity\": %.0f\n", boat->boat_capacity);
-    fprintf(fp, "  },\n");
+        problem.has_num_stations = 1;
+        problem.num_stations = inst->num_stations;
+        problem.has_capacity = 1;
+        problem.capacity = boat->boat_capacity;
+        gsp_write_problem_json(fp, "  ", &problem, 1);
+    }
 
     fprintf(fp, "  \"solution\": {\n");
     for (int i = 0; i < snapshot_count; i++) {

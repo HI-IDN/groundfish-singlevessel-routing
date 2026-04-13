@@ -23,6 +23,20 @@ typedef struct {
     double boat_start_lon;
 } app_instance_t;
 
+typedef struct {
+    double global_time_limit_seconds;
+    const char *objective_distance_mode;
+} noport_metadata_extra_t;
+
+static void write_noport_metadata_extra(FILE *fp, const char *indent, const void *ctx) {
+    const noport_metadata_extra_t *extra = (const noport_metadata_extra_t*)ctx;
+    const char *base = indent ? indent : "";
+    if (!fp || !extra) return;
+    fprintf(fp, "%s  \"global_time_limit_seconds\": %.6f,\n", base, extra->global_time_limit_seconds);
+    fprintf(fp, "%s  \"objective_distance_mode\": \"%s\"", base,
+            extra->objective_distance_mode ? extra->objective_distance_mode : "transit");
+}
+
 static char *dupstr_local(const char *src) {
     size_t len;
     char *copy;
@@ -463,25 +477,33 @@ static int write_noport_json(sqlite3 *db,
     if (!segments_within_capacity(&total_catch, 1, app->boat.capacity)) is_feasible = 0;
 
     fprintf(fp, "{\n");
-    fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"noport_1.0\",\n");
-    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"init_noport\",\n");
-    fprintf(fp, "    \"strategy\": \"noport\",\n");
-    fprintf(fp, "    \"boat_id\": %d,\n", app->boat.boat_id);
-    fprintf(fp, "    \"boat_name\": \"%s\",\n", app->boat.name ? app->boat.name : "Unknown");
-    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", app->boat_start_lat, app->boat_start_lon);
-    fprintf(fp, "    \"boat_location_id\": %d,\n", app->boat.location_id);
-    fprintf(fp, "    \"global_time_limit_seconds\": %.6f,\n", global_time_limit_seconds);
-    fprintf(fp, "    \"objective_distance_mode\": \"%s\"\n",
-            use_scaled_haul_distance ? "scaled_haul" : "transit");
-    fprintf(fp, "  },\n");
+    {
+        gsp_metadata_json_t metadata = {0};
+        gsp_problem_json_t problem = {0};
+        noport_metadata_extra_t metadata_extra = {
+            global_time_limit_seconds,
+            use_scaled_haul_distance ? "scaled_haul" : "transit"
+        };
+        metadata.solver_version = "noport_1.0";
+        metadata.mode_name = "construction";
+        metadata.strategy_name = "noport";
+        metadata.boat_id = app->boat.boat_id;
+        metadata.boat_name = app->boat.name;
+        metadata.boat_lat = app->boat_start_lat;
+        metadata.boat_lon = app->boat_start_lon;
+        metadata.boat_location_id = app->boat.location_id;
+        metadata.extra_writer = write_noport_metadata_extra;
+        metadata.extra_ctx = &metadata_extra;
+        gsp_write_metadata_json(fp, "  ", &metadata, 1);
 
-    fprintf(fp, "  \"problem\": {\n");
-    fprintf(fp, "    \"num_nodes\": %d,\n", route_len);
-    fprintf(fp, "    \"num_stations\": %d,\n", app->n_stations);
-    fprintf(fp, "    \"capacity\": %d\n", app->boat.capacity);
-    fprintf(fp, "  },\n");
+        problem.has_num_nodes = 1;
+        problem.num_nodes = route_len;
+        problem.has_num_stations = 1;
+        problem.num_stations = app->n_stations;
+        problem.has_capacity = 1;
+        problem.capacity = app->boat.capacity;
+        gsp_write_problem_json(fp, "  ", &problem, 1);
+    }
 
     fprintf(fp, "  \"solution\": {\n");
     fprintf(fp, "    \"%s\": {\n", final_variant_name);

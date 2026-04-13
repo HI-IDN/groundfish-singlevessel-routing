@@ -516,22 +516,27 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     }
 
     fprintf(fp, "{\n");
-    fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"init_from_order_1.0\",\n");
-    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"segment_%s\",\n", strategy_name ? strategy_name : "unknown");
-    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
-    fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
-    fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
-    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
-    fprintf(fp, "    \"boat_location_id\": %d\n", boat_start_loc_id);
-    fprintf(fp, "  },\n");
+    {
+        gsp_metadata_json_t metadata = {0};
+        gsp_problem_json_t problem = {0};
+        metadata.solver_version = "init_from_order_1.0";
+        metadata.mode_name = "segment";
+        metadata.strategy_name = strategy_name ? strategy_name : "unknown";
+        metadata.boat_id = boat_id;
+        metadata.boat_name = boat_name;
+        metadata.boat_lat = boat_start_lat;
+        metadata.boat_lon = boat_start_lon;
+        metadata.boat_location_id = boat_start_loc_id;
+        gsp_write_metadata_json(fp, "  ", &metadata, 1);
 
-    fprintf(fp, "  \"problem\": {\n");
-    fprintf(fp, "    \"num_nodes\": %d,\n", sol->tour_length);
-    fprintf(fp, "    \"num_stations\": %d,\n", inst->num_stations);
-    fprintf(fp, "    \"capacity\": %.0f\n", boat_capacity);
-    fprintf(fp, "  },\n");
+        problem.has_num_nodes = 1;
+        problem.num_nodes = sol->tour_length;
+        problem.has_num_stations = 1;
+        problem.num_stations = inst->num_stations;
+        problem.has_capacity = 1;
+        problem.capacity = boat_capacity;
+        gsp_write_problem_json(fp, "  ", &problem, 1);
+    }
 
     has_original_order = extract_final_solution_variant_from_json(order_input_path,
                                                                   &original_order_variant_name,

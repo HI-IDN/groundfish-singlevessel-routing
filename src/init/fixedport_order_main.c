@@ -47,6 +47,36 @@ typedef struct {
     char *name;
 } port_info_t;
 
+typedef struct {
+    const char *station_selection;
+} fixedport_metadata_extra_t;
+
+typedef struct {
+    int num_fixed_port_visits;
+    const int *candidate_port_location_ids;
+} fixedport_problem_extra_t;
+
+static void write_fixedport_metadata_extra(FILE *fp, const char *indent, const void *ctx) {
+    const fixedport_metadata_extra_t *extra = (const fixedport_metadata_extra_t*)ctx;
+    const char *base = indent ? indent : "";
+    if (!fp || !extra) return;
+    fprintf(fp, "%s  \"station_selection\": \"%s\"", base,
+            extra->station_selection ? extra->station_selection : "all");
+}
+
+static void write_fixedport_problem_extra(FILE *fp, const char *indent, const void *ctx) {
+    const fixedport_problem_extra_t *extra = (const fixedport_problem_extra_t*)ctx;
+    const char *base = indent ? indent : "";
+    if (!fp || !extra) return;
+    fprintf(fp, "%s  \"num_fixed_port_visits\": %d,\n", base, extra->num_fixed_port_visits);
+    fprintf(fp, "%s  \"candidate_port_location_ids\": [", base);
+    for (int i = 0; i < extra->num_fixed_port_visits; i++) {
+        if (i) fprintf(fp, ", ");
+        fprintf(fp, "%d", extra->candidate_port_location_ids[i]);
+    }
+    fprintf(fp, "]");
+}
+
 static char *dupstr_local(const char *src) {
     size_t len;
     char *copy;
@@ -690,28 +720,34 @@ static int write_fixedport_json(sqlite3 *db,
     fp = fopen(output_path, "w");
     if (!fp) goto fail;
     fprintf(fp, "{\n");
-    fprintf(fp, "  \"metadata\": {\n");
-    fprintf(fp, "    \"solver_version\": \"fixedport_debug_0.1\",\n");
-    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
-    fprintf(fp, "    \"mode\": \"fixedport_debug\",\n");
-    fprintf(fp, "    \"strategy\": \"fixedport\",\n");
-    fprintf(fp, "    \"boat_id\": %d,\n", app->boat.boat_id);
-    fprintf(fp, "    \"boat_name\": \"%s\",\n", app->boat.name ? app->boat.name : "Unknown");
-    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", app->boat_start_lat, app->boat_start_lon);
-    fprintf(fp, "    \"boat_location_id\": %d,\n", app->boat.location_id);
-    fprintf(fp, "    \"station_selection\": \"all\"\n");
-    fprintf(fp, "  },\n");
-    fprintf(fp, "  \"problem\": {\n");
-    fprintf(fp, "    \"num_stations\": %d,\n", station_count);
-    fprintf(fp, "    \"num_fixed_port_visits\": %d,\n", candidate_port_count);
-    fprintf(fp, "    \"capacity\": %d,\n", app->boat.capacity);
-    fprintf(fp, "    \"candidate_port_location_ids\": [");
-    for (int i = 0; i < candidate_port_count; i++) {
-        if (i) fprintf(fp, ", ");
-        fprintf(fp, "%d", candidate_ports[i]);
+    {
+        gsp_metadata_json_t metadata = {0};
+        gsp_problem_json_t problem = {0};
+        fixedport_metadata_extra_t metadata_extra = {"all"};
+        fixedport_problem_extra_t problem_extra = {
+            candidate_port_count,
+            candidate_ports
+        };
+        metadata.solver_version = "fixedport_debug_0.1";
+        metadata.mode_name = "construction";
+        metadata.strategy_name = "fixedport";
+        metadata.boat_id = app->boat.boat_id;
+        metadata.boat_name = app->boat.name;
+        metadata.boat_lat = app->boat_start_lat;
+        metadata.boat_lon = app->boat_start_lon;
+        metadata.boat_location_id = app->boat.location_id;
+        metadata.extra_writer = write_fixedport_metadata_extra;
+        metadata.extra_ctx = &metadata_extra;
+        gsp_write_metadata_json(fp, "  ", &metadata, 1);
+
+        problem.has_num_stations = 1;
+        problem.num_stations = station_count;
+        problem.has_capacity = 1;
+        problem.capacity = app->boat.capacity;
+        problem.extra_writer = write_fixedport_problem_extra;
+        problem.extra_ctx = &problem_extra;
+        gsp_write_problem_json(fp, "  ", &problem, 1);
     }
-    fprintf(fp, "]\n");
-    fprintf(fp, "  },\n");
     for (int i = 0; i < candidate_port_count; i++) {
         for (int j = 0; j < port_lookup_count; j++) {
             if (port_lookup[j].location_id == candidate_ports[i]) {

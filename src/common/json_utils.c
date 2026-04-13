@@ -1,6 +1,7 @@
 #include "../include/json_utils.h"
 
 #include <stdlib.h>
+#include <time.h>
 
 static void write_double_array(FILE *fp, const double *values, int count) {
     for (int i = 0; i < count; i++) {
@@ -71,6 +72,82 @@ void gsp_write_solution_json(FILE *fp,
     gsp_write_distance_nm_json(fp, child, view->segment_breakdowns, view->segment_count,
                                view->grand_total, 1);
     fprintf(fp, "%s  \"feasible\": %s\n", base, view->feasible ? "true" : "false");
+    fprintf(fp, "%s}%s\n", base, trailing_comma ? "," : "");
+}
+
+void gsp_write_metadata_json(FILE *fp,
+                             const char *indent,
+                             const gsp_metadata_json_t *metadata,
+                             int trailing_comma) {
+    const char *base = indent ? indent : "";
+    const char *child = base;
+    if (!fp || !metadata) return;
+
+    fprintf(fp, "%s\"metadata\": {\n", base);
+    fprintf(fp, "%s  \"solver_version\": \"%s\",\n", child,
+            metadata->solver_version ? metadata->solver_version : "");
+    fprintf(fp, "%s  \"timestamp\": \"%ld\",\n", child, (long)time(NULL));
+    fprintf(fp, "%s  \"mode\": \"%s\",\n", child,
+            metadata->mode_name ? metadata->mode_name : "");
+    fprintf(fp, "%s  \"strategy\": \"%s\",\n", child,
+            metadata->strategy_name ? metadata->strategy_name : "");
+    fprintf(fp, "%s  \"boat_id\": %d,\n", child, metadata->boat_id);
+    fprintf(fp, "%s  \"boat_name\": \"%s\",\n", child,
+            metadata->boat_name ? metadata->boat_name : "Unknown");
+    fprintf(fp, "%s  \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n",
+            child, metadata->boat_lat, metadata->boat_lon);
+    fprintf(fp, "%s  \"boat_location_id\": %d", child, metadata->boat_location_id);
+    if (metadata->extra_writer) {
+        fprintf(fp, ",\n");
+        metadata->extra_writer(fp, child, metadata->extra_ctx);
+        fprintf(fp, "\n");
+    } else {
+        fprintf(fp, "\n");
+    }
+    fprintf(fp, "%s}%s\n", base, trailing_comma ? "," : "");
+}
+
+void gsp_write_problem_json(FILE *fp,
+                            const char *indent,
+                            const gsp_problem_json_t *problem,
+                            int trailing_comma) {
+    const char *base = indent ? indent : "";
+    int wrote_any = 0;
+    if (!fp || !problem) return;
+
+    fprintf(fp, "%s\"problem\": {\n", base);
+    if (problem->has_num_nodes) {
+        fprintf(fp, "%s  \"num_nodes\": %d", base, problem->num_nodes);
+        wrote_any = 1;
+    }
+    if (problem->has_num_stations) {
+        fprintf(fp, "%s%s\"num_stations\": %d", wrote_any ? ",\n" : "", base, problem->num_stations);
+        wrote_any = 1;
+    }
+    if (problem->has_num_ports) {
+        fprintf(fp, "%s%s\"num_ports\": %d", wrote_any ? ",\n" : "", base, problem->num_ports);
+        wrote_any = 1;
+    }
+    if (problem->has_capacity) {
+        fprintf(fp, "%s%s\"capacity\": %.0f", wrote_any ? ",\n" : "", base, problem->capacity);
+        wrote_any = 1;
+    }
+    if (problem->has_target_capacity) {
+        fprintf(fp, "%s%s\"target_capacity\": %.0f", wrote_any ? ",\n" : "", base, problem->target_capacity);
+        wrote_any = 1;
+    }
+    if (problem->has_target_catch_slack_kg) {
+        fprintf(fp, "%s%s\"target_catch_slack_kg\": %d", wrote_any ? ",\n" : "",
+                base, problem->target_catch_slack_kg);
+        wrote_any = 1;
+    }
+    if (problem->extra_writer) {
+        fprintf(fp, "%s%s", wrote_any ? ",\n" : "", "");
+        problem->extra_writer(fp, base, problem->extra_ctx);
+        fprintf(fp, "\n");
+    } else if (wrote_any) {
+        fprintf(fp, "\n");
+    }
     fprintf(fp, "%s}%s\n", base, trailing_comma ? "," : "");
 }
 
