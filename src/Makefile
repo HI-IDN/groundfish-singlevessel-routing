@@ -135,11 +135,11 @@ define construction_rule
 	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode init --strategy $(1) --database "$(COUNTRY_DB)" --output "../sol/$(1)/construction.json" --config "$(CONFIG_YAML)"'
 endef
 
-define copy_construction_to_segment_rule
+define segment_from_construction_rule
 ../sol/$(1)/segment.json: ../sol/$(1)/construction.json
 	@mkdir -p ../sol/$(1)
-	@echo "Promoting $(2) construction to segmented baseline -> $$@"
-	@cp "../sol/$(1)/construction.json" "../sol/$(1)/segment.json"
+	@echo "Generating $(2) segment from construction -> $$@"
+	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_init_from_order --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/construction.json" --output "../sol/$(1)/segment.json" --strategy $(1)'
 endef
 
 define refinement_rule
@@ -153,10 +153,14 @@ $(eval $(call construction_rule,nn,NN))
 $(eval $(call construction_rule,ge,GE))
 $(eval $(call construction_rule,ci,CI))
 
-$(eval $(call copy_construction_to_segment_rule,nn,NN))
-$(eval $(call copy_construction_to_segment_rule,ge,GE))
-$(eval $(call copy_construction_to_segment_rule,ci,CI))
-$(eval $(call copy_construction_to_segment_rule,fixedport,fixedport))
+$(eval $(call segment_from_construction_rule,nn,NN))
+$(eval $(call segment_from_construction_rule,ge,GE))
+$(eval $(call segment_from_construction_rule,ci,CI))
+
+../sol/fixedport/segment.json: ../sol/fixedport/construction.json
+	@mkdir -p ../sol/fixedport
+	@echo "Promoting fixedport construction to segmented baseline -> $@"
+	@cp "../sol/fixedport/construction.json" "../sol/fixedport/segment.json"
 
 $(eval $(call refinement_rule,nn,NN))
 $(eval $(call refinement_rule,ge,GE))

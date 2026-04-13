@@ -14,6 +14,69 @@
 #include "construction_nn.h"
 #include "init_utils.h"
 
+static int build_nn_station_order(const nn_instance_t *inst,
+                                  int boat_start_loc_id,
+                                  int **out_order,
+                                  int *out_n)
+{
+    int *order;
+    int *visited;
+    int current_loc_id = boat_start_loc_id;
+
+    if (!inst || !out_order || !out_n) return 0;
+    *out_order = NULL;
+    *out_n = 0;
+
+    if (inst->num_stations <= 0) return 1;
+
+    order = (int*)malloc((size_t)inst->num_stations * sizeof(int));
+    visited = (int*)calloc((size_t)inst->num_stations, sizeof(int));
+    if (!order || !visited) {
+        free(order);
+        free(visited);
+        return 0;
+    }
+
+    for (int ord = 0; ord < inst->num_stations; ord++) {
+        double best_dist = 1e100;
+        int best_station_idx = -1;
+        int best_entry = -1;
+        int best_exit = -1;
+        double best_added = 0.0;
+
+        for (int i = 0; i < inst->num_stations; i++) {
+            int entry = -1;
+            int exit = -1;
+            double added = 0.0;
+            if (visited[i]) continue;
+            if (!choose_station_orientation(inst, current_loc_id, i, &entry, &exit, &added)) continue;
+            if (added > 0.0 && added < best_dist) {
+                best_dist = added;
+                best_station_idx = i;
+                best_entry = entry;
+                best_exit = exit;
+                best_added = added;
+            }
+        }
+
+        if (best_station_idx < 0) {
+            free(order);
+            free(visited);
+            return 0;
+        }
+
+        order[ord] = best_station_idx;
+        visited[best_station_idx] = 1;
+        current_loc_id = (best_exit >= 0) ? best_exit : best_entry;
+        (void)best_added;
+    }
+
+    free(visited);
+    *out_order = order;
+    *out_n = inst->num_stations;
+    return 1;
+}
+
 int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
              int boat_start_loc_id, int boat_end_loc_id,
              int boat_capacity)
@@ -240,5 +303,22 @@ int nn_solve(const nn_instance_t *inst, nn_solution_t *sol,
 
     free(visited);
     return 0;
+}
+
+int nn_construction_solve(const nn_instance_t *inst, nn_solution_t *sol,
+                          int boat_start_loc_id, int boat_end_loc_id)
+{
+    int *station_order = NULL;
+    int station_order_n = 0;
+    int ok;
+
+    if (!build_nn_station_order(inst, boat_start_loc_id, &station_order, &station_order_n)) {
+        return -1;
+    }
+
+    ok = build_ordered_solution_from_station_order(inst, station_order, station_order_n,
+                                                   sol, boat_start_loc_id, boat_end_loc_id);
+    free(station_order);
+    return ok ? 0 : -1;
 }
 

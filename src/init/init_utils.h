@@ -2,6 +2,7 @@
 #define INIT_UTILS_H
 
 #include <stdlib.h>
+#include <string.h>
 #include "../include/init_types.h"
 
 /* ── array growth ────────────────────────────────────────────── */
@@ -234,6 +235,107 @@ static inline int choose_station_orientation(
     return choose_station_orientation_with_dir(
         inst, current_loc_id, station_idx,
         entry_loc, exit_loc, added_dist, NULL);
+}
+
+static inline int build_ordered_solution_from_station_order(
+    const nn_instance_t *inst,
+    const int *station_order,
+    int station_order_n,
+    nn_solution_t *sol,
+    int boat_start_loc_id,
+    int boat_end_loc_id)
+{
+    int *tour = NULL, tour_cap = 0, tour_len = 0;
+    int *visit_station_ids = NULL, visit_ids_cap = 0;
+    int *visit_station_segment = NULL, visit_seg_cap = 0;
+    int *visit_station_direction = NULL, visit_dir_cap = 0;
+    int *segment_starts = NULL, seg_starts_cap = 0;
+    int *segment_ends = NULL, seg_ends_cap = 0;
+    int *segment_catches = NULL, seg_catches_cap = 0;
+    double *segment_dists = NULL;
+    int seg_dists_cap = 0;
+    int current_loc_id = boat_start_loc_id;
+    int total_catch = 0;
+    double total_dist = 0.0;
+
+    if (!inst || !sol) return 0;
+
+    memset(sol, 0, sizeof(*sol));
+
+    for (int ord = 0; ord < station_order_n; ord++) {
+        int st_idx = station_order[ord];
+        int stat_entry = -1, stat_exit = -1, stat_dir = 0;
+        double stat_added = 0.0;
+
+        if (st_idx < 0 || st_idx >= inst->num_stations) goto fail;
+        if (!choose_station_orientation_with_dir(inst, current_loc_id, st_idx,
+                                                 &stat_entry, &stat_exit,
+                                                 &stat_added, &stat_dir)) {
+            goto fail;
+        }
+        if (!grow_int_array(&tour, &tour_cap, tour_len + ((stat_exit != stat_entry) ? 2 : 1)) ||
+            !grow_int_array(&visit_station_ids, &visit_ids_cap, ord + 1) ||
+            !grow_int_array(&visit_station_segment, &visit_seg_cap, ord + 1) ||
+            !grow_int_array(&visit_station_direction, &visit_dir_cap, ord + 1)) {
+            goto fail;
+        }
+
+        if (stat_added > 0.0) total_dist += stat_added;
+        tour[tour_len++] = stat_entry;
+        if (stat_exit != stat_entry) tour[tour_len++] = stat_exit;
+        current_loc_id = stat_exit;
+        total_catch += inst->nodes[st_idx].amount;
+        visit_station_ids[ord] = inst->nodes[st_idx].table_id;
+        visit_station_segment[ord] = 0;
+        visit_station_direction[ord] = stat_dir;
+    }
+
+    if (!grow_int_array(&segment_starts, &seg_starts_cap, 1) ||
+        !grow_int_array(&segment_ends, &seg_ends_cap, 1) ||
+        !grow_int_array(&segment_catches, &seg_catches_cap, 1) ||
+        !grow_dist_array(&segment_dists, &seg_dists_cap, 1)) {
+        goto fail;
+    }
+
+    if (tour_len > 0) {
+        double return_dist = get_distance(inst, current_loc_id, boat_end_loc_id);
+        if (return_dist > 0.0) total_dist += return_dist;
+    } else {
+        double return_dist = get_distance(inst, boat_start_loc_id, boat_end_loc_id);
+        if (return_dist > 0.0) total_dist += return_dist;
+    }
+
+    segment_starts[0] = 0;
+    segment_ends[0] = (tour_len > 0) ? (tour_len - 1) : -1;
+    segment_catches[0] = total_catch;
+    segment_dists[0] = total_dist;
+
+    sol->tour = tour;
+    sol->tour_length = tour_len;
+    sol->visit_station_ids = visit_station_ids;
+    sol->visit_station_count = station_order_n;
+    sol->visit_station_segment = visit_station_segment;
+    sol->visit_station_direction = visit_station_direction;
+    sol->segment_count = 1;
+    sol->segment_starts = segment_starts;
+    sol->segment_ends = segment_ends;
+    sol->segment_catches = segment_catches;
+    sol->segment_dists = segment_dists;
+    sol->total_distance = total_dist;
+    sol->total_catch = total_catch;
+    return 1;
+
+fail:
+    free(tour);
+    free(visit_station_ids);
+    free(visit_station_segment);
+    free(visit_station_direction);
+    free(segment_starts);
+    free(segment_ends);
+    free(segment_catches);
+    free(segment_dists);
+    memset(sol, 0, sizeof(*sol));
+    return 0;
 }
 
 

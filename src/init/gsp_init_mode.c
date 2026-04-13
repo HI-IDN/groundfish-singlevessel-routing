@@ -273,6 +273,17 @@ static int append_unique_int_local(int **arr, int *n, int *cap, int v) {
     return append_int_local(arr, n, cap, v);
 }
 
+static int output_path_is_construction_json(const char *output_path) {
+    const char *base = output_path;
+    const char *slash;
+    if (!output_path) return 0;
+    slash = strrchr(output_path, '/');
+    if (slash && slash[1] != '\0') base = slash + 1;
+    slash = strrchr(base, '\\');
+    if (slash && slash[1] != '\0') base = slash + 1;
+    return strcmp(base, "construction.json") == 0;
+}
+
 static int is_port_location_id(const nn_instance_t *inst, int loc_id)
 {
     if (!inst) return 0;
@@ -1027,6 +1038,105 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
            output_path, elapsed_seconds(t_output_start, t_output_end));
 }
 
+static void write_construction_json(sqlite3 *db, const char *output_path, const nn_instance_t *inst,
+                                    const nn_solution_t *sol, int boat_id,
+                                    const char *boat_name,
+                                    const char *strategy_name,
+                                    const char *method_name,
+                                    int boat_start_loc_id, int boat_end_loc_id,
+                                    double boat_capacity,
+                                    double target_capacity,
+                                    int target_catch_slack_kg,
+                                    double boat_start_lat, double boat_start_lon,
+                                    double preprocessing_seconds,
+                                    double solve_runtime_seconds,
+                                    double *output_runtime_seconds) {
+    waypoint_cache_t cache;
+    struct timespec t_output_start, t_output_preload_end, t_output_expand_end, t_output_end;
+    int leg_query_count = 0;
+    int total_waypoint_ids = 0;
+    FILE *fp = fopen(output_path, "w");
+
+    if (!fp) {
+        perror("Cannot open output file");
+        if (output_runtime_seconds) *output_runtime_seconds = 0.0;
+        return;
+    }
+
+    memset(&cache, 0, sizeof(cache));
+    clock_gettime(CLOCK_MONOTONIC, &t_output_start);
+    if (!waypoint_cache_preload(db, inst, sol, NULL, boat_start_loc_id, boat_end_loc_id, &cache)) {
+        fprintf(stderr, "ERROR: Failed to preload waypoint paths: %s\n", sqlite3_errmsg(db));
+        fclose(fp);
+        if (output_runtime_seconds) *output_runtime_seconds = 0.0;
+        return;
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &t_output_preload_end);
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"metadata\": {\n");
+    fprintf(fp, "    \"solver_version\": \"construction_1.0\",\n");
+    fprintf(fp, "    \"timestamp\": \"%ld\",\n", (long)time(NULL));
+    fprintf(fp, "    \"mode\": \"construction_%s\",\n", strategy_name ? strategy_name : "unknown");
+    fprintf(fp, "    \"strategy\": \"%s\",\n", strategy_name ? strategy_name : "unknown");
+    fprintf(fp, "    \"boat_id\": %d,\n", boat_id);
+    fprintf(fp, "    \"boat_name\": \"%s\",\n", boat_name ? boat_name : "Unknown");
+    fprintf(fp, "    \"boat_docked_location\": {\"lat\": %.6f, \"lon\": %.6f},\n", boat_start_lat, boat_start_lon);
+    fprintf(fp, "    \"boat_location_id\": %d\n", boat_start_loc_id);
+    fprintf(fp, "  },\n");
+
+    fprintf(fp, "  \"problem\": {\n");
+    fprintf(fp, "    \"num_nodes\": %d,\n", sol->tour_length);
+    fprintf(fp, "    \"num_stations\": %d,\n", inst->num_stations);
+    fprintf(fp, "    \"capacity\": %.0f,\n", boat_capacity);
+    fprintf(fp, "    \"target_capacity\": %.0f,\n", target_capacity);
+    fprintf(fp, "    \"target_catch_slack_kg\": %d\n", target_catch_slack_kg);
+    fprintf(fp, "  },\n");
+
+    fprintf(fp, "  \"solution\": {\n");
+    write_solution_section(fp, "construction", inst, sol, boat_start_loc_id, boat_end_loc_id,
+                           0, &cache, &leg_query_count, &total_waypoint_ids, "construction", 0);
+    fprintf(fp, "\n");
+    fprintf(fp, "  },\n");
+    clock_gettime(CLOCK_MONOTONIC, &t_output_expand_end);
+
+    {
+        double distance_trajectory[1];
+        double solution_runtime_trajectory[1];
+        double postprocessing_seconds = elapsed_seconds(t_output_start, t_output_expand_end);
+        gsp_summary_json_t summary = {0};
+
+        distance_trajectory[0] = sol->total_distance;
+        solution_runtime_trajectory[0] = solve_runtime_seconds;
+
+        summary.final_name = "construction";
+        summary.stage_name = "construction_complete";
+        summary.feasible = 0;
+        summary.method_name = method_name ? method_name : "unknown";
+        summary.has_baseline = 0;
+        summary.distance_trajectory_nm = distance_trajectory;
+        summary.distance_trajectory_count = 1;
+        summary.final_distance_nm = sol->total_distance;
+        summary.preprocessing_seconds = preprocessing_seconds;
+        summary.solution_runtime_seconds = solution_runtime_trajectory;
+        summary.solution_runtime_count = 1;
+        summary.postprocessing_seconds = postprocessing_seconds;
+        summary.grandtotal_seconds = preprocessing_seconds + solve_runtime_seconds + postprocessing_seconds;
+        summary.include_runtime = 1;
+        summary.include_mip = 0;
+        gsp_write_summary_json(fp, "  ", &summary, 0);
+    }
+
+    fprintf(fp, "}\n");
+
+    clock_gettime(CLOCK_MONOTONIC, &t_output_end);
+    fclose(fp);
+    waypoint_cache_destroy(&cache);
+    if (output_runtime_seconds) *output_runtime_seconds = elapsed_seconds(t_output_start, t_output_end);
+    printf("[OUTPUT] Construction written to %s (total output %.3f s)\n",
+           output_path, elapsed_seconds(t_output_start, t_output_end));
+}
+
 /* Debug writer: metadata/problem only, no solution tour. */
 static void write_metadata_only_json(const char *output_path,
                                      int boat_id,
@@ -1231,25 +1341,32 @@ int mode_init(int argc, char **argv) {
     nn_solution_t pre_capacity_sol = {0};
     nn_solution_t pre_local_postopt_sol = {0};
     const char *method_name = NULL;
+    int construction_output = output_path_is_construction_json(output);
     struct timespec t_solve_start;
     clock_gettime(CLOCK_MONOTONIC, &t_solve_start);
     if (strcmp(strategy, "nn") == 0) {
         method_name = "nearest_neighbor";
-        if (nn_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity) != 0) {
+        if ((construction_output
+                ? nn_construction_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id)
+                : nn_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity)) != 0) {
             fprintf(stderr, "ERROR: Failed to solve NN\n");
             sqlite3_close(db);
             return 1;
         }
     } else if (strcmp(strategy, "ge") == 0) {
         method_name = "greedy_edge";
-        if (gi_solve(&inst, &sol, &pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity) != 0) {
+        if ((construction_output
+                ? ge_construction_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id)
+                : gi_solve(&inst, &sol, &pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity)) != 0) {
             fprintf(stderr, "ERROR: Failed to solve GE\n");
             sqlite3_close(db);
             return 1;
         }
     } else {
         method_name = "cheapest_insertion";
-        if (ci_solve(&inst, &sol, &pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity) != 0) {
+        if ((construction_output
+                ? ci_construction_solve(&inst, &sol, boat_start_loc_id, boat_end_loc_id)
+                : ci_solve(&inst, &sol, &pre_capacity_sol, boat_start_loc_id, boat_end_loc_id, (int)target_capacity)) != 0) {
             fprintf(stderr, "ERROR: Failed to solve CI\n");
             sqlite3_close(db);
             return 1;
@@ -1260,38 +1377,42 @@ int mode_init(int argc, char **argv) {
     double solve_runtime_seconds = elapsed_seconds(t_solve_start, t_solve_end);
     printf("[NN] Done in %.4f s\n", solve_runtime_seconds);
 
-    double mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
-    double init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
+    double mip_time_limit_seconds = 0.0;
+    double init_haul_distance_scale = 0.0;
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     gsp_mip_solve_detail_t *local_postopt_details = NULL;
     int local_postopt_detail_count = 0;
-    if (!init_copy_solution(&sol, &pre_local_postopt_sol)) {
-        fprintf(stderr, "ERROR: Failed to copy pre-local-postopt init solution\n");
-        sqlite3_close(db);
-        return 1;
+    if (!construction_output) {
+        mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
+        init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
+        if (!init_copy_solution(&sol, &pre_local_postopt_sol)) {
+            fprintf(stderr, "ERROR: Failed to copy pre-local-postopt init solution\n");
+            sqlite3_close(db);
+            return 1;
+        }
+        if (!init_apply_local_postopt(&inst, &pre_local_postopt_sol,
+                                      boat_start_loc_id, boat_end_loc_id,
+                                      mip_time_limit_seconds,
+                                      init_haul_distance_scale,
+                                      &sol,
+                                      &local_postopt_runtime_seconds,
+                                      &local_postopt_segment_solve_count,
+                                      &local_postopt_details,
+                                      &local_postopt_detail_count)) {
+            fprintf(stderr, "ERROR: Failed to apply local post optimization to init solution\n");
+            sqlite3_close(db);
+            return 1;
+        }
+        printf("[POSTOPT] Segment local post-opt: solves=%d runtime=%.4f s time_limit=%s%.0f\n",
+               local_postopt_segment_solve_count,
+               local_postopt_runtime_seconds,
+               (mip_time_limit_seconds > 0.0) ? "" : "uncapped ",
+               (mip_time_limit_seconds > 0.0) ? mip_time_limit_seconds : 0.0);
+        printf("[POSTOPT] Distance: %.2f -> %.2f nm\n",
+               pre_local_postopt_sol.total_distance,
+               sol.total_distance);
     }
-    if (!init_apply_local_postopt(&inst, &pre_local_postopt_sol,
-                                  boat_start_loc_id, boat_end_loc_id,
-                                  mip_time_limit_seconds,
-                                  init_haul_distance_scale,
-                                  &sol,
-                                  &local_postopt_runtime_seconds,
-                                  &local_postopt_segment_solve_count,
-                                  &local_postopt_details,
-                                  &local_postopt_detail_count)) {
-        fprintf(stderr, "ERROR: Failed to apply local post optimization to init solution\n");
-        sqlite3_close(db);
-        return 1;
-    }
-    printf("[POSTOPT] Segment local post-opt: solves=%d runtime=%.4f s time_limit=%s%.0f\n",
-           local_postopt_segment_solve_count,
-           local_postopt_runtime_seconds,
-           (mip_time_limit_seconds > 0.0) ? "" : "uncapped ",
-           (mip_time_limit_seconds > 0.0) ? mip_time_limit_seconds : 0.0);
-    printf("[POSTOPT] Distance: %.2f -> %.2f nm\n",
-           pre_local_postopt_sol.total_distance,
-           sol.total_distance);
 
     /* Write JSON output (feasibility check NOT included in runtime) */
     printf("\n[CHECK] Feasibility check starting\n");
@@ -1300,35 +1421,53 @@ int mode_init(int argc, char **argv) {
     struct timespec t_check_start, t_check_end;
     clock_gettime(CLOCK_MONOTONIC, &t_check_start);
 
-    int capacity_ok = segments_within_capacity(sol.segment_catches, sol.segment_count, boat_capacity);
+    int is_feasible = 0;
     int stations_ok = stations_are_unique_and_complete(sol.visit_station_ids, sol.visit_station_count, inst.num_stations);
     int boundaries_ok = init_solution_has_valid_boundaries(&inst, &sol);
-    int is_feasible = capacity_ok && stations_ok && boundaries_ok;
-
-    clock_gettime(CLOCK_MONOTONIC, &t_check_end);
-    printf("[CHECK] Capacity: %s (%d segments)\n", capacity_ok ? "OK" : "FAIL", sol.segment_count);
-    printf("[CHECK] Stations: %s (%d visited, expected %d)\n",
-           stations_ok ? "OK" : "FAIL", sol.visit_station_count, inst.num_stations);
-    printf("[CHECK] Boundaries: %s\n", boundaries_ok ? "OK" : "FAIL");
+    if (!construction_output) {
+        int capacity_ok = segments_within_capacity(sol.segment_catches, sol.segment_count, boat_capacity);
+        is_feasible = capacity_ok && stations_ok && boundaries_ok;
+        clock_gettime(CLOCK_MONOTONIC, &t_check_end);
+        printf("[CHECK] Capacity: %s (%d segments)\n", capacity_ok ? "OK" : "FAIL", sol.segment_count);
+        printf("[CHECK] Stations: %s (%d visited, expected %d)\n",
+               stations_ok ? "OK" : "FAIL", sol.visit_station_count, inst.num_stations);
+        printf("[CHECK] Boundaries: %s\n", boundaries_ok ? "OK" : "FAIL");
+    } else {
+        clock_gettime(CLOCK_MONOTONIC, &t_check_end);
+        printf("[CHECK] Construction output: skipping capacity-feasible classification\n");
+        printf("[CHECK] Stations: %s (%d visited, expected %d)\n",
+               stations_ok ? "OK" : "FAIL", sol.visit_station_count, inst.num_stations);
+        printf("[CHECK] Boundaries: %s\n", boundaries_ok ? "OK" : "FAIL");
+    }
     printf("[CHECK] Done in %.6f s\n", elapsed_seconds(t_check_start, t_check_end));
 
     {
         double output_runtime_seconds = 0.0;
-        write_json(db, output, &inst, &sol, boat_id,
-                   ((strcmp(strategy, "ci") == 0) || (strcmp(strategy, "ge") == 0)) ? &pre_capacity_sol : NULL,
-                   &pre_local_postopt_sol,
-                   local_postopt_details, local_postopt_detail_count,
-                   boat_name, strategy, method_name,
-                   boat_start_loc_id, boat_end_loc_id, boat_capacity, target_capacity, target_catch_slack_kg,
-                   boat_start_lat, boat_start_lon, is_feasible,
-                   t_mode_start,
-                   preprocessing_seconds, solve_runtime_seconds, local_postopt_runtime_seconds,
-                   mip_time_limit_seconds,
-                   elapsed_seconds(t_check_start, t_check_end),
-                   &output_runtime_seconds);
+        if (construction_output) {
+            write_construction_json(db, output, &inst, &sol, boat_id,
+                                    boat_name, strategy, method_name,
+                                    boat_start_loc_id, boat_end_loc_id,
+                                    boat_capacity, target_capacity, target_catch_slack_kg,
+                                    boat_start_lat, boat_start_lon,
+                                    preprocessing_seconds, solve_runtime_seconds,
+                                    &output_runtime_seconds);
+        } else {
+            write_json(db, output, &inst, &sol, boat_id,
+                       ((strcmp(strategy, "ci") == 0) || (strcmp(strategy, "ge") == 0)) ? &pre_capacity_sol : NULL,
+                       &pre_local_postopt_sol,
+                       local_postopt_details, local_postopt_detail_count,
+                       boat_name, strategy, method_name,
+                       boat_start_loc_id, boat_end_loc_id, boat_capacity, target_capacity, target_catch_slack_kg,
+                       boat_start_lat, boat_start_lon, is_feasible,
+                       t_mode_start,
+                       preprocessing_seconds, solve_runtime_seconds, local_postopt_runtime_seconds,
+                       mip_time_limit_seconds,
+                       elapsed_seconds(t_check_start, t_check_end),
+                       &output_runtime_seconds);
+        }
     }
 
-    printf("\n[SUCCESS] Initialization complete!\n");
+    printf("\n[SUCCESS] %s complete!\n", construction_output ? "Construction" : "Initialization");
     printf("============================================================\n");
 
     /* Cleanup */

@@ -805,6 +805,9 @@ static const char *infer_strategy_from_path(const char *path) {
     if (!path) return "noport";
     if (strstr(path, "fixedport") || strstr(path, "fixed_port") || strstr(path, "fixed-port")) return "fixedport";
     if (strstr(path, "noport") || strstr(path, "no_port") || strstr(path, "no-port")) return "noport";
+    if (strstr(path, "\\nn\\") || strstr(path, "/nn/")) return "nn";
+    if (strstr(path, "\\ge\\") || strstr(path, "/ge/")) return "ge";
+    if (strstr(path, "\\ci\\") || strstr(path, "/ci/")) return "ci";
     return "order";
 }
 
@@ -1021,7 +1024,7 @@ int main(int argc, char **argv) {
     }
 
     if (!database || !config || !input || !output) {
-        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <construction.json> --output <segment.json> [--strategy noport|fixedport]\n", argv[0]);
+        fprintf(stderr, "Usage: %s --database <db> --config <yaml> --input <construction.json> --output <segment.json> [--strategy nn|ge|ci|noport|fixedport]\n", argv[0]);
         return 1;
     }
     if (!strategy) strategy = infer_strategy_from_path(input);

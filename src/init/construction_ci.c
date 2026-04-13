@@ -403,4 +403,21 @@ int ci_solve(const nn_instance_t *inst, nn_solution_t *sol,
     return 0;
 }
 
+int ci_construction_solve(const nn_instance_t *inst, nn_solution_t *sol,
+                          int boat_start_loc_id, int boat_end_loc_id)
+{
+    int *station_order = NULL;
+    int station_order_n = 0;
+    int ok;
+
+    if (!build_station_order_ci(inst, &station_order, &station_order_n)) {
+        return -1;
+    }
+
+    ok = build_ordered_solution_from_station_order(inst, station_order, station_order_n,
+                                                   sol, boat_start_loc_id, boat_end_loc_id);
+    free(station_order);
+    return ok ? 0 : -1;
+}
+
 
