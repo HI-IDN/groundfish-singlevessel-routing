@@ -451,6 +451,16 @@ static int load_candidate_port_location_ids(const char *path, int **out_values, 
     return ok;
 }
 
+static void remove_one_candidate_port(int *values, int *count, int location_id) {
+    if (!values || !count || *count <= 0) return;
+    for (int i = *count - 1; i >= 0; i--) {
+        if (values[i] != location_id) continue;
+        for (int j = i; j + 1 < *count; j++) values[j] = values[j + 1];
+        (*count)--;
+        return;
+    }
+}
+
 static int load_port_lookup(sqlite3 *db, port_info_t **out_ports, int *out_count) {
     sqlite3_stmt *stmt = NULL;
     port_info_t *ports = NULL;
@@ -818,6 +828,19 @@ static int write_fixedport_json(sqlite3 *db,
     summary.mip_gap_mean = solution->gap * 100.0;
     summary.mip_gap_max = solution->gap * 100.0;
     gsp_write_summary_json(fp, "  ", &summary, 0);
+    fprintf(fp, ",\n");
+    fprintf(fp, "  \"solver_stats\": {\n");
+    fprintf(fp, "    \"status\": \"%s\",\n",
+            (solution->status == MIP_STATUS_OPTIMAL) ? "optimal" :
+            (solution->status == MIP_STATUS_TIME_LIMIT) ? "time_limit" :
+            (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed");
+    fprintf(fp, "    \"gurobi_status\": \"%s\",\n", mip_gurobi_status_name(solution->status));
+    fprintf(fp, "    \"gurobi_status_code\": %d,\n", solution->status);
+    fprintf(fp, "    \"runtime_seconds\": %.6f,\n", solution->runtime_seconds);
+    fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n", total_runtime_seconds);
+    fprintf(fp, "    \"method\": \"fixedport_mip\",\n");
+    fprintf(fp, "    \"mip_gap\": %.6f\n", solution->gap);
+    fprintf(fp, "  }\n");
     fprintf(fp, "}\n");
     fclose(fp);
 
@@ -915,6 +938,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to initialize fixedport debug instance\n");
         goto cleanup;
     }
+
+    remove_one_candidate_port(candidate_ports, &candidate_port_count, app.boat.location_id);
 
     t_after_load = clock();
     mip_instance.boat = &app.boat;

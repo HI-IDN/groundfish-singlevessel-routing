@@ -331,13 +331,12 @@ subtitle_text <- sprintf(
 title_text <- describe_single_route_title(survey_file)
 variant_text <- title_case_variant(variant_label)
 subtitle_parts <- c(boat_name)
+solver_status <- survey$solver_stats$gurobi_status
+if (is.null(solver_status) || !nzchar(solver_status)) {
+  solver_status <- survey$solver_stats$status
+}
 if (identical(basename(survey_file), "fixedport.json")) {
-  mip_gap <- survey$summary$mip$gap_percent$max
-  mip_label <- if (!is.null(mip_gap) && length(mip_gap) > 0 && !is.na(mip_gap[[1]]) && as.numeric(mip_gap[[1]]) == 0) {
-    "Optimal"
-  } else {
-    "Incumbent"
-  }
+  mip_label <- if (!is.null(solver_status) && nzchar(solver_status)) solver_status else "Incumbent"
   title_text <- "Capacity MIP Based on Fixed Port Visits from 2023 Survey"
   subtitle_text <- sprintf(
     "%s | Transit: %.0f nm | Total: %.0f nm | Stations: %d | Segments: %d",
@@ -346,6 +345,21 @@ if (identical(basename(survey_file), "fixedport.json")) {
     total_distance,
     num_stations,
     segment_count
+  )
+  subtitle_parts <- c(subtitle_text)
+} else if (identical(basename(survey_file), "noport.json")) {
+  mip_label <- if (!is.null(solver_status) && nzchar(solver_status)) solver_status else "Incumbent"
+  if (!is.null(variant_text) && nzchar(variant_text)) {
+    title_text <- sprintf("No-Port MIP Model (%s)", variant_text)
+  }
+  subtitle_text <- sprintf(
+    "%s | Transit: %.0f nm | Total: %.0f nm | Stations: %d | Segments: %d | Capacity: %d tons",
+    mip_label,
+    transit_distance,
+    total_distance,
+    num_stations,
+    segment_count,
+    capacity / 1000
   )
   subtitle_parts <- c(subtitle_text)
 } else if (!is.null(variant_text) && !identical(title_text, "Observed Survey Route 2023")) {

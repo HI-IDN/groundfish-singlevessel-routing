@@ -593,6 +593,8 @@ static int write_noport_json(sqlite3 *db,
             (solution->status == MIP_STATUS_OPTIMAL) ? "optimal" :
             (solution->status == MIP_STATUS_TIME_LIMIT) ? "time_limit" :
             (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed");
+    fprintf(fp, "    \"gurobi_status\": \"%s\",\n", mip_gurobi_status_name(solution->status));
+    fprintf(fp, "    \"gurobi_status_code\": %d,\n", solution->status);
     fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
     fprintf(fp, "    \"runtime_seconds\": %.6f,\n", solution->runtime_seconds);
     fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n", total_runtime_seconds);
