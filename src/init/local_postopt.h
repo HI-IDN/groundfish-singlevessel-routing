@@ -10,7 +10,6 @@ double read_init_mip_time_limit_from_yaml(const char *yaml_path);
 double read_noport_mip_time_limit_from_yaml(const char *yaml_path);
 double read_sweep_mip_time_limit_from_yaml(const char *yaml_path);
 double read_fixedport_mip_time_limit_from_yaml(const char *yaml_path);
-int read_objective_include_haul_distance_from_yaml(const char *yaml_path);
 double read_noport_haul_distance_scale_from_yaml(const char *yaml_path);
 double read_init_haul_distance_scale_from_yaml(const char *yaml_path);
 double read_sweep_haul_distance_scale_from_yaml(const char *yaml_path);
@@ -20,7 +19,6 @@ int init_apply_local_postopt(const nn_instance_t *inst,
                              int boat_start_loc_id,
                              int boat_end_loc_id,
                              double time_limit_seconds,
-                             int include_haul_distance,
                              double haul_distance_scale,
                              nn_solution_t *output,
                              double *runtime_seconds_out,

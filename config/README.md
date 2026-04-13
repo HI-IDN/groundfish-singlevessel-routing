@@ -1,121 +1,83 @@
 # GSP Solver Configuration
 
-## Overview
+All solver parameters live in **`gsp_solver.yaml`**. Instance data (boat capacity,
+home port, station counts) is loaded from `dat/gsp.db` at runtime, so the YAML stays
+small and never drifts out of sync with the data.
 
-The GSP solver uses a single configuration file: **`gsp_solver.yaml`**
+See `README.md` for pipeline commands (`make -C src init`, `sweep`, etc.).
 
-This minimal YAML file defines solver parameters, while most data is loaded from the database at runtime:
+---
 
-- **Boat parameters** (capacity, home port) → loaded from `boats` table
-- **Instance parameters** (stations, catch, segments) → computed from `stations` table
-- **Strategy settings** → YAML configuration
-- **Sweep parameters** → YAML configuration
-- **Gurobi settings** → YAML configuration
+## Parameters
 
-## Configuration File: `gsp_solver.yaml`
+### `global_time_limit_seconds`
 
-### Global Configuration
+Wall-clock cap for multi-phase workflows. Sweep returns early once the limit is
+reached, regardless of `sweep.max_iterations`.
 
-```yaml
-global_time_limit_seconds: 172800  # 48 hours
-```
+### `boat.id`
 
-`global_time_limit_seconds` is a project-level wall-clock cap for long-running workflows. Sweep
-returns when the cap is reached even if `sweep.max_iterations` has not been reached.
+Selects the vessel. Capacity, home port, and name are read from the database;
+changing this integer is sufficient to re-target the solver to a different boat.
 
-### Boat Configuration
+### `init.strategies`
 
-```yaml
-boat:
-  id: 2                          # boat_id in database
-  # name of boat, its capacity and home_port is loaded from database
-```
+Controls which initialization methods are run by `make -C src init`. Each entry
+corresponds to a `sol/<strategy>/init.json` output. Per-strategy sub-keys (`nn: {}`,
+etc.) are reserved for future method-specific options.
 
-**Why minimal?** Capacity and home port are stored in the database and loaded at runtime. This ensures consistency and avoids duplication.
 
-### Phase 0: Initialization Configuration
+### `sweep.max_iterations`
 
-```yaml
-init:
-  strategies:
-    - noport   # No-port MIP station ordering
-    - fixedport # Fixed port-order MIP
-    - nn       # Nearest Neighbor (fast)
-    - ge       # Greedy Edge (fast)
-    - ci       # Cheapest Insertion (moderate)
+Maximum boundary-swap iterations per sweep run. Each iteration attempts to improve
+one adjacent segment pair; sweep terminates early if a full pass produces no improvement.
 
-  noport: {}
-  fixedport: {}
-  nn: {}
-  ge: {}
-  ci: {}
-```
+### `gurobi.time_limit_seconds`
 
-### Phase 1: Matheuristic Sweep Configuration
+Per-phase Gurobi time limits (seconds; `0` = no limit):
 
-```yaml
-sweep:
-  max_iterations: 100             # Max iterations per sweep
-```
+| Key | Phase |
+|-----|-------|
+| `0seg` | No-port MIP |
+| `1seg` | Per-segment init TSP postopt |
+| `2seg` | Two-segment sweep boundary MIP |
+| `Xseg` | Fixed-port full MIP (applied after first incumbent) |
 
-### Gurobi Configuration
+### `gurobi.haul_distance_scale`
 
-```yaml
-gurobi:
-  time_limit_seconds:
-    0seg: 0                   # No-port MIP time limit (0 = no limit)
-    1seg: 0                   # Per-segment init local postopt time limit
-    2seg: 0                   # Two-segment sweep MIP time limit
-    Xseg: 86400               # Fixed-port MIP time limit after incumbent exists
-  haul_distance_scale:
-    0seg: 0.00001
-    1seg: 0.00001
-    2seg: 1.0
-    Xseg: 0.00001
-  env_log_file: null           # null = no log file
-  threads: 0                   # 0 = auto-detect CPU count
-  mip_focus: 0                 # 0 = balanced search
-  seed: -1                     # -1 = random seed (reproducible per run)
-```
+Each station is modelled as an entry/exit node pair; the arc between them is the
+haul (tow) distance. This multiplier scales those intra-station arcs in the MIP
+objective, giving three regimes:
 
-**Segment Time Limits**:
-- `gurobi.time_limit_seconds.0seg` controls the no-port MIP solve.
-- `gurobi.time_limit_seconds.1seg` controls single-segment init postopt TSP solves.
-- `gurobi.time_limit_seconds.2seg` controls two-segment sweep MIP solves.
-- `gurobi.time_limit_seconds.Xseg` controls the full fixed-port-order MIP solve after an incumbent exists.
+| `include_haul_distance` | scale | Effective weight | Effect |
+|:-:|--:|--:|---|
+| `true` | _(ignored)_ | 1.0 | Full haul in objective |
+| `false` | `0.0` | 0.0 | Haul excluded; station orientation arbitrary |
+| `false` | `ε > 0` | ε | Transit-primary; haul breaks orientation ties |
 
-### Output Configuration
+A scale of `0.00001` (1e-5) makes haul ~1/100 000th of a typical transit leg —
+small enough to never distort the transit-optimal solution, large enough to steer
+station entry/exit orientation toward the shorter tow direction.
 
-```yaml
-output:
-  verbose: true                # Print progress to stdout
-  json_format: true            # Save results as JSON
-```
+Recommended settings:
 
-## Data Loading at Runtime
+| Phase | Scale | Rationale |
+|-------|:-----:|-----------|
+| `0seg` | `0.00001` | Transit-minimising global order; haul ties broken sensibly |
+| `1seg` | `0.00001` | Single-segment postopt; per-segment haul is nearly constant |
+| `2seg` | `1.0` | Sweep changes segment membership, so haul varies and must be fully counted |
+| `Xseg` | `0.00001` | Port schedule fixed; transit-primary with orientation tie-breaking |
 
-When the solver starts, it loads:
+Avoid `0.0` unless deliberately ignoring tow orientation — it admits free haul
+lengthening that `0.00001` prevents at no cost to transit quality.
 
-```sql
--- Boat info
-SELECT capacity FROM boats WHERE id = 2;
-SELECT l.lat, l.lon FROM boats b
-  JOIN locations l ON b.location_id = l.id
-  WHERE b.id = 2;
+### `gurobi.threads / mip_focus / seed`
 
--- Instance parameters
-SELECT COUNT(*) FROM stations;
-SELECT SUM(amount) FROM stations;
-```
+Standard Gurobi controls. `seed: -1` uses a random seed (results vary across runs);
+set a non-negative integer for reproducibility.
 
-This means:
-- ✅ No duplication between YAML and database
-- ✅ Boat/instance data always in sync
-- ✅ Easy to switch boats (just change `boat.id: 2` to `boat.id: 1`)
-- ✅ YAML stays clean and minimal
+---
 
 ## References
 
 - Gurobi Parameters: https://www.gurobi.com/documentation/
-
-

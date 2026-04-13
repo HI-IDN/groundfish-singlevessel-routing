@@ -171,7 +171,6 @@ static int read_fixedport_config(const char *yaml_path,
                                  double *xseg_out,
                                  double *global_time_limit_out,
                                  int *thread_count_out,
-                                 int *include_haul_distance_out,
                                  double *haul_distance_scale_out) {
     FILE *fp = NULL;
     char line[1024];
@@ -181,7 +180,6 @@ static int read_fixedport_config(const char *yaml_path,
     if (xseg_out) *xseg_out = 0.0;
     if (global_time_limit_out) *global_time_limit_out = 0.0;
     if (thread_count_out) *thread_count_out = 0;
-    if (include_haul_distance_out) *include_haul_distance_out = 0;
     if (haul_distance_scale_out) *haul_distance_scale_out = 0.0;
 
     fp = fopen(yaml_path, "r");
@@ -204,7 +202,6 @@ static int read_fixedport_config(const char *yaml_path,
         if (trimmed == line) {
             if (strncmp(trimmed, "boat:", 5) == 0) section = 1;
             else if (strncmp(trimmed, "gurobi:", 7) == 0) section = 2;
-            else if (strncmp(trimmed, "objective:", 10) == 0) section = 3;
             else section = 0;
             continue;
         }
@@ -213,16 +210,6 @@ static int read_fixedport_config(const char *yaml_path,
             *boat_id_out = atoi(trimmed + 3);
         } else if (section == 2 && strncmp(trimmed, "threads:", 8) == 0 && thread_count_out) {
             *thread_count_out = atoi(trimmed + 8);
-        } else if (section == 3 && strncmp(trimmed, "include_haul_distance:", 22) == 0 && include_haul_distance_out) {
-            char *value = trim_left(trimmed + 22);
-            *include_haul_distance_out =
-                !(strncmp(value, "false", 5) == 0 ||
-                  strncmp(value, "False", 5) == 0 ||
-                  strncmp(value, "FALSE", 5) == 0 ||
-                  strncmp(value, "0", 1) == 0 ||
-                  strncmp(value, "no", 2) == 0 ||
-                  strncmp(value, "No", 2) == 0 ||
-                  strncmp(value, "NO", 2) == 0);
         }
     }
 
@@ -855,7 +842,6 @@ int main(int argc, char **argv) {
     double time_limit_seconds = 0.0;
     double global_time_limit_seconds = 0.0;
     int thread_count = 0;
-    int include_haul_distance = 0;
     double haul_distance_scale = 0.0;
     clock_t t_start;
     clock_t t_after_load;
@@ -880,7 +866,7 @@ int main(int argc, char **argv) {
 
     t_start = clock();
     read_fixedport_config(yaml_path, &boat_id, &time_limit_seconds, &global_time_limit_seconds,
-                          &thread_count, &include_haul_distance, &haul_distance_scale);
+                          &thread_count, &haul_distance_scale);
     (void)global_time_limit_seconds;
 
     if (sqlite3_open(db_path, &db) != SQLITE_OK) {
@@ -912,9 +898,9 @@ int main(int argc, char **argv) {
     mip_params.time_limit_seconds = time_limit_seconds;
     mip_params.thread_count = thread_count;
     mip_params.verbose = 0;
-    mip_params.exclude_haul_distance = !include_haul_distance && !(haul_distance_scale > 0.0);
-    mip_params.use_scaled_haul_distance = !include_haul_distance && (haul_distance_scale > 0.0);
-    mip_params.haul_distance_scale = (!include_haul_distance && (haul_distance_scale > 0.0)) ? haul_distance_scale : 0.0;
+    mip_params.exclude_haul_distance = !(haul_distance_scale > 0.0);
+    mip_params.use_scaled_haul_distance = (haul_distance_scale > 0.0);
+    mip_params.haul_distance_scale = (haul_distance_scale > 0.0) ? haul_distance_scale : 0.0;
 
     if (solve_mip_fixedport(&mip_instance, &mip_params, &mip_solution) != 0) {
         fprintf(stderr, "Fixedport solve failed: status=%d solver_error=%d\n", mip_solution.status, mip_solution.solver_error);
