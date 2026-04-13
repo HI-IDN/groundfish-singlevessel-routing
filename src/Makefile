@@ -156,8 +156,8 @@ plot-routes: $(ROUTE_PNGS)
 ../dat/coastline_waypoints_ports.png:
 	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp.db dat/coastline_waypoints_ports.png'
 
-../sol/survey_overview.png:
-	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R dat/gsp.db sol/survey_overview.png'
+../dat/survey_overview.png:
+	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R dat/gsp.db dat/survey_overview.png'
 
 ../sol/survey/multivessel.png:
 	@bash -lc 'cd .. && Rscript R/plot_multi_vessel_route.R "sol/survey/boat*.json" "sol/survey/multivessel.png" "dat/gsp.db"'
@@ -165,7 +165,7 @@ plot-routes: $(ROUTE_PNGS)
 ../sol/sweep_summary_panels.png:
 	@bash -lc 'cd .. && Rscript R/plot_sweep_summary_panels.R sol sol/sweep_summary_panels.png'
 
-plot: ../dat/coastline_waypoints_ports.png ../sol/survey_overview.png ../sol/survey/multivessel.png plot-routes
+plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png ../sol/survey/multivessel.png plot-routes
 
 EXPERIMENT_TARGETS = \
 	../sol/noport/noport.json \

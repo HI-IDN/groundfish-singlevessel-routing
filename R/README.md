@@ -8,7 +8,7 @@ All plots are driven by `make -C src plot` targets; see `src/Makefile` for the f
 | Script | Make target | Output |
 |--------|-------------|--------|
 | `plot_country.R` | `plot-country` | `dat/coastline_waypoints_ports.png` |
-| `plot_survey_overview.R` | `plot-overview` | `sol/survey_overview.png` |
+| `plot_survey_overview.R` | `plot-overview` | `dat/survey_overview.png` |
 | `plot_single_vessel_route.R` | `plot-routes` | `sol/<strategy>/{init,sweep}.png` |
 | `plot_multi_vessel_route.R` | `plot-multivessel` | `sol/survey/multivessel.png` |
 | `plot_sweep_summary_panels.R` | `plot-sweep-panels` | `sol/sweep_summary_panels.png` |

@@ -3,7 +3,7 @@
 required_packages <- c("tidyverse", "DBI", "RSQLite")
 args <- commandArgs(trailingOnly = TRUE)
 db_path <- if (length(args) >= 1) args[1] else "dat/gsp.db"
-output_file <- if (length(args) >= 2) args[2] else "sol/survey_overview.png"
+output_file <- if (length(args) >= 2) args[2] else "dat/survey_overview.png"
 
 script_file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_dir <- if (length(script_file_arg) > 0) {
