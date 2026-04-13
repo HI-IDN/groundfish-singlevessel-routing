@@ -39,21 +39,17 @@ lib/
 *.pdb
 
 # Logs
-log/
 *.log
 
 # Generated databases and large derived data
-dat/gsp.db
-dat/*.sqlite
-sol/*.sqlite
+*.db
+*.sqlite
+*.tsv
+*.csv
+*.json
 
 # Generated solution outputs
-sol/nn/
-sol/ge/
-sol/ci/
-sol/opt/
-sol/survey/
-sol.old/
+sol/
 
 # Misc generated files
 *.tmp
