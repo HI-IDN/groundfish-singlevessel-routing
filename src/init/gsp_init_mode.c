@@ -252,27 +252,6 @@ static int load_distance_matrix(sqlite3 *db, nn_instance_t *inst) {
     return 0;
 }
 
-static int append_int_local(int **arr, int *n, int *cap, int v) {
-    if (!arr || !n || !cap) return 0;
-    if (*n >= *cap) {
-        int new_cap = (*cap == 0) ? 16 : (*cap * 2);
-        int *tmp = (int*)realloc(*arr, (size_t)new_cap * sizeof(int));
-        if (!tmp) return 0;
-        *arr = tmp;
-        *cap = new_cap;
-    }
-    (*arr)[(*n)++] = v;
-    return 1;
-}
-
-static int append_unique_int_local(int **arr, int *n, int *cap, int v) {
-    if (!arr || !n || !cap) return 0;
-    for (int i = 0; i < *n; i++) {
-        if ((*arr)[i] == v) return 1;
-    }
-    return append_int_local(arr, n, cap, v);
-}
-
 static int output_path_is_construction_json(const char *output_path) {
     const char *base = output_path;
     const char *slash;
@@ -366,6 +345,12 @@ typedef struct {
     int total_queries;
     int preload_leg_pairs;
 } waypoint_cache_t;
+
+typedef struct {
+    waypoint_cache_t *cache;
+    int *leg_query_count;
+    int *total_waypoint_ids;
+} init_waypoint_lookup_ctx_t;
 
 static void waypoint_cache_destroy(waypoint_cache_t *cache) {
     if (!cache) return;
@@ -582,6 +567,43 @@ static const waypoint_cache_entry_t *lookup_waypoint_path_local(waypoint_cache_t
     return NULL;
 }
 
+static int lookup_waypoint_path_json_cb(const void *ctx,
+                                        int from_loc_id,
+                                        int to_loc_id,
+                                        int **out_ids,
+                                        int *out_count) {
+    const init_waypoint_lookup_ctx_t *lookup_ctx = (const init_waypoint_lookup_ctx_t*)ctx;
+    const waypoint_cache_entry_t *entry;
+    int is_reverse = 0;
+    int *ids = NULL;
+
+    if (out_ids) *out_ids = NULL;
+    if (out_count) *out_count = 0;
+    if (!lookup_ctx || !lookup_ctx->cache || !out_ids) return 0;
+
+    entry = lookup_waypoint_path_local(lookup_ctx->cache, from_loc_id, to_loc_id, &is_reverse);
+    if (lookup_ctx->leg_query_count) (*lookup_ctx->leg_query_count)++;
+    if (!entry || entry->waypoint_count <= 0) return 1;
+
+    ids = (int*)malloc((size_t)entry->waypoint_count * sizeof(int));
+    if (!ids) return 0;
+
+    if (is_reverse) {
+        for (int i = 0; i < entry->waypoint_count; i++) {
+            ids[i] = entry->waypoint_ids[entry->waypoint_count - 1 - i];
+        }
+    } else {
+        memcpy(ids, entry->waypoint_ids, (size_t)entry->waypoint_count * sizeof(int));
+    }
+
+    if (lookup_ctx->total_waypoint_ids) {
+        (*lookup_ctx->total_waypoint_ids) += entry->waypoint_count;
+    }
+    *out_ids = ids;
+    if (out_count) *out_count = entry->waypoint_count;
+    return 1;
+}
+
 static int init_leg_is_station_haul(const nn_instance_t *inst, int from_loc_id, int to_loc_id) {
     if (!inst) return 0;
     for (int i = 0; i < inst->num_stations + inst->num_ports; i++) {
@@ -653,17 +675,12 @@ static void write_solution_section(FILE *fp, const char *label,
                                    const char *variant_name,
                                    int segment_distances_include_return)
 {
-    int *unique_waypoint_location_ids = NULL;
-    int uniq_wp_n = 0, uniq_wp_cap = 0;
-    int *dock_location_ids = NULL;
-    int dock_n = 0, dock_cap = 0;
-    unsigned char *seen_waypoint_location_ids = NULL;
-    gsp_int_list_view_t *location_segments = NULL;
-    gsp_int_list_view_t *station_segments = NULL;
     gsp_distance_breakdown_t *segment_breakdowns = NULL;
     gsp_distance_breakdown_t total_breakdown;
+    init_waypoint_lookup_ctx_t lookup_ctx;
 
     if (!fp || !inst || !sol || !cache) return;
+    (void)segment_distances_include_return;
 
     memset(&total_breakdown, 0, sizeof(total_breakdown));
     segment_breakdowns = (gsp_distance_breakdown_t*)calloc((size_t)sol->segment_count, sizeof(gsp_distance_breakdown_t));
@@ -673,188 +690,26 @@ static void write_solution_section(FILE *fp, const char *label,
     }
     init_compute_segment_breakdowns(inst, sol, boat_start_loc_id, boat_end_loc_id,
                                     segment_breakdowns, &total_breakdown);
+    lookup_ctx.cache = cache;
+    lookup_ctx.leg_query_count = leg_query_count;
+    lookup_ctx.total_waypoint_ids = total_waypoint_ids;
 
-    seen_waypoint_location_ids = (unsigned char*)calloc((size_t)inst->max_loc_id, sizeof(unsigned char));
-    if (!seen_waypoint_location_ids) {
-        fprintf(stderr, "ERROR: Failed to allocate waypoint seen-set\n");
-        free(segment_breakdowns);
-        return;
+    if (!gsp_write_segmented_solution_entry_json(fp,
+                                                 "  ",
+                                                 "  ",
+                                                 label,
+                                                 variant_name,
+                                                 inst,
+                                                 sol,
+                                                 boat_start_loc_id,
+                                                 boat_end_loc_id,
+                                                 is_feasible,
+                                                 segment_breakdowns,
+                                                 &total_breakdown,
+                                                 lookup_waypoint_path_json_cb,
+                                                 &lookup_ctx)) {
+        fprintf(stderr, "ERROR: Failed to write segmented solution JSON for '%s'\n", label);
     }
-    location_segments = (gsp_int_list_view_t*)calloc((size_t)sol->segment_count, sizeof(gsp_int_list_view_t));
-    station_segments = (gsp_int_list_view_t*)calloc((size_t)sol->segment_count, sizeof(gsp_int_list_view_t));
-    if (!location_segments || !station_segments) {
-        fprintf(stderr, "ERROR: Failed to allocate solution segment views\n");
-        free(location_segments);
-        free(station_segments);
-        free(seen_waypoint_location_ids);
-        free(segment_breakdowns);
-        return;
-    }
-
-    {
-        int *segment_end_location_ids = NULL;
-        segment_end_location_ids = (int*)malloc((size_t)sol->segment_count * sizeof(int));
-        if (!segment_end_location_ids) {
-            free(location_segments);
-            free(station_segments);
-            free(seen_waypoint_location_ids);
-            free(segment_breakdowns);
-            fprintf(stderr, "ERROR: Failed to allocate dock boundary buffer\n");
-            return;
-        }
-        for (int s = 0; s < sol->segment_count; s++) {
-            segment_end_location_ids[s] =
-                (s == sol->segment_count - 1) ? boat_end_loc_id : sol->tour[sol->segment_ends[s]];
-        }
-        if (!gsp_build_dock_location_ids_from_segment_ends(boat_start_loc_id,
-                                                           segment_end_location_ids,
-                                                           sol->segment_count,
-                                                           &dock_location_ids,
-                                                           &dock_n)) {
-            free(segment_end_location_ids);
-            free(location_segments);
-            free(station_segments);
-            free(seen_waypoint_location_ids);
-            free(segment_breakdowns);
-            fprintf(stderr, "ERROR: Failed to build dock_location_ids\n");
-            return;
-        }
-        free(segment_end_location_ids);
-    }
-
-    for (int s = 0; s < sol->segment_count; s++) {
-        int start = sol->segment_starts[s];
-        int end = sol->segment_ends[s];
-        int base_cap = (end - start + 1) + 2;
-        int *base = (int*)malloc((size_t)base_cap * sizeof(int));
-        int *expanded = NULL;
-        int expanded_n = 0, expanded_cap = 0;
-        int *station_ids = NULL;
-        int station_n = 0, station_cap = 0;
-        int base_n = 0;
-        if (!base) {
-            for (int i = 0; i < s; i++) {
-                free((int*)location_segments[i].values);
-                free((int*)station_segments[i].values);
-            }
-            free(location_segments);
-            free(station_segments);
-            free(seen_waypoint_location_ids);
-            free(unique_waypoint_location_ids);
-            free(dock_location_ids);
-            free(segment_breakdowns);
-            fprintf(stderr, "ERROR: Failed to allocate temporary segment buffer\n");
-            return;
-        }
-
-        base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
-        for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
-        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
-            base[base_n++] = boat_end_loc_id;
-        }
-
-        for (int i = 0; i < sol->visit_station_count; i++) {
-            if (sol->visit_station_segment[i] == s) {
-                (void)append_int_local(&station_ids, &station_n, &station_cap,
-                                       sol->visit_station_ids[i] *
-                                       ((sol->visit_station_direction && sol->visit_station_direction[i] < 0) ? -1 : 1));
-            }
-        }
-
-        if (base_n > 0) {
-            (void)append_int_local(&expanded, &expanded_n, &expanded_cap, base[0]);
-            for (int i = 0; i < base_n - 1; i++) {
-                const waypoint_cache_entry_t *entry;
-                int is_reverse = 0;
-                int from_loc = base[i];
-                int to_loc = base[i + 1];
-                entry = lookup_waypoint_path_local(cache, from_loc, to_loc, &is_reverse);
-                if (leg_query_count) (*leg_query_count)++;
-                if (entry && entry->waypoint_count > 0) {
-                    if (total_waypoint_ids) (*total_waypoint_ids) += entry->waypoint_count;
-                    if (is_reverse) {
-                        for (int k = entry->waypoint_count - 1; k >= 0; k--) {
-                            int waypoint_id = entry->waypoint_ids[k];
-                            (void)append_int_local(&expanded, &expanded_n, &expanded_cap, waypoint_id);
-                            if (waypoint_id >= 0 && waypoint_id < inst->max_loc_id &&
-                                !seen_waypoint_location_ids[waypoint_id]) {
-                                seen_waypoint_location_ids[waypoint_id] = 1;
-                                (void)append_int_local(&unique_waypoint_location_ids, &uniq_wp_n, &uniq_wp_cap, waypoint_id);
-                            }
-                        }
-                    } else {
-                        for (int k = 0; k < entry->waypoint_count; k++) {
-                            int waypoint_id = entry->waypoint_ids[k];
-                            (void)append_int_local(&expanded, &expanded_n, &expanded_cap, waypoint_id);
-                            if (waypoint_id >= 0 && waypoint_id < inst->max_loc_id &&
-                                !seen_waypoint_location_ids[waypoint_id]) {
-                                seen_waypoint_location_ids[waypoint_id] = 1;
-                                (void)append_int_local(&unique_waypoint_location_ids, &uniq_wp_n, &uniq_wp_cap, waypoint_id);
-                            }
-                        }
-                    }
-                }
-                (void)append_int_local(&expanded, &expanded_n, &expanded_cap, to_loc);
-            }
-        }
-
-        free(base);
-        location_segments[s].values = expanded;
-        location_segments[s].count = expanded_n;
-        station_segments[s].values = station_ids;
-        station_segments[s].count = station_n;
-    }
-    fprintf(fp, "  \"%s\": ", label);
-    {
-        gsp_solution_json_view_t view = {0};
-        int *tour_length = (int*)calloc((size_t)sol->segment_count, sizeof(int));
-        if (!tour_length) {
-            for (int i = 0; i < sol->segment_count; i++) {
-                free((int*)location_segments[i].values);
-                free((int*)station_segments[i].values);
-            }
-            free(location_segments);
-            free(station_segments);
-            free(seen_waypoint_location_ids);
-            free(unique_waypoint_location_ids);
-            free(dock_location_ids);
-            free(segment_breakdowns);
-            fprintf(stderr, "ERROR: Failed to allocate segment lengths\n");
-            return;
-        }
-        for (int s = 0; s < sol->segment_count; s++) {
-            tour_length[s] = sol->segment_ends[s] - sol->segment_starts[s] + 1;
-        }
-        view.variant_name = variant_name ? variant_name : label;
-        view.tour_segments_location_ids = location_segments;
-        view.tour_segments_location_count = sol->segment_count;
-        view.dock_location_ids = dock_location_ids;
-        view.dock_location_count = dock_n;
-        view.unique_waypoint_location_ids = unique_waypoint_location_ids;
-        view.unique_waypoint_location_count = uniq_wp_n;
-        view.tour_segments_station_ids = station_segments;
-        view.tour_segments_station_count = sol->segment_count;
-        view.tour_length = tour_length;
-        view.tour_length_count = sol->segment_count;
-        view.segment_count = sol->segment_count;
-        view.segment_catch_amount = sol->segment_catches;
-        view.segment_catch_count = sol->segment_count;
-        view.segment_breakdowns = segment_breakdowns;
-        view.grand_total = &total_breakdown;
-        view.feasible = is_feasible;
-        gsp_write_solution_json(fp, "  ", &view, 0);
-        free(tour_length);
-    }
-
-    for (int i = 0; i < sol->segment_count; i++) {
-        free((int*)location_segments[i].values);
-        free((int*)station_segments[i].values);
-    }
-    free(location_segments);
-    free(station_segments);
-    free(seen_waypoint_location_ids);
-    free(unique_waypoint_location_ids);
-    free(dock_location_ids);
     free(segment_breakdowns);
 }
 

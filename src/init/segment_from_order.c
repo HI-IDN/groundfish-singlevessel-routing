@@ -21,9 +21,13 @@ static int extract_final_solution_variant_from_json(const char *json_path,
                                                     char **out_variant_name,
                                                     char **out_variant_object);
 static int append_int_local(int **arr, int *n, int *cap, int v);
-static int append_unique_int_local(int **arr, int *n, int *cap, int v);
 static void free_segmented_station_order(int **segments, int *counts, int segment_count);
 static int lookup_waypoint_path_local(sqlite3 *db, int from_loc_id, int to_loc_id, int **out_ids);
+static int lookup_waypoint_path_json_cb(const void *ctx,
+                                        int from_loc_id,
+                                        int to_loc_id,
+                                        int **out_ids,
+                                        int *out_count);
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
@@ -229,130 +233,32 @@ static void write_order_solution_section(FILE *fp,
                                          int is_feasible,
                                          const gsp_distance_breakdown_t *segment_breakdowns,
                                          const gsp_distance_breakdown_t *total_breakdown) {
-    gsp_int_list_view_t *location_segments = NULL;
-    gsp_int_list_view_t *station_segments = NULL;
-    int *unique_waypoint_location_ids = NULL;
-    int uniq_wp_n = 0, uniq_wp_cap = 0;
-    int *dock_location_ids = NULL;
-    int dock_n = 0, dock_cap = 0;
-    int *tour_length = NULL;
-    (void)inst;
-
     if (!fp || !sol) return;
+    gsp_write_segmented_solution_entry_json(fp,
+                                            "    ",
+                                            "    ",
+                                            label,
+                                            variant_name,
+                                            inst,
+                                            sol,
+                                            boat_start_loc_id,
+                                            boat_end_loc_id,
+                                            is_feasible,
+                                            segment_breakdowns,
+                                            total_breakdown,
+                                            lookup_waypoint_path_json_cb,
+                                            db);
+}
 
-    location_segments = (gsp_int_list_view_t*)calloc((size_t)sol->segment_count, sizeof(gsp_int_list_view_t));
-    station_segments = (gsp_int_list_view_t*)calloc((size_t)sol->segment_count, sizeof(gsp_int_list_view_t));
-    tour_length = (int*)calloc((size_t)sol->segment_count, sizeof(int));
-    if (!location_segments || !station_segments || !tour_length) goto cleanup;
-
-    {
-        int *segment_end_location_ids =
-            (int*)malloc((size_t)sol->segment_count * sizeof(int));
-        if (!segment_end_location_ids) goto cleanup;
-        for (int s = 0; s < sol->segment_count; s++) {
-            segment_end_location_ids[s] =
-                (s == sol->segment_count - 1) ? boat_end_loc_id : sol->tour[sol->segment_ends[s]];
-        }
-        if (!gsp_build_dock_location_ids_from_segment_ends(boat_start_loc_id,
-                                                           segment_end_location_ids,
-                                                           sol->segment_count,
-                                                           &dock_location_ids,
-                                                           &dock_n)) {
-            free(segment_end_location_ids);
-            goto cleanup;
-        }
-        free(segment_end_location_ids);
-    }
-
-    for (int s = 0; s < sol->segment_count; s++) {
-        int start = sol->segment_starts[s];
-        int end = sol->segment_ends[s];
-        int base_cap = (end - start + 1) + 2;
-        int *base = (int*)malloc((size_t)base_cap * sizeof(int));
-        int *expanded = NULL;
-        int expanded_n = 0, expanded_cap = 0;
-        int *station_ids = NULL;
-        int station_n = 0, station_cap = 0;
-        int base_n = 0;
-        if (!base) goto cleanup;
-
-        tour_length[s] = end - start + 1;
-        base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
-        for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
-        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
-            base[base_n++] = boat_end_loc_id;
-        }
-
-        for (int i = 0; i < sol->visit_station_count; i++) {
-            if (sol->visit_station_segment[i] == s) {
-                (void)append_int_local(&station_ids, &station_n, &station_cap,
-                                       sol->visit_station_ids[i] *
-                                       ((sol->visit_station_direction &&
-                                         sol->visit_station_direction[i] < 0) ? -1 : 1));
-            }
-        }
-
-        if (base_n > 0) {
-            (void)append_int_local(&expanded, &expanded_n, &expanded_cap, base[0]);
-            for (int i = 0; i < base_n - 1; i++) {
-                int from_loc = base[i];
-                int to_loc = base[i + 1];
-                int *wps = NULL;
-                int n_wps = lookup_waypoint_path_local(db, from_loc, to_loc, &wps);
-                if (n_wps > 0) {
-                    for (int k = 0; k < n_wps; k++) {
-                        (void)append_int_local(&expanded, &expanded_n, &expanded_cap, wps[k]);
-                        (void)append_unique_int_local(&unique_waypoint_location_ids,
-                                                      &uniq_wp_n, &uniq_wp_cap, wps[k]);
-                    }
-                }
-                (void)append_int_local(&expanded, &expanded_n, &expanded_cap, to_loc);
-                free(wps);
-            }
-        }
-
-        free(base);
-        location_segments[s].values = expanded;
-        location_segments[s].count = expanded_n;
-        station_segments[s].values = station_ids;
-        station_segments[s].count = station_n;
-    }
-
-    fprintf(fp, "    \"%s\": ", label);
-    {
-        gsp_solution_json_view_t view = {0};
-        view.variant_name = variant_name ? variant_name : label;
-        view.tour_segments_location_ids = location_segments;
-        view.tour_segments_location_count = sol->segment_count;
-        view.dock_location_ids = dock_location_ids;
-        view.dock_location_count = dock_n;
-        view.unique_waypoint_location_ids = unique_waypoint_location_ids;
-        view.unique_waypoint_location_count = uniq_wp_n;
-        view.tour_segments_station_ids = station_segments;
-        view.tour_segments_station_count = sol->segment_count;
-        view.tour_length = tour_length;
-        view.tour_length_count = sol->segment_count;
-        view.segment_count = sol->segment_count;
-        view.segment_catch_amount = sol->segment_catches;
-        view.segment_catch_count = sol->segment_count;
-        view.segment_breakdowns = segment_breakdowns;
-        view.grand_total = total_breakdown;
-        view.feasible = is_feasible;
-        gsp_write_solution_json(fp, "    ", &view, 0);
-    }
-
-cleanup:
-    if (location_segments) {
-        for (int s = 0; s < sol->segment_count; s++) free((int*)location_segments[s].values);
-    }
-    if (station_segments) {
-        for (int s = 0; s < sol->segment_count; s++) free((int*)station_segments[s].values);
-    }
-    free(location_segments);
-    free(station_segments);
-    free(unique_waypoint_location_ids);
-    free(dock_location_ids);
-    free(tour_length);
+static int lookup_waypoint_path_json_cb(const void *ctx,
+                                        int from_loc_id,
+                                        int to_loc_id,
+                                        int **out_ids,
+                                        int *out_count) {
+    sqlite3 *db = (sqlite3*)ctx;
+    int count = lookup_waypoint_path_local(db, from_loc_id, to_loc_id, out_ids);
+    if (out_count) *out_count = count;
+    return 1;
 }
 
 static int append_int_local(int **arr, int *n, int *cap, int v) {
@@ -367,13 +273,6 @@ static int append_int_local(int **arr, int *n, int *cap, int v) {
     }
     (*arr)[(*n)++] = v;
     return 1;
-}
-
-static int append_unique_int_local(int **arr, int *n, int *cap, int v) {
-    for (int i = 0; i < *n; i++) {
-        if ((*arr)[i] == v) return 1;
-    }
-    return append_int_local(arr, n, cap, v);
 }
 
 static void free_segmented_station_order(int **segments, int *counts, int segment_count) {

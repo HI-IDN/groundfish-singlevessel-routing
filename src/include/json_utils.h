@@ -10,6 +10,12 @@ typedef struct {
     int count;
 } gsp_int_list_view_t;
 
+typedef int (*gsp_waypoint_lookup_fn)(const void *ctx,
+                                      int from_loc_id,
+                                      int to_loc_id,
+                                      int **out_waypoint_ids,
+                                      int *out_waypoint_count);
+
 typedef struct {
     const char *variant_name;
     const gsp_int_list_view_t *tour_segments_location_ids;
@@ -102,6 +108,21 @@ void gsp_write_solution_json(FILE *fp,
                              const char *indent,
                              const gsp_solution_json_view_t *view,
                              int trailing_comma);
+
+int gsp_write_segmented_solution_entry_json(FILE *fp,
+                                            const char *entry_indent,
+                                            const char *value_indent,
+                                            const char *label,
+                                            const char *variant_name,
+                                            const nn_instance_t *inst,
+                                            const nn_solution_t *sol,
+                                            int boat_start_loc_id,
+                                            int boat_end_loc_id,
+                                            int is_feasible,
+                                            const gsp_distance_breakdown_t *segment_breakdowns,
+                                            const gsp_distance_breakdown_t *grand_total,
+                                            gsp_waypoint_lookup_fn waypoint_lookup,
+                                            const void *waypoint_lookup_ctx);
 
 void gsp_write_metadata_json(FILE *fp,
                              const char *indent,
