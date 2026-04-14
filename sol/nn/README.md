@@ -1,6 +1,6 @@
-# Nearest-Neighbor (NN) Initialization
+# Nearest-Neighbor (NN) Construction
 
-The Nearest-Neighbor (NN) initialization constructs an initial ordering of the survey stations by
+The Nearest-Neighbor (NN) construction builds an initial ordering of the survey stations by
 repeatedly selecting, from the set of unvisited stations, the closest feasible next station
 according to the waypoint-aware distance matrix. At each step, the algorithm evaluates whether
 adding the next station would exceed the vessel's remaining capacity within the current segment. If
@@ -11,20 +11,20 @@ Because NN expands the route by always choosing the locally nearest feasible opt
 compute and scales easily to large station sets. However, its purely greedy, distance-driven
 behavior can lead to noisy or irregular segmentations, especially in regions with clustered
 stations or sharp load gradients. Despite this, NN provides a lightweight deterministic baseline
-that is useful for benchmarking more sophisticated initialization strategies.
+that is useful for benchmarking more sophisticated construction strategies.
 
 -----
 
 ## Route Plotting
 
 <table><tr>
-<td align="center"><img src="init.png" width="460"/><br><sub>Initialization — transit 6,264.57 nm · total 8,507.42 nm</sub></td>
-<td align="center"><img src="sweep.png" width="460"/><br><sub>Sweep (pass 4) — transit 5,932.39 nm · total 8,175.24 nm</sub></td>
+<td align="center"><img src="init.png" width="460"/><br><sub>Segment — transit 6,264.57 nm · total 8,507.42 nm</sub></td>
+<td align="center"><img src="sweep.png" width="460"/><br><sub>Refinement (matheuristic sweep, pass 4) — transit 5,932.39 nm · total 8,175.24 nm</sub></td>
 </tr></table>
 
 ## Segment Summary
 
-### Initialization (capacity feasible)
+### Segment (capacity feasible)
 
 |   Segment |   Length | Stations |      Catch | Transit (nm) | Distance (nm) |
 |----------:|---------:|---------:|-----------:|-------------:|--------------:|
@@ -43,21 +43,21 @@ that is useful for benchmarking more sophisticated initialization strategies.
 |        13 |        2 |        1 |       7996 |       175.86 |        180.02 |
 | **Total** | **1172** |  **580** | **528065** |  **6264.57** |   **8507.42** |
 
-### Sweep adjustment (capacity feasible)
+### Refinement (matheuristic sweep, capacity feasible)
 
-|   Segment |  Length | Stations |      Catch | Transit (nm) | Total (nm) |
-|----------:|--------:|---------:|-----------:|-------------:|-----------:|
-|         1 |      55 |       54 |      43517 |       317.94 |     517.73 |
-|         2 |      73 |       72 |      44379 |       425.85 |     695.30 |
-|         3 |      64 |       63 |      37482 |       459.45 |     706.68 |
-|         4 |     108 |      107 |      43429 |       672.83 |    1091.45 |
-|         5 |      44 |       43 |      43855 |       520.80 |     689.41 |
-|         6 |      37 |       36 |      44643 |       733.33 |     876.79 |
-|         7 |      53 |       52 |      44048 |       395.96 |     594.62 |
-|         8 |      36 |       35 |      43624 |       304.49 |     437.29 |
-|         9 |      43 |       42 |      44411 |       656.79 |     823.61 |
-|        10 |      46 |       45 |      42818 |       689.36 |     862.34 |
-|        11 |      24 |       23 |      40365 |       351.00 |     443.17 |
-|        12 |       4 |        3 |      12472 |       233.18 |     245.17 |
-|        13 |       5 |        5 |      43022 |       171.42 |     191.69 |
+|   Segment |  Length | Stations |      Catch | Transit (nm) |  Total (nm) |
+|----------:|--------:|---------:|-----------:|-------------:|------------:|
+|         1 |      55 |       54 |      43517 |       317.94 |      517.73 |
+|         2 |      73 |       72 |      44379 |       425.85 |      695.30 |
+|         3 |      64 |       63 |      37482 |       459.45 |      706.68 |
+|         4 |     108 |      107 |      43429 |       672.83 |     1091.45 |
+|         5 |      44 |       43 |      43855 |       520.80 |      689.41 |
+|         6 |      37 |       36 |      44643 |       733.33 |      876.79 |
+|         7 |      53 |       52 |      44048 |       395.96 |      594.62 |
+|         8 |      36 |       35 |      43624 |       304.49 |      437.29 |
+|         9 |      43 |       42 |      44411 |       656.79 |      823.61 |
+|        10 |      46 |       45 |      42818 |       689.36 |      862.34 |
+|        11 |      24 |       23 |      40365 |       351.00 |      443.17 |
+|        12 |       4 |        3 |      12472 |       233.18 |      245.17 |
+|        13 |       5 |        5 |      43022 |       171.42 |      191.69 |
 | **Total** | **592** |  **580** | **528065** |  **5932.39** | **8175.24** |

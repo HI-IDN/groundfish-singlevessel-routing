@@ -1,6 +1,6 @@
-# Greedy‑Edge (GE) Initialization
+# Greedy‑Edge (GE) Construction
 
-The Greedy‑Edge (GE) initialization constructs an initial station ordering by following a
+The Greedy‑Edge (GE) construction builds an initial station ordering by following a
 Kruskal‑like edge‑selection process. At each step, the algorithm adds the shortest admissible edge
 between two stations—subject to feasibility constraints—while ensuring that premature subtours do
 not form. This creates a gradually expanding forest of short edges that ultimately forms a single
@@ -19,13 +19,13 @@ particularly in regions where many similar‑length edges compete.
 ## Route Plotting
 
 <table><tr>
-<td align="center"><img src="init.png" width="460"/><br><sub>Initialization — transit 4,809.89 nm · total 7,052.74 nm</sub></td>
-<td align="center"><img src="sweep.png" width="460"/><br><sub>Sweep (pass 6) — transit 4,643.65 nm · total 6,886.50 nm</sub></td>
+<td align="center"><img src="init.png" width="460"/><br><sub>Segment — transit 4,809.89 nm · total 7,052.74 nm</sub></td>
+<td align="center"><img src="sweep.png" width="460"/><br><sub>Refinement (matheuristic sweep, pass 6) — transit 4,643.65 nm · total 6,886.50 nm</sub></td>
 </tr></table>
 
 ## Segment Summary
 
-### Initialization (capacity feasible)
+### Segment (capacity feasible)
 
 5|   Segment |   Length | Stations |      Catch | Transit (nm) | Distance (nm) |
 |----------:|---------:|---------:|-----------:|-------------:|--------------:|
@@ -44,7 +44,7 @@ particularly in regions where many similar‑length edges compete.
 |        13 |       56 |       28 |      16554 |       388.39 |        497.83 |
 | **Total** | **1172** |  **580** | **528065** |  **4809.89** |   **7052.74** |
 
-### Sweep adjustment (capacity feasible)
+### Refinement (matheuristic sweep, capacity feasible)
 
 |   Segment |  Length | Stations |      Catch | Transit (nm) | Total (nm) |
 |----------:|--------:|---------:|-----------:|-------------:|-----------:|

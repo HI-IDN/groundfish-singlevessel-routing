@@ -11,7 +11,7 @@ Current Models
 ```text
 mip/
 ├── noport.c            no-port ordering model
-├── endpaired_tsp.c     exact segment solver used by init local post-optimization and sweep
+├── endpaired_tsp.c     exact segment solver used by segment local post-optimization and refinement
 ├── fixedport.c         fixed-port capacity model
 ├── mip_common.c        shared Gurobi environment, parameter, and status helpers
 ├── mip_paired_tour.c   shared paired-tour extraction and callback support
@@ -38,9 +38,9 @@ Recommended phase settings in the current workflow:
 - `0seg = 1e-5`
   for `noport`
 - `1seg = 1e-5`
-  for init local post-optimization
+  for segment local post-optimization
 - `2seg = 1.0`
-  for sweep
+  for refinement (matheuristic sweep)
 - `Xseg = 1e-5`
   for fixed-port
 
@@ -56,7 +56,7 @@ What belongs here:
 What does not belong here:
 
 - CLI entrypoints
-- init or sweep orchestration
+- construction, segment, or refinement orchestration
 - report formatting
 - JSON assembly
 

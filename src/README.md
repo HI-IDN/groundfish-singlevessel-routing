@@ -7,12 +7,12 @@ The code is organized by responsibility:
 
 ```text
 src/
-|-- init/      initialization logic and init-facing executables
-|-- sweep/     refinement logic starting from an existing segment.json
+|-- init/      construction and segment logic
+|-- sweep/     refinement (matheuristic sweep) logic starting from an existing segment.json
 |-- mip/       Gurobi-backed model implementations only
 |-- common/    shared infrastructure used across the pipeline
 |-- include/   shared non-MIP headers
-`-- tools/     standalone utilities outside the main init/sweep solve loop
+`-- tools/     standalone utilities outside the main construction/segment/refinement solve loop
 ```
 
 Pipeline Overview
@@ -40,7 +40,7 @@ Construction methods currently used in the paper:
   expensive fixed-port capacity MIP based on survey-derived candidate port visits
 
 The heuristic methods `nn`, `ge`, and `ci` currently produce the construction
-artifact directly from the `gsp --mode init` path. The `noport` and `fixedport`
+artifact directly from the `gsp --mode construction` path. The `noport` and `fixedport`
 paths are separate because they start with more expensive MIP solves.
 
 Current Executables And Entry Points

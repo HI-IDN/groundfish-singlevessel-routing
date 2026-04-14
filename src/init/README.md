@@ -1,13 +1,13 @@
 # `init`
 
-Initialization logic for the survey-routing workflow.
+Construction and segment logic for the survey-routing workflow.
 
 This directory owns:
 
 - heuristic construction methods
-- init-side orchestration
+- construction/segment orchestration
 - conversion from ordered solver output into `segment.json`
-- shared local segment post-optimization used after initialization
+- shared local segment post-optimization used after construction
 
 It does not own the exact MIP formulations themselves. Those belong in `mip/`.
 
@@ -90,5 +90,5 @@ Boundary
 --------
 
 - `init/` decides how to build the construction and segmented baseline
-- `mip/` solves the exact subproblems used by init
+- `mip/` solves the exact subproblems used by construction/segment
 - shared reporting and helper logic should stay out of `init/` when it can live in `common/`

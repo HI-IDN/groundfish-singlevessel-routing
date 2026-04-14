@@ -1,6 +1,6 @@
 # `tools`
 
-Standalone utilities outside the main init/sweep solve loop.
+Standalone utilities outside the main construction/segment/refinement solve loop.
 
 These programs are part of the overall workflow, but they are not themselves
 the main optimization entrypoints.
@@ -22,7 +22,8 @@ Rule Of Thumb
 -------------
 
 - if it is a standalone utility program, it belongs in `tools/`
-- if it is part of the main solve loop, it should usually live in `init/`, `sweep/`, `mip/`, or `common/`
+- if it is part of the main solve loop, it should usually live in `init/`, `sweep/`, `mip/`, or
+  `common/`
 
 Typical Outputs
 ---------------

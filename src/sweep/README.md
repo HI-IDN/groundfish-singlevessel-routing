@@ -1,6 +1,6 @@
 # `sweep`
 
-Matheuristic refinement logic for the survey-routing workflow.
+Refinement (matheuristic sweep) logic for the survey-routing workflow.
 
 This directory owns the phase that starts from an existing segmented baseline
 and improves it through repeated local boundary re-optimization.
@@ -16,7 +16,8 @@ sweep/
 Role In The Workflow
 --------------------
 
-Refinement starts from an existing `segment.json` and explores improvements around
+Refinement (matheuristic sweep) starts from an existing `segment.json` and explores improvements
+around
 adjacent segment boundaries. The high-level orchestration lives here:
 
 - choose which boundary neighborhood to examine
@@ -67,6 +68,7 @@ JSON Notes
 Boundary
 --------
 
-- `sweep/` decides which neighborhoods to explore and when to stop
+- `sweep/` decides which neighborhoods to explore and when to stop during refinement (matheuristic
+  sweep)
 - `mip/` solves the exact subproblems
 - JSON formatting and generic helpers should live in `common/`, not be duplicated here

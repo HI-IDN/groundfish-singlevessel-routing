@@ -7,9 +7,9 @@ This repository accompanies the paper
 It contains the full pipeline used in the study, including:
 
 - data preprocessing
-- initialization heuristics
+- construction heuristics
 - MIP-based optimization
-- sweep-based improvement
+- refinement (matheuristic sweep)
 - plotting and reporting tools
 
 The workflow is file-based:
@@ -28,18 +28,22 @@ The workflow is file-based:
 - `survey`  
   Exports observed 2023 survey routes for comparison
 
-- `init`  
-  Constructs a capacity-feasible segmented baseline solution
+- `construction`  
+  Builds a route ordering or route template
 
-- `sweep`  
-  Improves an existing solution via local re-optimization of segment boundaries
+- `segment`  
+  Converts a construction into a capacity-feasible segmented baseline
+
+- `refinement`  
+  Improves a segmented baseline via the matheuristic sweep
 
 ---
 
 ## Paper
 
 - **Title:** A Scalable Matheuristic for Routing Capacity-Constrained Groundfish Surveys
-- **Authors:** Helga Ingimundardóttir, Margrét Vala Þórisdóttir, Bjarki Elvarsson, Thomas Philip Runarsson
+- **Authors:** Helga Ingimundardóttir, Margrét Vala Þórisdóttir, Bjarki Elvarsson, Thomas Philip
+  Runarsson
 - **Conference:** LION 2026 (accepted)
 
 ### Keywords
@@ -58,18 +62,28 @@ The workflow is file-based:
 - Achieves consistent distance reductions over strong baselines
 
 > **Abstract**  
-> Bottom trawl groundfish surveys are planned around a fixed set of sampling stations, but the order of visits and the timing of port returns strongly affect total travel distance and operational feasibility. Although mixed-integer programming (MIP) models can encode capacity and port-call constraints directly, solving the full model to optimality is often impractical at realistic scales.
+> Bottom trawl groundfish surveys are planned around a fixed set of sampling stations, but the order
+> of visits and the timing of port returns strongly affect total travel distance and operational
+> feasibility. Although mixed-integer programming (MIP) models can encode capacity and port-call
+> constraints directly, solving the full model to optimality is often impractical at realistic scales.
 >
-> We propose a matheuristic that combines fast tour construction with repeated calls to a time-limited capacity MIP subproblem. Starting from an initial segmented tour, the algorithm iteratively examines boundaries between adjacent segments separated by a port visit and solves a restricted two-segment capacity MIP on the union of stations in the two segments, with fixed endpoints and a single intermediate port call.
+> We propose a matheuristic that combines fast tour construction with repeated calls to a
+> time-limited capacity MIP subproblem. Starting from an initial segmented tour, the algorithm
+> iteratively examines boundaries between adjacent segments separated by a port visit and solves a
+> restricted two-segment capacity MIP on the union of stations in the two segments, with fixed
+> endpoints and a single intermediate port call.
 >
-> The MIP reallocates stations between segments subject to capacity, and the best incumbent found within a time limit is accepted if it improves total distance. Across initialization strategies and time limits, the method consistently improves baseline plans and provides a fast, reproducible tool for scenario analysis.
+> The MIP reallocates stations between segments subject to capacity, and the best incumbent found
+> within a time limit is accepted if it improves total distance. Across initialization strategies and
+> time limits, the method consistently improves baseline plans and provides a fast, reproducible tool
+> for scenario analysis.
 
 ---
 
 ## How to Cite
 
 If you use this repository, please cite:
-> Ingimundardóttir et al. (2026), *A Scalable Matheuristic for Routing Capacity-Constrained 
+> Ingimundardóttir et al. (2026), *A Scalable Matheuristic for Routing Capacity-Constrained
 > Groundfish Surveys*, LION Conference.
 
 ```bib 
@@ -82,9 +96,9 @@ If you use this repository, please cite:
 }
 ```
 
-
 Repository Layout
 ------
+
 ```plaintext
 .
 ├── src/        # core implementation (C + build system)
@@ -106,7 +120,7 @@ You need:
 - Gurobi with a valid license for the MIP-based targets
 - R for the plotting scripts
 
-This workflow has been tested in an MSYS2 / MinGW environment on Windows. 
+This workflow has been tested in an MSYS2 / MinGW environment on Windows.
 It is expected to also work cleanly in Unix-like shells.
 
 Build
@@ -170,48 +184,48 @@ This writes the observed boat routes to:
 
 3. Optional: run the expensive MIP-based preprocessing paths:
 
- - *No-port model*: Ignores capacity constraints to produce a global baseline: 
-    
-    ```bash
-    make -C src noport
-    ```
-    Output: 
-     - `sol/noport/noport.json`
+- *No-port model*: Ignores capacity constraints to produce a global baseline:
 
- - *Fixed-port model*: Solves a capacity-constrained model with predefined port visits:
+   ```bash
+   make -C src noport
+   ```
+  Output:
+    - `sol/noport/noport.json`
 
-    ```bash
-    make -C src fixedport_candidates
-    make -C src fixedport
-    ```
+- *Fixed-port model*: Solves a capacity-constrained model with predefined port visits:
 
-    Output:
-     - `dat/candidate_ports.json` 
+   ```bash
+   make -C src fixedport_candidates
+   make -C src fixedport
+   ```
+
+  Output:
+    - `dat/candidate_ports.json`
     - `sol/fixedport/construction.json`
 
 4. Segmentation
 
-    Constructs a capacity-feasible segmented solution using either:
+   Constructs a capacity-feasible segmented solution using either:
     - MIP-based input (`noport`, `fixedport`)
     - Heuristic ordering:
-      - `nn` (nearest neighbor)
-      - `ci` (cheapest insertion)
-      - `ge` (greedy edge)
+        - `nn` (nearest neighbor)
+        - `ci` (cheapest insertion)
+        - `ge` (greedy edge)
     ```bash
     make -C src segment METHOD=noport|nn|ge|ci|fixedport
     ```
-    Outputs: 
+   Outputs:
     ```bash 
     sol/<strategy>/segment.json
     ```
 
-5. Refinement
+5. Refinement (matheuristic sweep)
 
-    Performs local re-optimization over adjacent segments
+   Performs local re-optimization over adjacent segments
     ```bash
     make -C src refinement METHOD=noport|nn|ge|ci
     ```
-    Outputs:
+   Outputs:
     ```bash 
     sol/<strategy>/refinement.json
     ```
@@ -222,8 +236,8 @@ This writes the observed boat routes to:
     make -C src plot
     ```
 
-    This generates route figures and survey overview figures from the JSON files
-    currently present under `sol/`.
+   This generates route figures and survey overview figures from the JSON files
+   currently present under `sol/`.
 
 Batch Run
 ---------
@@ -239,8 +253,9 @@ This runs:
 - routing-data preparation
 - survey export
 - noport and fixedport presolve
-- initialization outputs
-- sweep outputs
+- construction outputs
+- segment outputs
+- refinement outputs
 
 Then generate figures separately with:
 
@@ -275,8 +290,8 @@ gurobi:
 Where:
 
 - `0seg` = noport
-- `1seg` = init local post-optimization
-- `2seg` = sweep boundary optimization
+- `1seg` = segment local post-optimization
+- `2seg` = refinement (matheuristic sweep) boundary optimization
 - `Xseg` = fixed-port model
 
 Useful Targets
@@ -298,5 +313,6 @@ Notes
 -----
 
 - `src/Makefile` is a lightweight wrapper around the CMake build in `build/`.
-- Long MIP runs can be expensive. Prefer targeted runs over rebuilding or rerunning the full pipeline.
+- Long MIP runs can be expensive. Prefer targeted runs over rebuilding or rerunning the full
+  pipeline.
 - Route JSON files under `sol/` are the current source of truth for plotting and result summaries.
