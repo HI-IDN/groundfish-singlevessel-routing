@@ -14,9 +14,9 @@ provides the strongest station-order baseline for downstream refinement.
 ## Route Plotting
 
 <table><tr>
-<td align="center"><img src="noport.png" width="300"/><br><sub>No-port MIP — transit 3,552.03 nm (capacity infeasible)</sub></td>
-<td align="center"><img src="init.png" width="300"/><br><sub>Segment — transit 4,335.18 nm · total 6,578.03 nm</sub></td>
-<td align="center"><img src="sweep.png" width="300"/><br><sub>Refinement (matheuristic sweep, pass 3) — transit 4,300.17 nm · total 6,543.02 nm</sub></td>
+<td align="center"><img src="construction.png" width="300"/><br><sub>No-port MIP — transit 3,552.03 nm (capacity infeasible)</sub></td>
+<td align="center"><img src="segment.png" width="300"/><br><sub>Segment — transit 4,335.18 nm · total 6,578.03 nm</sub></td>
+<td align="center"><img src="refinement.png" width="300"/><br><sub>Refinement (matheuristic sweep, pass 3) — transit 4,300.17 nm · total 6,543.02 nm</sub></td>
 </tr></table>
 
 ## Segment Summary

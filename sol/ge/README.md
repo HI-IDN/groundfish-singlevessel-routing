@@ -1,4 +1,4 @@
-# Greedy‑Edge (GE) Construction
+et the n# Greedy‑Edge (GE) Construction
 
 The Greedy‑Edge (GE) construction builds an initial station ordering by following a
 Kruskal‑like edge‑selection process. At each step, the algorithm adds the shortest admissible edge
@@ -19,8 +19,9 @@ particularly in regions where many similar‑length edges compete.
 ## Route Plotting
 
 <table><tr>
-<td align="center"><img src="init.png" width="460"/><br><sub>Segment — transit 4,809.89 nm · total 7,052.74 nm</sub></td>
-<td align="center"><img src="sweep.png" width="460"/><br><sub>Refinement (matheuristic sweep, pass 6) — transit 4,643.65 nm · total 6,886.50 nm</sub></td>
+<td align="center"><img src="construction.png" width="300"/><br><sub>Construction — greedy-edge ordering</sub></td>
+<td align="center"><img src="segment.png" width="300"/><br><sub>Segment — transit 4,809.89 nm · total 7,052.74 nm</sub></td>
+<td align="center"><img src="refinement.png" width="300"/><br><sub>Refinement (matheuristic sweep, pass 6) — transit 4,643.65 nm · total 6,886.50 nm</sub></td>
 </tr></table>
 
 ## Segment Summary

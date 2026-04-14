@@ -12,7 +12,7 @@ This is the most expensive presolve path and is run with a generous time limit (
 ## Route Plotting
 
 <table><tr>
-<td align="center"><img src="fixedport.png" width="460"/><br><sub>Fixed-port MIP — transit 1,640.46 nm · total 1,835.78 nm</sub></td>
+<td align="center"><img src="construction.png" width="460"/><br><sub>Fixed-port MIP — transit 1,640.46 nm · total 1,835.78 nm</sub></td>
 </tr></table>
 
 ## Segment Summary

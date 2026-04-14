@@ -21,8 +21,9 @@ default construction for downstream segmenting and refinement.
 ## Route Plotting
 
 <table><tr>
-<td align="center"><img src="init.png" width="460"/><br><sub>Segment — transit 5,047.00 nm · total 7,289.85 nm</sub></td>
-<td align="center"><img src="sweep.png" width="460"/><br><sub>Refinement (matheuristic sweep, pass 3) — transit 4,975.69 nm · total 7,218.55 nm</sub></td>
+<td align="center"><img src="construction.png" width="300"/><br><sub>Construction — cheapest-insertion ordering</sub></td>
+<td align="center"><img src="segment.png" width="300"/><br><sub>Segment — transit 5,047.00 nm · total 7,289.85 nm</sub></td>
+<td align="center"><img src="refinement.png" width="300"/><br><sub>Refinement (matheuristic sweep, pass 3) — transit 4,975.69 nm · total 7,218.55 nm</sub></td>
 </tr></table>
 
 ## Segment Summary
