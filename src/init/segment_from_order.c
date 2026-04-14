@@ -28,6 +28,15 @@ static int lookup_waypoint_path_json_cb(const void *ctx,
                                         int to_loc_id,
                                         int **out_ids,
                                         int *out_count);
+static int validate_segmented_station_groups(const nn_instance_t *inst,
+                                             int **station_segments,
+                                             const int *station_segment_counts,
+                                             int segment_count);
+static int repair_segmented_station_groups_capacity(const nn_instance_t *inst,
+                                                    int **station_segments,
+                                                    int *station_segment_counts,
+                                                    int segment_count,
+                                                    int boat_capacity);
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double)(end.tv_sec - start.tv_sec) +
@@ -1187,6 +1196,84 @@ fail:
     return -1;
 }
 
+static int validate_segmented_station_groups(const nn_instance_t *inst,
+                                             int **station_segments,
+                                             const int *station_segment_counts,
+                                             int segment_count) {
+    int *station_ids = NULL;
+    int station_count = 0;
+    int station_cap = 0;
+
+    if (!inst || !station_segments || !station_segment_counts || segment_count <= 0) return 0;
+
+    for (int s = 0; s < segment_count; s++) {
+        for (int i = 0; i < station_segment_counts[s]; i++) {
+            int station_id = abs(station_segments[s][i]);
+            if (find_station_idx_by_table_id(inst, station_id) < 0) {
+                free(station_ids);
+                return 0;
+            }
+            if (!append_int_local(&station_ids, &station_count, &station_cap, station_id)) {
+                free(station_ids);
+                return 0;
+            }
+        }
+    }
+
+    {
+        int ok = stations_are_unique_and_complete(station_ids, station_count, inst->num_stations);
+        free(station_ids);
+        return ok;
+    }
+}
+
+static int repair_segmented_station_groups_capacity(const nn_instance_t *inst,
+                                                    int **station_segments,
+                                                    int *station_segment_counts,
+                                                    int segment_count,
+                                                    int boat_capacity) {
+    if (!inst || !station_segments || !station_segment_counts || segment_count <= 0) return 0;
+
+    for (int s = 0; s < segment_count; s++) {
+        int segment_catch = 0;
+        for (int i = 0; i < station_segment_counts[s]; i++) {
+            int station_idx = find_station_idx_by_table_id(inst, abs(station_segments[s][i]));
+            if (station_idx < 0) return 0;
+            segment_catch += inst->nodes[station_idx].amount;
+        }
+
+        while (segment_catch > boat_capacity) {
+            int moved_signed_station_id;
+            int moved_station_idx;
+            int moved_station_amount;
+            int next_count;
+            int *tmp;
+
+            if (s >= segment_count - 1) return 0;
+            if (station_segment_counts[s] <= 1) return 0;
+
+            moved_signed_station_id = station_segments[s][station_segment_counts[s] - 1];
+            moved_station_idx = find_station_idx_by_table_id(inst, abs(moved_signed_station_id));
+            if (moved_station_idx < 0) return 0;
+            moved_station_amount = inst->nodes[moved_station_idx].amount;
+
+            next_count = station_segment_counts[s + 1];
+            tmp = (int*)realloc(station_segments[s + 1], (size_t)(next_count + 1) * sizeof(int));
+            if (!tmp) return 0;
+            station_segments[s + 1] = tmp;
+            memmove(&station_segments[s + 1][1],
+                    &station_segments[s + 1][0],
+                    (size_t)next_count * sizeof(int));
+            station_segments[s + 1][0] = moved_signed_station_id;
+            station_segment_counts[s + 1]++;
+            station_segment_counts[s]--;
+            segment_catch -= moved_station_amount;
+        }
+    }
+
+    return 1;
+}
+
 static void free_solution(nn_solution_t *sol) {
     segment_free_solution(sol);
 }
@@ -1321,6 +1408,15 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     if (station_segment_count > 1 &&
+        validate_segmented_station_groups(&inst,
+                                          station_segments,
+                                          station_segment_counts,
+                                          station_segment_count) &&
+        repair_segmented_station_groups_capacity(&inst,
+                                                 station_segments,
+                                                 station_segment_counts,
+                                                 station_segment_count,
+                                                 (int)boat_capacity) &&
         segment_from_segmented_input(&inst,
                                      station_segments,
                                      station_segment_counts,
@@ -1331,8 +1427,11 @@ int main(int argc, char **argv) {
                                      boat_start_loc_id,
                                      boat_end_loc_id,
                                      (int)boat_capacity) == 0) {
-        printf("[INIT] Preserved %d pre-segmented construction segments\n", station_segment_count);
+        printf("[INIT] Preserved or repaired %d pre-segmented construction segments\n", station_segment_count);
     } else {
+        if (station_segment_count > 1) {
+            printf("[INIT] Pre-segmented construction could not be preserved in place; rebuilding segments\n");
+        }
         if (segment_from_order(&inst, station_order, station_order_n, &sol,
                                boat_start_loc_id, boat_end_loc_id, (int)boat_capacity) != 0) {
             fprintf(stderr, "Failed to segment construction input\n");
