@@ -728,7 +728,7 @@ static int write_fixedport_json(sqlite3 *db,
             candidate_port_count,
             candidate_ports
         };
-        metadata.solver_version = "fixedport_debug_0.1";
+        metadata.solver_version = "construction_fixedport_0.1";
         metadata.mode_name = "construction";
         metadata.strategy_name = "fixedport";
         metadata.boat_id = app->boat.boat_id;
@@ -796,7 +796,7 @@ static int write_fixedport_json(sqlite3 *db,
     gsp_summary_reset(&summary);
     gsp_summary_set_status_and_distance(&summary,
                                         "fixedport-capacity-feasible",
-                                        "fixedport_complete",
+                                        "construction_complete",
                                         feasible,
                                         "fixedport",
                                         0,
@@ -829,7 +829,7 @@ static int write_fixedport_json(sqlite3 *db,
         solver_stats.include_preprocessing_seconds = 0;
         solver_stats.runtime_seconds = solution->runtime_seconds;
         solver_stats.total_runtime_seconds = total_runtime_seconds;
-        solver_stats.method_name = "fixedport_mip";
+        solver_stats.method_name = "fixedport";
         solver_stats.mip_gap = solution->gap;
         gsp_write_solver_stats_json(fp, "  ", &solver_stats, 0);
     }

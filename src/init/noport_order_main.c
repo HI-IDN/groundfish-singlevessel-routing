@@ -484,7 +484,7 @@ static int write_noport_json(sqlite3 *db,
             global_time_limit_seconds,
             use_scaled_haul_distance ? "scaled_haul" : "transit"
         };
-        metadata.solver_version = "noport_1.0";
+        metadata.solver_version = "construction_noport_1.0";
         metadata.mode_name = "construction";
         metadata.strategy_name = "noport";
         metadata.boat_id = app->boat.boat_id;
@@ -573,25 +573,35 @@ static int write_noport_json(sqlite3 *db,
     mip_detail.gap_percent = mip_gap_percent;
     gsp_write_segment_mip_section(fp, "l0seg", "noport_directed_tsp", timeout_seconds, &mip_detail, 1);
 
-    fprintf(fp, "  \"summary\": {\n");
     {
+        gsp_summary_json_t summary;
         double distance_trajectory[1] = {distance_breakdown->total_distance_nm};
         double runtime_trajectory[1] = {solution->runtime_seconds};
-        const char *stage_name =
-            (solution->status == MIP_STATUS_OPTIMAL) ? "noport_complete" :
-            (solution->status == MIP_STATUS_TIME_LIMIT) ? "time_limit" :
-            (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed";
-        gsp_write_summary_status_json(fp, "    ", final_variant_name, stage_name,
-                                      is_feasible, "noport_mip", 1);
-        gsp_write_summary_distance_json(fp, "    ", 0, 0.0,
-                                        distance_trajectory, 1, distance_breakdown->total_distance_nm, 1);
-        gsp_write_summary_runtime_json(fp, "    ", preprocessing_seconds,
-                                       runtime_trajectory, 1, 0.0, total_runtime_seconds, 1);
-        gsp_write_summary_mip_json(fp, "    ", 1,
-                                   solution->runtime_seconds, solution->runtime_seconds,
-                                   mip_gap_percent, mip_gap_percent, 0);
+        gsp_summary_reset(&summary);
+        gsp_summary_set_status_and_distance(&summary,
+                                            final_variant_name,
+                                            "construction_complete",
+                                            is_feasible,
+                                            "noport",
+                                            0,
+                                            0.0,
+                                            distance_trajectory,
+                                            1,
+                                            distance_breakdown->total_distance_nm);
+        gsp_summary_set_runtime(&summary,
+                                preprocessing_seconds,
+                                runtime_trajectory,
+                                1,
+                                0.0,
+                                total_runtime_seconds);
+        gsp_summary_set_mip(&summary,
+                            1,
+                            solution->runtime_seconds,
+                            solution->runtime_seconds,
+                            mip_gap_percent,
+                            mip_gap_percent);
+        gsp_write_summary_json(fp, "  ", &summary, 1);
     }
-    fprintf(fp, "  },\n");
 
     {
         gsp_solver_stats_json_t solver_stats = {0};
@@ -605,7 +615,7 @@ static int write_noport_json(sqlite3 *db,
         solver_stats.preprocessing_seconds = preprocessing_seconds;
         solver_stats.runtime_seconds = solution->runtime_seconds;
         solver_stats.total_runtime_seconds = total_runtime_seconds;
-        solver_stats.method_name = "noport_mip";
+        solver_stats.method_name = "noport";
         solver_stats.mip_gap = solution->gap;
         gsp_write_solver_stats_json(fp, "  ", &solver_stats, 0);
     }
