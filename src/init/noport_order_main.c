@@ -593,19 +593,22 @@ static int write_noport_json(sqlite3 *db,
     }
     fprintf(fp, "  },\n");
 
-    fprintf(fp, "  \"solver_stats\": {\n");
-    fprintf(fp, "    \"status\": \"%s\",\n",
+    {
+        gsp_solver_stats_json_t solver_stats = {0};
+        solver_stats.status_name =
             (solution->status == MIP_STATUS_OPTIMAL) ? "optimal" :
             (solution->status == MIP_STATUS_TIME_LIMIT) ? "time_limit" :
-            (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed");
-    fprintf(fp, "    \"gurobi_status\": \"%s\",\n", mip_gurobi_status_name(solution->status));
-    fprintf(fp, "    \"gurobi_status_code\": %d,\n", solution->status);
-    fprintf(fp, "    \"preprocessing_seconds\": %.6f,\n", preprocessing_seconds);
-    fprintf(fp, "    \"runtime_seconds\": %.6f,\n", solution->runtime_seconds);
-    fprintf(fp, "    \"total_runtime_seconds\": %.6f,\n", total_runtime_seconds);
-    fprintf(fp, "    \"method\": \"noport_mip\",\n");
-    fprintf(fp, "    \"mip_gap\": %.6f\n", solution->gap);
-    fprintf(fp, "  }\n");
+            (solution->status == MIP_STATUS_SUBOPTIMAL) ? "suboptimal" : "failed";
+        solver_stats.gurobi_status_name = mip_gurobi_status_name(solution->status);
+        solver_stats.gurobi_status_code = solution->status;
+        solver_stats.include_preprocessing_seconds = 1;
+        solver_stats.preprocessing_seconds = preprocessing_seconds;
+        solver_stats.runtime_seconds = solution->runtime_seconds;
+        solver_stats.total_runtime_seconds = total_runtime_seconds;
+        solver_stats.method_name = "noport_mip";
+        solver_stats.mip_gap = solution->gap;
+        gsp_write_solver_stats_json(fp, "  ", &solver_stats, 0);
+    }
     fprintf(fp, "}\n");
 
     fclose(fp);

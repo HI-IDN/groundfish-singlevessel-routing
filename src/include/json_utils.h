@@ -86,6 +86,18 @@ typedef struct {
     const void *extra_ctx;
 } gsp_problem_json_t;
 
+typedef struct {
+    const char *status_name;
+    const char *gurobi_status_name;
+    int gurobi_status_code;
+    int include_preprocessing_seconds;
+    double preprocessing_seconds;
+    double runtime_seconds;
+    double total_runtime_seconds;
+    const char *method_name;
+    double mip_gap;
+} gsp_solver_stats_json_t;
+
 void gsp_write_solution_json(FILE *fp,
                              const char *indent,
                              const gsp_solution_json_view_t *view,
@@ -100,6 +112,11 @@ void gsp_write_problem_json(FILE *fp,
                             const char *indent,
                             const gsp_problem_json_t *problem,
                             int trailing_comma);
+
+void gsp_write_solver_stats_json(FILE *fp,
+                                 const char *indent,
+                                 const gsp_solver_stats_json_t *solver_stats,
+                                 int trailing_comma);
 
 void gsp_write_distance_nm_json(FILE *fp,
                                 const char *indent,

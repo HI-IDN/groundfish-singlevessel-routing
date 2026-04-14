@@ -151,6 +151,30 @@ void gsp_write_problem_json(FILE *fp,
     fprintf(fp, "%s}%s\n", base, trailing_comma ? "," : "");
 }
 
+void gsp_write_solver_stats_json(FILE *fp,
+                                 const char *indent,
+                                 const gsp_solver_stats_json_t *solver_stats,
+                                 int trailing_comma) {
+    const char *base = indent ? indent : "";
+    if (!fp || !solver_stats) return;
+
+    fprintf(fp, "%s\"solver_stats\": {\n", base);
+    fprintf(fp, "%s  \"status\": \"%s\",\n", base,
+            solver_stats->status_name ? solver_stats->status_name : "unknown");
+    fprintf(fp, "%s  \"gurobi_status\": \"%s\",\n", base,
+            solver_stats->gurobi_status_name ? solver_stats->gurobi_status_name : "unknown");
+    fprintf(fp, "%s  \"gurobi_status_code\": %d,\n", base, solver_stats->gurobi_status_code);
+    if (solver_stats->include_preprocessing_seconds) {
+        fprintf(fp, "%s  \"preprocessing_seconds\": %.6f,\n", base, solver_stats->preprocessing_seconds);
+    }
+    fprintf(fp, "%s  \"runtime_seconds\": %.6f,\n", base, solver_stats->runtime_seconds);
+    fprintf(fp, "%s  \"total_runtime_seconds\": %.6f,\n", base, solver_stats->total_runtime_seconds);
+    fprintf(fp, "%s  \"method\": \"%s\",\n", base,
+            solver_stats->method_name ? solver_stats->method_name : "unknown");
+    fprintf(fp, "%s  \"mip_gap\": %.6f\n", base, solver_stats->mip_gap);
+    fprintf(fp, "%s}%s\n", base, trailing_comma ? "," : "");
+}
+
 void gsp_write_distance_nm_json(FILE *fp,
                                 const char *indent,
                                 const gsp_distance_breakdown_t *segment_breakdowns,
