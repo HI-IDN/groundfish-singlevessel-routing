@@ -16,6 +16,8 @@ typedef int (*gsp_waypoint_lookup_fn)(const void *ctx,
                                       int **out_waypoint_ids,
                                       int *out_waypoint_count);
 
+typedef void (*gsp_json_extra_writer_fn)(FILE *fp, const char *indent, const void *ctx);
+
 typedef struct {
     const char *variant_name;
     const gsp_int_list_view_t *tour_segments_location_ids;
@@ -34,6 +36,8 @@ typedef struct {
     const gsp_distance_breakdown_t *segment_breakdowns;
     const gsp_distance_breakdown_t *grand_total;
     int feasible;
+    gsp_json_extra_writer_fn extra_writer;
+    const void *extra_ctx;
 } gsp_solution_json_view_t;
 
 typedef struct {
@@ -83,8 +87,6 @@ void gsp_summary_set_mip(gsp_summary_json_t *summary,
                          double runtime_max,
                          double gap_mean,
                          double gap_max);
-
-typedef void (*gsp_json_extra_writer_fn)(FILE *fp, const char *indent, const void *ctx);
 
 typedef struct {
     const char *solver_version;

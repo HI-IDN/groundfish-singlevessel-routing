@@ -148,6 +148,10 @@ void gsp_write_solution_json(FILE *fp,
     fprintf(fp, "%s  \"segment_catch_amount\": [", base);
     write_int_array(fp, view->segment_catch_amount, view->segment_catch_count);
     fprintf(fp, "],\n");
+    if (view->extra_writer) {
+        view->extra_writer(fp, base, view->extra_ctx);
+        fprintf(fp, "\n");
+    }
     gsp_write_distance_nm_json(fp, child, view->segment_breakdowns, view->segment_count,
                                view->grand_total, 1);
     fprintf(fp, "%s  \"feasible\": %s\n", base, view->feasible ? "true" : "false");

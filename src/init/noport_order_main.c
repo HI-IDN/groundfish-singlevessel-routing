@@ -28,6 +28,13 @@ typedef struct {
     const char *objective_distance_mode;
 } noport_metadata_extra_t;
 
+typedef struct {
+    const mip_noport_solution_t *solution;
+    double objective_distance_nm;
+    int use_scaled_haul_distance;
+    double haul_distance_scale;
+} noport_solution_extra_t;
+
 static void write_noport_metadata_extra(FILE *fp, const char *indent, const void *ctx) {
     const noport_metadata_extra_t *extra = (const noport_metadata_extra_t*)ctx;
     const char *base = indent ? indent : "";
@@ -35,6 +42,23 @@ static void write_noport_metadata_extra(FILE *fp, const char *indent, const void
     fprintf(fp, "%s  \"global_time_limit_seconds\": %.6f,\n", base, extra->global_time_limit_seconds);
     fprintf(fp, "%s  \"objective_distance_mode\": \"%s\"", base,
             extra->objective_distance_mode ? extra->objective_distance_mode : "transit");
+}
+
+static void write_noport_solution_extra(FILE *fp, const char *indent, const void *ctx) {
+    const noport_solution_extra_t *extra = (const noport_solution_extra_t*)ctx;
+    const char *base = indent ? indent : "";
+    if (!fp || !extra || !extra->solution) return;
+
+    fprintf(fp, "%s  \"signed_station_ids\": [", base);
+    for (int i = 0; i < extra->solution->order_length; i++) {
+        if (i) fprintf(fp, ", ");
+        fprintf(fp, "%d", extra->solution->signed_station_ids[i]);
+    }
+    fprintf(fp, "],\n");
+    fprintf(fp, "%s  \"objective_distance_nm\": %.2f", base, extra->objective_distance_nm);
+    if (extra->use_scaled_haul_distance) {
+        fprintf(fp, ",\n%s  \"haul_distance_scale\": %.8f", base, extra->haul_distance_scale);
+    }
 }
 
 static char *dupstr_local(const char *src) {
@@ -443,6 +467,11 @@ static int write_noport_json(sqlite3 *db,
     int unique_wp_cap = 0;
     int is_feasible = 1;
     int *positive_station_ids = NULL;
+    int tour_length_value = 0;
+    int segment_catch_value = 0;
+    int dock_location_ids[2];
+    gsp_int_list_view_t location_view = {0};
+    gsp_int_list_view_t station_view = {0};
     int mip_seg_size = app->n_stations + 1;
     int mip_num_nodes = 2 * mip_seg_size;
     gsp_mip_solve_detail_t mip_detail;
@@ -505,63 +534,57 @@ static int write_noport_json(sqlite3 *db,
         gsp_write_problem_json(fp, "  ", &problem, 1);
     }
 
-    fprintf(fp, "  \"solution\": {\n");
-    fprintf(fp, "    \"%s\": {\n", final_variant_name);
-    fprintf(fp, "    \"variant\": \"%s\",\n", final_variant_name);
-    fprintf(fp, "    \"tour_segments_location_ids\": [\n");
-    fprintf(fp, "      [");
     if (route_len > 0) {
-        fprintf(fp, "%d", route[0]);
         for (int i = 0; i < route_len - 1; i++) {
             int *wps = NULL;
             int n_wps = lookup_waypoint_path(db, route[i], route[i + 1], &wps);
             for (int k = 0; k < n_wps; k++) {
-                fprintf(fp, ", %d", wps[k]);
                 append_int_if_new(&unique_waypoints, &unique_wp_count, &unique_wp_cap, wps[k]);
             }
-            fprintf(fp, ", %d", route[i + 1]);
             free(wps);
         }
     }
-    fprintf(fp, "]\n");
-    fprintf(fp, "    ],\n");
 
-    fprintf(fp, "    \"dock_location_ids\": [%d, %d],\n",
-            app->boat.location_id, app->boat.location_id);
+    location_view.values = route;
+    location_view.count = route_len;
+    station_view.values = positive_station_ids;
+    station_view.count = solution->order_length;
+    tour_length_value = solution->order_length;
+    segment_catch_value = total_catch;
+    dock_location_ids[0] = app->boat.location_id;
+    dock_location_ids[1] = app->boat.location_id;
 
-    fprintf(fp, "    \"unique_waypoint_location_ids\": [");
-    for (int i = 0; i < unique_wp_count; i++) {
-        if (i) fprintf(fp, ", ");
-        fprintf(fp, "%d", unique_waypoints[i]);
+    fprintf(fp, "  \"solution\": {\n");
+    fprintf(fp, "    \"%s\": ", final_variant_name);
+    {
+        noport_solution_extra_t solution_extra = {
+            solution,
+            objective_distance_nm,
+            use_scaled_haul_distance,
+            haul_distance_scale
+        };
+        gsp_solution_json_view_t view = {0};
+        view.variant_name = final_variant_name;
+        view.tour_segments_location_ids = &location_view;
+        view.tour_segments_location_count = 1;
+        view.dock_location_ids = dock_location_ids;
+        view.dock_location_count = 2;
+        view.unique_waypoint_location_ids = unique_waypoints;
+        view.unique_waypoint_location_count = unique_wp_count;
+        view.tour_segments_station_ids = &station_view;
+        view.tour_segments_station_count = 1;
+        view.tour_length = &tour_length_value;
+        view.tour_length_count = 1;
+        view.segment_count = 1;
+        view.segment_catch_amount = &segment_catch_value;
+        view.segment_catch_count = 1;
+        view.segment_breakdowns = distance_breakdown;
+        view.grand_total = distance_breakdown;
+        view.feasible = is_feasible;
+        view.extra_writer = write_noport_solution_extra;
+        view.extra_ctx = &solution_extra;
+        gsp_write_solution_json(fp, "    ", &view, 0);
     }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "    \"tour_segments_station_ids\": [\n");
-    fprintf(fp, "      [");
-    for (int i = 0; i < solution->order_length; i++) {
-        if (i) fprintf(fp, ", ");
-        fprintf(fp, "%d", abs(solution->signed_station_ids[i]));
-    }
-    fprintf(fp, "]\n");
-    fprintf(fp, "    ],\n");
-
-    fprintf(fp, "    \"signed_station_ids\": [");
-    for (int i = 0; i < solution->order_length; i++) {
-        if (i) fprintf(fp, ", ");
-        fprintf(fp, "%d", solution->signed_station_ids[i]);
-    }
-    fprintf(fp, "],\n");
-
-    fprintf(fp, "    \"tour_length\": [%d],\n", solution->order_length);
-    fprintf(fp, "    \"segment_count\": 1,\n");
-    fprintf(fp, "    \"segment_catch_amount\": [%d],\n", total_catch);
-    fprintf(fp, "    \"objective_distance_nm\": %.2f,\n", objective_distance_nm);
-    if (use_scaled_haul_distance) {
-        fprintf(fp, "    \"haul_distance_scale\": %.8f,\n", haul_distance_scale);
-    }
-    gsp_write_distance_nm_json(fp, "    ", distance_breakdown, 1, distance_breakdown, 1);
-    fprintf(fp, "    \"feasible\": %s\n", is_feasible ? "true" : "false");
-    fprintf(fp, "    }\n");
     fprintf(fp, "  },\n");
 
     gsp_mip_solve_detail_init(&mip_detail);
