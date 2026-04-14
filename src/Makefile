@@ -21,7 +21,7 @@ METHOD_RAW := $(or $(METHOD),nn)
 METHOD_NAME := $(if $(filter gi,$(METHOD_RAW)),ge,$(METHOD_RAW))
 VALID_METHODS := nn ge ci noport fixedport
 VALID_REFINEMENT_METHODS := nn ge ci noport
-EXPERIMENT_REFINEMENT_METHODS := noport nn ge ci
+EXPERIMENT_REFINEMENT_METHODS := nn ci ge noport
 FIXEDPORT_CANDIDATE_JSON = ../dat/candidate_ports.json
 SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_BOAT_JSONS = ../sol/survey/boat1.json ../sol/survey/boat2.json ../sol/survey/boat3.json ../sol/survey/boat4.json
@@ -190,9 +190,11 @@ plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png ../sol/sur
 EXPERIMENT_TARGETS = \
 	../sol/noport/construction.json \
 	../sol/noport/segment.json \
-	$(foreach method,$(EXPERIMENT_REFINEMENT_METHODS),../sol/$(method)/refinement.json)
+	$(foreach method,$(EXPERIMENT_REFINEMENT_METHODS),../sol/$(method)/refinement.json) \
+	../sol/fixedport/construction.json \
+	../sol/fixedport/segment.json
 
-experiments: prepare-routing-data $(EXPERIMENT_TARGETS)
+experiments: prepare-routing-data survey fixedport_candidates $(EXPERIMENT_TARGETS)
 
 plot-survey-routes: ../sol/survey/multivessel.png
 
@@ -241,7 +243,7 @@ help:
 	@echo "  make -C src survey"
 	@echo "  make -C src fixedport_candidates"
 	@echo "  make -C src fixedport"
-	@echo "  make -C src experiments"
+	@echo "  make -C src experiments        # full pipeline: noport+fixedport+nn/ge/ci/noport refinement"
 	@echo "  make -C src plot"
 	@echo "  make -C src plot-routes"
 	@echo "  make -C src plot-survey-routes"
