@@ -13,12 +13,11 @@ COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
-INIT ?=
 METHOD ?=
 TABLE_FORMAT ?= tex
 TABLE_OUTPUT ?=
 L2SEG_UNIT ?= seconds
-METHOD_RAW := $(or $(METHOD),$(INIT),$(init),nn)
+METHOD_RAW := $(or $(METHOD),nn)
 METHOD_NAME := $(if $(filter gi,$(METHOD_RAW)),ge,$(METHOD_RAW))
 VALID_METHODS := nn ge ci noport fixedport
 VALID_REFINEMENT_METHODS := nn ge ci noport
@@ -27,7 +26,7 @@ FIXEDPORT_CANDIDATE_JSON = ../dat/candidate_ports.json
 SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_BOAT_JSONS = ../sol/survey/boat1.json ../sol/survey/boat2.json ../sol/survey/boat3.json ../sol/survey/boat4.json
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement init noport sweep sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement noport sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
 
 all: build
 
@@ -76,8 +75,6 @@ else
 endif
 
 refinement: $(REFINEMENT_TARGET_JSON)
-
-init: segment
 
 prepare-routing-data: $(COUNTRY_DB)
 
@@ -132,7 +129,7 @@ define construction_rule
 ../sol/$(1)/construction.json: $(COUNTRY_DB)
 	@mkdir -p ../sol/$(1)
 	@echo "Generating $(2) construction -> $$@"
-	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode init --strategy $(1) --database "$(COUNTRY_DB)" --output "../sol/$(1)/construction.json" --config "$(CONFIG_YAML)"'
+	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode construction --strategy $(1) --database "$(COUNTRY_DB)" --output "../sol/$(1)/construction.json" --config "$(CONFIG_YAML)"'
 endef
 
 define segment_from_construction_rule
@@ -146,7 +143,7 @@ define refinement_rule
 ../sol/$(1)/refinement.json: ../sol/$(1)/segment.json
 	@mkdir -p ../sol/$(1)
 	@echo "Running $(2) refinement -> $$@"
-	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode sweep --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "$$@" 2>&1 | tee "../sol/$(1)/refinement.log"'
+	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "$$@" 2>&1 | tee "../sol/$(1)/refinement.log"'
 endef
 
 $(eval $(call construction_rule,nn,NN))
@@ -162,8 +159,6 @@ $(eval $(call refinement_rule,nn,NN))
 $(eval $(call refinement_rule,ge,GE))
 $(eval $(call refinement_rule,ci,CI))
 $(eval $(call refinement_rule,noport,noport))
-
-sweep: refinement
 
 sweep_table:
 	@bash -lc 'set -euo pipefail; cd ..; \
@@ -232,9 +227,7 @@ help:
 	@echo "  make -C src refinement METHOD=nn"
 	@echo "  make -C src refinement METHOD=noport"
 	@echo ""
-	@echo "Compatibility aliases"
-	@echo "  make -C src init INIT=nn"
-	@echo "  make -C src sweep INIT=nn"
+	@echo "Shortcuts"
 	@echo "  make -C src noport             # same as construction METHOD=noport"
 	@echo "  make -C src fixedport          # same as construction METHOD=fixedport"
 	@echo ""

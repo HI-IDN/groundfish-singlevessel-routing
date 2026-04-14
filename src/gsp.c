@@ -2,10 +2,6 @@
  * Entry point supporting workflow-stage modes:
  *   --mode construction : construction / segment stage entrypoint
  *   --mode refinement   : refinement stage entrypoint
- *
- * Compatibility aliases:
- *   --mode init  -> construction
- *   --mode sweep -> refinement
  */
 
 #include <stdio.h>
@@ -23,8 +19,6 @@ void print_usage(const char *prog_name) {
     fprintf(stderr, "Modes:\n");
     fprintf(stderr, "  construction   construction / segment stage entrypoint\n");
     fprintf(stderr, "  refinement     matheuristic refinement stage entrypoint\n");
-    fprintf(stderr, "  init           compatibility alias for construction\n");
-    fprintf(stderr, "  sweep          compatibility alias for refinement\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Construction mode options:\n");
     fprintf(stderr, "  --mode construction --strategy <nn|ge|ci>\n");
@@ -71,13 +65,13 @@ int main(int argc, char **argv) {
 
     printf("Mode: %s\n\n", mode);
 
-    if (strcmp(mode, "construction") == 0 || strcmp(mode, "init") == 0) {
+    if (strcmp(mode, "construction") == 0) {
         return mode_construction(argc, argv);
-    } else if (strcmp(mode, "refinement") == 0 || strcmp(mode, "sweep") == 0) {
+    } else if (strcmp(mode, "refinement") == 0) {
         return mode_refinement(argc, argv);
     } else {
         fprintf(stderr, "ERROR: Unknown mode '%s'\n", mode);
-        fprintf(stderr, "Valid modes: construction, refinement (aliases: init, sweep)\n\n");
+        fprintf(stderr, "Valid modes: construction, refinement\n\n");
         print_usage(argv[0]);
         return 1;
     }

@@ -4,8 +4,6 @@
  * 1. heuristic construction generation for nn / ge / ci
  * 2. segment-local post-optimization when writing segment.json
  *
- * The same entry point is kept behind the historical CLI alias `--mode init`
- * for compatibility while the workflow naming settles.
  */
 
 #include <stdio.h>

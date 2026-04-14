@@ -123,42 +123,42 @@ endif()
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     add_custom_target(run_construction_nn
-        COMMAND gsp_gurobi --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/construction.json --config ${CONFIG_YAML}
+        COMMAND gsp_gurobi --mode construction --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp_gurobi
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Construction: NN (Nearest Neighbor)"
     )
 
     add_custom_target(run_construction_ge
-        COMMAND gsp_gurobi --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/construction.json --config ${CONFIG_YAML}
+        COMMAND gsp_gurobi --mode construction --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp_gurobi
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Construction: GE (Greedy Edge)"
     )
 
     add_custom_target(run_construction_ci
-        COMMAND gsp_gurobi --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/construction.json --config ${CONFIG_YAML}
+        COMMAND gsp_gurobi --mode construction --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp_gurobi
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Construction: CI (Cheapest Insertion)"
     )
 else()
     add_custom_target(run_construction_nn
-        COMMAND gsp --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/construction.json --config ${CONFIG_YAML}
+        COMMAND gsp --mode construction --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Construction: NN (Nearest Neighbor)"
     )
 
     add_custom_target(run_construction_ge
-        COMMAND gsp --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/construction.json --config ${CONFIG_YAML}
+        COMMAND gsp --mode construction --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Construction: GE (Greedy Edge)"
     )
 
     add_custom_target(run_construction_ci
-        COMMAND gsp --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/construction.json --config ${CONFIG_YAML}
+        COMMAND gsp --mode construction --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Construction: CI (Cheapest Insertion)"
