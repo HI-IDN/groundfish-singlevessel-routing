@@ -109,10 +109,14 @@ add_custom_target(prepare_routing_data
 )
 
 add_custom_target(survey
-    COMMAND historical_survey ${CMAKE_CURRENT_SOURCE_DIR}/../dat/survey2023spring.dat ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp.db ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey
+    COMMAND historical_survey
+            ${CMAKE_CURRENT_SOURCE_DIR}/../dat/survey2023spring.dat
+            ${CMAKE_CURRENT_SOURCE_DIR}/../dat/gsp.db
+            ${CMAKE_CURRENT_SOURCE_DIR}/../sol/survey/multivessel.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/../config/gsp_solver.yaml
     DEPENDS historical_survey
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/common
-    COMMENT "Export historical survey JSON directly from DAT + database"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Export historical survey to sol/survey/multivessel.json"
 )
 
 install(TARGETS

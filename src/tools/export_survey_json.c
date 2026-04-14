@@ -31,6 +31,95 @@ static void die(const char *msg) {
     exit(1);
 }
 
+/* ---- Types for multivessel output ---- */
+
+typedef struct {
+    int num_stations;
+    int segment_count;
+    double total_transit_nm;
+    double total_distance_nm;
+    int *segment_catch;        /* owned, [segment_count] */
+    int *segment_end_dock_ids; /* owned, [segment_count] - end dock location per segment */
+    char *boat_name;           /* owned - boat name from database */
+    int boat_start_loc_id;     /* home dock location id */
+} boat_stats_t;
+
+static void free_boat_stats(boat_stats_t *s) {
+    if (!s) return;
+    free(s->segment_catch);
+    free(s->segment_end_dock_ids);
+    free(s->boat_name);
+    memset(s, 0, sizeof(*s));
+}
+
+typedef struct { int location_id; int port_id; char *name; int visit_count; } port_info_mv_t;
+
+static void free_port_info_mv(port_info_mv_t *ports, int count) {
+    if (!ports) return;
+    for (int i = 0; i < count; i++) free(ports[i].name);
+    free(ports);
+}
+
+static char *dup_mv(const char *s) {
+    if (!s) return NULL;
+    size_t n = strlen(s) + 1;
+    char *p = (char *)malloc(n);
+    if (p) memcpy(p, s, n);
+    return p;
+}
+
+static int read_fixedport_min_catch_kg(const char *yaml_path) {
+    FILE *fp;
+    char line[1024];
+    int in_init = 0, threshold = 1000;
+    const char *key = "fixedport_min_segment_catch_kg:";
+    size_t key_len = strlen(key);
+    if (!yaml_path || !(fp = fopen(yaml_path, "r"))) return threshold;
+    while (fgets(line, sizeof(line), fp)) {
+        char *t = line;
+        while (*t && isspace((unsigned char)*t)) t++;
+        if (*t == '#' || !*t || *t == '\n') continue;
+        if (!isspace((unsigned char)line[0])) { in_init = (strncmp(t, "init:", 5) == 0); continue; }
+        if (!in_init) continue;
+        if (strncmp(t, key, key_len) == 0) {
+            threshold = atoi(t + key_len);
+            if (threshold < 0) threshold = 0;
+            break;
+        }
+    }
+    fclose(fp);
+    return threshold;
+}
+
+static int load_port_lookup_mv(sqlite3 *db, port_info_mv_t **out, int *out_count) {
+    sqlite3_stmt *stmt = NULL;
+    port_info_mv_t *ports = NULL;
+    int count = 0, cap = 0;
+    if (out) *out = NULL;
+    if (out_count) *out_count = 0;
+    if (!db) return 0;
+    if (sqlite3_prepare_v2(db,
+            "SELECT p.location_id, p.id, p.name FROM ports p ORDER BY p.location_id;",
+            -1, &stmt, NULL) != SQLITE_OK) return 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        if (count >= cap) {
+            int nc = (cap > 0) ? (cap * 2) : 16;
+            port_info_mv_t *tmp = (port_info_mv_t *)realloc(ports, (size_t)nc * sizeof(*ports));
+            if (!tmp) { sqlite3_finalize(stmt); free_port_info_mv(ports, count); return 0; }
+            ports = tmp; cap = nc;
+        }
+        ports[count].location_id = sqlite3_column_int(stmt, 0);
+        ports[count].port_id     = sqlite3_column_int(stmt, 1);
+        ports[count].name        = dup_mv((const char *)sqlite3_column_text(stmt, 2));
+        ports[count].visit_count = 0;
+        count++;
+    }
+    sqlite3_finalize(stmt);
+    if (out) *out = ports; else free_port_info_mv(ports, count);
+    if (out_count) *out_count = count;
+    return 1;
+}
+
 static char *dup_cstr(const char *s) {
     size_t n = strlen(s) + 1;
     char *out = (char*)malloc(n);
@@ -323,6 +412,27 @@ static double lookup_distance_nm(sqlite3 *db, int from_loc_id, int to_loc_id) {
     return d;
 }
 
+/* Cached variant: reuses a pre-prepared statement — avoids prepare/finalize overhead in hot loops. */
+static double lookup_distance_nm_cached(sqlite3_stmt *stmt, int from_loc_id, int to_loc_id) {
+    double d = -1.0;
+    if (!stmt || from_loc_id <= 0 || to_loc_id <= 0) return -1.0;
+
+    sqlite3_reset(stmt);
+    sqlite3_bind_int(stmt, 1, from_loc_id);
+    sqlite3_bind_int(stmt, 2, to_loc_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_type(stmt, 0) != SQLITE_NULL)
+        d = sqlite3_column_double(stmt, 0);
+    if (d >= 0.0) return d;
+
+    /* Fallback: reverse direction */
+    sqlite3_reset(stmt);
+    sqlite3_bind_int(stmt, 1, to_loc_id);
+    sqlite3_bind_int(stmt, 2, from_loc_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_type(stmt, 0) != SQLITE_NULL)
+        d = sqlite3_column_double(stmt, 0);
+    return d;
+}
+
 static void accumulate_distance_breakdown(gsp_distance_breakdown_t *breakdown,
                                           double distance_nm,
                                           int is_haul) {
@@ -415,9 +525,42 @@ static int lookup_waypoint_path(sqlite3 *db, int from_loc_id, int to_loc_id, int
     return count;
 }
 
+/* Cached variant: reuses a pre-prepared statement — avoids prepare/finalize overhead in hot loops. */
+static int lookup_waypoint_path_cached(sqlite3_stmt *stmt, int from_loc_id, int to_loc_id, int **out_ids) {
+    int count = 0;
+    if (out_ids) *out_ids = NULL;
+    if (!stmt || !out_ids || from_loc_id <= 0 || to_loc_id <= 0) return 0;
+
+    sqlite3_reset(stmt);
+    sqlite3_bind_int(stmt, 1, from_loc_id);
+    sqlite3_bind_int(stmt, 2, to_loc_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *txt = sqlite3_column_text(stmt, 0);
+        if (txt) count = parse_waypoint_path_json((const char*)txt, out_ids);
+        return count;
+    }
+
+    /* Fallback: reverse direction */
+    sqlite3_reset(stmt);
+    sqlite3_bind_int(stmt, 1, to_loc_id);
+    sqlite3_bind_int(stmt, 2, from_loc_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *txt = sqlite3_column_text(stmt, 0);
+        if (txt) {
+            count = parse_waypoint_path_json((const char*)txt, out_ids);
+            for (int i = 0; i < count / 2; i++) {
+                int tmp = (*out_ids)[i];
+                (*out_ids)[i] = (*out_ids)[count - 1 - i];
+                (*out_ids)[count - 1 - i] = tmp;
+            }
+        }
+    }
+    return count;
+}
+
 /* Export a single boat's route to JSON */
-static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat_id, const char *output_path) {
-    printf("Exporting survey route for boat_id=%d to %s\n", boat_id, output_path);
+static int export_boat_json_fp(sqlite3 *db, const SurveyEntryVec *entries, int boat_id, FILE *out, boat_stats_t *stats_out) {
+    printf("Building survey route for boat_id=%d\n", boat_id);
 
     /* Query boat info including start/end location IDs for proximity checks. */
     const char *boat_sql =
@@ -489,12 +632,24 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
     int idx = 0;
     current_boat_id = 0;
     int segment = 0;
+
+    /* Prepare statements once for the node-building loop to avoid per-iteration prepare overhead. */
+    sqlite3_stmt *stmt_station = NULL, *stmt_port_loc = NULL;
+    sqlite3_prepare_v2(db,
+        "SELECT s.id, s.start_location_id, s.end_location_id, s.amount "
+        "FROM stations s JOIN locations l ON s.start_location_id = l.id "
+        "WHERE l.easting = ? AND l.northing = ?;",
+        -1, &stmt_station, NULL);
+    sqlite3_prepare_v2(db, "SELECT location_id FROM ports WHERE id = ?;",
+        -1, &stmt_port_loc, NULL);
+
     for (int i = 0; i < entries->n; i++) {
         const SurveyEntry *entry = &entries->entries[i];
         if (entry->type == NODE_TYPE_BOAT) {
             current_boat_id = lookup_boat_id(db, entry->name);
             if (current_boat_id <= 0) {
                 fprintf(stderr, "Could not resolve boat named '%s'\n", entry->name ? entry->name : "(null)");
+                sqlite3_finalize(stmt_station); sqlite3_finalize(stmt_port_loc);
                 free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
                 return 1;
             }
@@ -514,52 +669,45 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         if (current_boat_id != boat_id) continue;
 
         if (entry->type == NODE_TYPE_STATION) {
-            const char *station_sql =
-                "SELECT s.id, s.start_location_id, s.end_location_id, s.amount "
-                "FROM stations s "
-                "JOIN locations l ON s.start_location_id = l.id "
-                "WHERE l.easting = ? AND l.northing = ?;";
-            sqlite3_stmt *st = NULL;
-            if (sqlite3_prepare_v2(db, station_sql, -1, &st, NULL) != SQLITE_OK) {
-                fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+            if (!stmt_station) {
+                fprintf(stderr, "SQL error: station statement not prepared\n");
+                sqlite3_finalize(stmt_port_loc);
                 free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
                 return 1;
             }
-            sqlite3_bind_int(st, 1, entry->easting);
-            sqlite3_bind_int(st, 2, entry->northing);
-            if (sqlite3_step(st) != SQLITE_ROW) {
+            sqlite3_reset(stmt_station);
+            sqlite3_bind_int(stmt_station, 1, entry->easting);
+            sqlite3_bind_int(stmt_station, 2, entry->northing);
+            if (sqlite3_step(stmt_station) != SQLITE_ROW) {
                 fprintf(stderr, "Could not resolve station at %d %d\n", entry->easting, entry->northing);
-                sqlite3_finalize(st);
+                sqlite3_finalize(stmt_station); sqlite3_finalize(stmt_port_loc);
                 free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
                 return 1;
             }
             types[idx] = NODE_TYPE_STATION;
-            table_ids[idx] = sqlite3_column_int(st, 0);
+            table_ids[idx] = sqlite3_column_int(stmt_station, 0);
             segments[idx] = segment;
-            resolved_loc_ids[idx] = sqlite3_column_int(st, 1);
-            station_end_loc_ids[idx] = sqlite3_column_int(st, 2);
-            catch_amounts[idx] = sqlite3_column_int(st, 3);
-            sqlite3_finalize(st);
+            resolved_loc_ids[idx] = sqlite3_column_int(stmt_station, 1);
+            station_end_loc_ids[idx] = sqlite3_column_int(stmt_station, 2);
+            catch_amounts[idx] = sqlite3_column_int(stmt_station, 3);
             idx++;
         } else if (entry->type == NODE_TYPE_PORT && entry->selected) {
             int port_id = lookup_port_id(db, entry->easting, entry->northing);
-            sqlite3_stmt *pt = NULL;
-            const char *port_sql = "SELECT location_id FROM ports WHERE id = ?;";
-            if (port_id <= 0 || sqlite3_prepare_v2(db, port_sql, -1, &pt, NULL) != SQLITE_OK) {
+            if (port_id <= 0 || !stmt_port_loc) {
                 fprintf(stderr, "Could not resolve port at %d %d\n", entry->easting, entry->northing);
-                if (pt) sqlite3_finalize(pt);
+                sqlite3_finalize(stmt_station); sqlite3_finalize(stmt_port_loc);
                 free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
                 return 1;
             }
-            sqlite3_bind_int(pt, 1, port_id);
-            if (sqlite3_step(pt) != SQLITE_ROW) {
+            sqlite3_reset(stmt_port_loc);
+            sqlite3_bind_int(stmt_port_loc, 1, port_id);
+            if (sqlite3_step(stmt_port_loc) != SQLITE_ROW) {
                 fprintf(stderr, "Could not load port location for port %d\n", port_id);
-                sqlite3_finalize(pt);
+                sqlite3_finalize(stmt_station); sqlite3_finalize(stmt_port_loc);
                 free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
                 return 1;
             }
-            int port_loc_id = sqlite3_column_int(pt, 0);
-            sqlite3_finalize(pt);
+            int port_loc_id = sqlite3_column_int(stmt_port_loc, 0);
 
             types[idx] = NODE_TYPE_PORT;
             table_ids[idx] = port_id;
@@ -579,6 +727,9 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
             idx++;
         }
     }
+    /* Done with the node-building loop — release the pre-compiled statements. */
+    sqlite3_finalize(stmt_station); stmt_station = NULL;
+    sqlite3_finalize(stmt_port_loc); stmt_port_loc = NULL;
 
     int num_stations = 0;
     for (int i = 0; i < num_nodes; i++) {
@@ -691,6 +842,12 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         return 1;
     }
 
+    /* Prepare distance statement once for the entire distance computation loop. */
+    sqlite3_stmt *stmt_dist = NULL;
+    sqlite3_prepare_v2(db,
+        "SELECT distance_nm FROM distances WHERE from_location_id = ? AND to_location_id = ?;",
+        -1, &stmt_dist, NULL);
+
     for (int s = 0; s < segment_count; s++) {
         int a = seg_start[s], b = seg_end[s];
         int start_loc = resolve_segment_boundary_loc(
@@ -705,16 +862,16 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
             if (types[i] == NODE_TYPE_STATION) {
                 int s_start = resolved_loc_ids[i];
                 int s_end = station_end_loc_ids[i];
-                double d1 = lookup_distance_nm(db, prev, s_start);
+                double d1 = lookup_distance_nm_cached(stmt_dist, prev, s_start);
                 accumulate_distance_breakdown(&segment_breakdowns[s], d1, 0);
-                double d2 = lookup_distance_nm(db, s_start, s_end);
+                double d2 = lookup_distance_nm_cached(stmt_dist, s_start, s_end);
                 accumulate_distance_breakdown(&segment_breakdowns[s], d2, 1);
                 prev = s_end;
             }
         }
 
         {
-            double d3 = lookup_distance_nm(db, prev, end_loc);
+            double d3 = lookup_distance_nm_cached(stmt_dist, prev, end_loc);
             accumulate_distance_breakdown(&segment_breakdowns[s], d3, 0);
         }
         segment_distance_nm[s] = segment_breakdowns[s].total_distance_nm;
@@ -723,6 +880,7 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         total_breakdown.total_distance_nm += segment_breakdowns[s].total_distance_nm;
         total_distance += segment_distance_nm[s];
     }
+    sqlite3_finalize(stmt_dist); stmt_dist = NULL;
 
     if (!gsp_build_dock_location_ids_from_segment_ends(boat_start_loc_id,
                                                        segment_end_location_ids,
@@ -741,16 +899,7 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
     int *unique_waypoint_location_ids = NULL;
     int uniq_wp_n = 0, uniq_wp_cap = 0;
 
-    FILE *out = fopen(output_path, "w");
-    if (!out) {
-        perror("fopen");
-        free(dock_location_ids);
-        free(unique_waypoint_location_ids);
-        free(types); free(table_ids); free(segments); free(resolved_loc_ids); free(station_end_loc_ids); free(catch_amounts);
-        free(seg_start); free(seg_end); free(segment_length); free(segment_catch); free(force_append_boat_end_station);
-        free(segment_breakdowns); free(segment_distance_nm);
-        return 1;
-    }
+    /* out is provided by the caller */
 
     fprintf(out, "{\n");
     fprintf(out, "  \"metadata\": {\n");
@@ -782,7 +931,6 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         double runtime_trajectory[1] = {0.0};
 
         if (!location_segments || !station_segments) {
-            fclose(out);
             free(location_segments);
             free(station_segments);
             free(dock_location_ids);
@@ -792,6 +940,12 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
             free(segment_breakdowns); free(segment_distance_nm);
             return 1;
         }
+
+        /* Prepare waypoint statement once for all expansion iterations. */
+        sqlite3_stmt *stmt_wp = NULL;
+        sqlite3_prepare_v2(db,
+            "SELECT waypoint_path FROM distances WHERE from_location_id = ? AND to_location_id = ?;",
+            -1, &stmt_wp, NULL);
 
         for (int s = 0; s < segment_count; s++) {
             int a = seg_start[s], b = seg_end[s];
@@ -808,7 +962,6 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
             int base_n = 0;
 
             if (!base) {
-                fclose(out);
                 for (int i = 0; i < s; i++) {
                     free((int*)location_segments[i].values);
                     free((int*)station_segments[i].values);
@@ -843,7 +996,7 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
                     int from_loc = base[i];
                     int to_loc = base[i + 1];
                     int *wps = NULL;
-                    int n_wps = lookup_waypoint_path(db, from_loc, to_loc, &wps);
+                    int n_wps = lookup_waypoint_path_cached(stmt_wp, from_loc, to_loc, &wps);
 
                     if (n_wps > 0) {
                         for (int k = 0; k < n_wps; k++) {
@@ -863,6 +1016,7 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
             station_segments[s].values = station_ids;
             station_segments[s].count = station_n;
         }
+        sqlite3_finalize(stmt_wp); stmt_wp = NULL;
 
         fprintf(out, "    \"Spring 2023\": ");
         solution_view.variant_name = "Spring 2023";
@@ -914,15 +1068,13 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
     fprintf(out, "    \"method\": \"survey_export\"\n");
     fprintf(out, "  }\n");
     fprintf(out, "}\n");
-    fclose(out);
 
-    printf("[OK] Exported survey route to %s\n", output_path);
+    printf("[OK] Built survey route for boat_id=%d\n", boat_id);
     printf("  Boat: %s (capacity: %d)\n", boat_name, capacity);
     printf("  Total distance: %.2f nm\n", total_distance);
     printf("  Nodes: %d, Segments: %d\n", num_nodes, segment_count);
     printf("  Feasible: %s\n", is_feasible ? "true" : "false");
 
-    /* Show capacity violations if any */
     if (!is_feasible) {
         for (int s = 0; s < segment_count; s++) {
             if (segment_catch[s] > capacity) {
@@ -931,24 +1083,23 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
         }
     }
 
-    printf("  Segment length: [");
-    for (int s = 0; s < segment_count; s++) {
-        if (s) printf(", ");
-        printf("%d", segment_length[s]);
+    /* Fill stats_out for the multivessel summary/candidate_ports computation */
+    if (stats_out) {
+        stats_out->num_stations    = num_stations;
+        stats_out->segment_count   = segment_count;
+        stats_out->total_transit_nm  = total_breakdown.transit_distance_nm;
+        stats_out->total_distance_nm = total_breakdown.total_distance_nm;
+        stats_out->boat_name = dup_mv(boat_name);
+        stats_out->boat_start_loc_id = boat_start_loc_id;
+        stats_out->segment_catch = (int *)malloc((size_t)segment_count * sizeof(int));
+        if (stats_out->segment_catch)
+            memcpy(stats_out->segment_catch, segment_catch, (size_t)segment_count * sizeof(int));
+        /* dock_location_ids: [start, end1, end2, ..., endN] — skip index 0 (start) */
+        int n_ends = dock_n - 1;
+        stats_out->segment_end_dock_ids = (int *)malloc((size_t)(n_ends > 0 ? n_ends : 1) * sizeof(int));
+        if (stats_out->segment_end_dock_ids && n_ends > 0)
+            memcpy(stats_out->segment_end_dock_ids, dock_location_ids + 1, (size_t)n_ends * sizeof(int));
     }
-    printf("]\n");
-    printf("  Segment catch: [");
-    for (int s = 0; s < segment_count; s++) {
-        if (s) printf(", ");
-        printf("%d", segment_catch[s]);
-    }
-    printf("]\n");
-    printf("  Segment distance (nm): [");
-    for (int s = 0; s < segment_count; s++) {
-        if (s) printf(", ");
-        printf("%.2f", segment_distance_nm[s]);
-    }
-    printf("]\n");
 
     free(dock_location_ids);
     free(unique_waypoint_location_ids);
@@ -958,31 +1109,207 @@ static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat
     return 0;
 }
 
+/* Wrapper: opens file, delegates to export_boat_json_fp, closes file */
+static int export_boat_json(sqlite3 *db, const SurveyEntryVec *entries, int boat_id, const char *output_path) {
+    FILE *out = fopen(output_path, "w");
+    if (!out) { perror("fopen"); return 1; }
+    int ret = export_boat_json_fp(db, entries, boat_id, out, NULL);
+    fclose(out);
+    return ret;
+}
+
+/* Write all boats + candidate_ports + survey_summary into one multivessel.json */
+static int export_multivessel_json(
+    sqlite3 *db,
+    const SurveyEntryVec *entries,
+    const int *boat_ids,
+    int boat_count,
+    const char *output_path,
+    const char *config_yaml)
+{
+    boat_stats_t *stats = (boat_stats_t *)calloc((size_t)boat_count, sizeof(boat_stats_t));
+    if (!stats) return 1;
+
+    FILE *out = fopen(output_path, "w");
+    if (!out) { perror("fopen"); free(stats); return 1; }
+
+    fprintf(out, "{\n  \"boats\": [\n");
+
+    int result = 0;
+    for (int i = 0; i < boat_count; i++) {
+        if (i > 0) fprintf(out, ",\n");
+        if (export_boat_json_fp(db, entries, boat_ids[i], out, &stats[i]) != 0) {
+            fprintf(stderr, "Failed to export boat %d\n", boat_ids[i]);
+            result = 1;
+            goto cleanup;
+        }
+    }
+    fprintf(out, "  ],\n");
+
+    /* --- candidate_ports section (same logic as survey_fixedport_candidates) --- */
+    {
+        int min_catch_kg = read_fixedport_min_catch_kg(config_yaml);
+        port_info_mv_t *port_lookup = NULL;
+        int port_lookup_count = 0;
+        load_port_lookup_mv(db, &port_lookup, &port_lookup_count);
+
+        int *ordered = NULL;
+        int ordered_n = 0, ordered_cap = 0;
+        int total_kept = 0;
+
+        for (int i = 0; i < boat_count; i++) {
+            for (int s = 0; s < stats[i].segment_count; s++) {
+                if (!stats[i].segment_catch || !stats[i].segment_end_dock_ids) continue;
+                if (stats[i].segment_catch[s] < min_catch_kg) continue;
+                if (ordered_n >= ordered_cap) {
+                    int nc = (ordered_cap > 0) ? (ordered_cap * 2) : 16;
+                    int *tmp = (int *)realloc(ordered, (size_t)nc * sizeof(int));
+                    if (!tmp) { free(ordered); goto candidate_done; }
+                    ordered = tmp; ordered_cap = nc;
+                }
+                ordered[ordered_n++] = stats[i].segment_end_dock_ids[s];
+                total_kept++;
+            }
+        }
+
+        for (int p = 0; p < ordered_n; p++)
+            for (int k = 0; k < port_lookup_count; k++)
+                if (port_lookup[k].location_id == ordered[p]) { port_lookup[k].visit_count++; break; }
+
+        fprintf(out, "  \"candidate_ports\": {\n");
+        fprintf(out, "    \"min_segment_catch_kg\": %d,\n", min_catch_kg);
+        fprintf(out, "    \"boat_count\": %d,\n", boat_count);
+        fprintf(out, "    \"kept_segment_count\": %d,\n", total_kept);
+        fprintf(out, "    \"ordered_port_location_ids\": [");
+        for (int p = 0; p < ordered_n; p++) { if (p) fprintf(out, ", "); fprintf(out, "%d", ordered[p]); }
+        fprintf(out, "],\n");
+
+        /* Per-boat segment breakdown */
+        fprintf(out, "    \"boats\": [\n");
+        for (int i = 0; i < boat_count; i++) {
+            if (i > 0) fprintf(out, ",\n");
+            const boat_stats_t *bs = &stats[i];
+            int n_segs = bs->segment_count;
+            fprintf(out, "      {\n");
+            fprintf(out, "        \"name\": \"%s\",\n", bs->boat_name ? bs->boat_name : "");
+            /* dock_location_ids: [start, end1, ..., endN] */
+            fprintf(out, "        \"dock_location_ids\": [%d", bs->boat_start_loc_id);
+            for (int s = 0; s < n_segs; s++)
+                fprintf(out, ", %d", bs->segment_end_dock_ids ? bs->segment_end_dock_ids[s] : 0);
+            fprintf(out, "],\n");
+            fprintf(out, "        \"segment_end_dock_location_ids\": [");
+            for (int s = 0; s < n_segs; s++) {
+                if (s) fprintf(out, ", ");
+                fprintf(out, "%d", bs->segment_end_dock_ids ? bs->segment_end_dock_ids[s] : 0);
+            }
+            fprintf(out, "],\n");
+            fprintf(out, "        \"segment_catch_amount\": [");
+            for (int s = 0; s < n_segs; s++) {
+                if (s) fprintf(out, ", ");
+                fprintf(out, "%d", bs->segment_catch ? bs->segment_catch[s] : 0);
+            }
+            fprintf(out, "],\n");
+            int kept = 0, dropped = 0;
+            for (int s = 0; s < n_segs; s++) {
+                if (bs->segment_catch && bs->segment_catch[s] >= min_catch_kg) kept++;
+                else dropped++;
+            }
+            fprintf(out, "        \"kept_segment_count\": %d,\n", kept);
+            fprintf(out, "        \"dropped_segment_count\": %d,\n", dropped);
+            fprintf(out, "        \"kept_end_dock_location_ids\": [");
+            { int first = 1;
+              for (int s = 0; s < n_segs; s++) {
+                  if (bs->segment_catch && bs->segment_catch[s] >= min_catch_kg) {
+                      if (!first) fprintf(out, ", ");
+                      fprintf(out, "%d", bs->segment_end_dock_ids ? bs->segment_end_dock_ids[s] : 0);
+                      first = 0;
+                  }
+              }
+            }
+            fprintf(out, "],\n");
+            fprintf(out, "        \"dropped_segments\": [");
+            { int first = 1;
+              for (int s = 0; s < n_segs; s++) {
+                  if (bs->segment_catch && bs->segment_catch[s] < min_catch_kg) {
+                      if (!first) fprintf(out, ", ");
+                      fprintf(out, "{\"segment\": %d, \"catch_kg\": %d, \"end_dock_location_id\": %d}",
+                              s + 1,
+                              bs->segment_catch[s],
+                              bs->segment_end_dock_ids ? bs->segment_end_dock_ids[s] : 0);
+                      first = 0;
+                  }
+              }
+            }
+            fprintf(out, "]\n");
+            fprintf(out, "      }");
+        }
+        fprintf(out, "\n    ],\n");
+
+        fprintf(out, "    \"port_visit_summary\": [\n");
+        { int em = 0;
+          for (int k = 0; k < port_lookup_count; k++) {
+              if (port_lookup[k].visit_count <= 0) continue;
+              if (em++) fprintf(out, ",\n");
+              fprintf(out, "      {\"location_id\": %d, \"port_id\": %d, \"name\": \"%s\", \"visit_count\": %d}",
+                      port_lookup[k].location_id, port_lookup[k].port_id,
+                      port_lookup[k].name ? port_lookup[k].name : "", port_lookup[k].visit_count);
+          }
+          if (em) fprintf(out, "\n");
+        }
+        fprintf(out, "    ]\n");
+        fprintf(out, "  },\n");
+
+        free(ordered);
+        free_port_info_mv(port_lookup, port_lookup_count);
+candidate_done:;
+    }
+
+    /* --- survey_summary section --- */
+    {
+        int total_stations = 0, total_segments = 0;
+        double total_transit = 0.0, total_distance = 0.0;
+        for (int i = 0; i < boat_count; i++) {
+            total_stations  += stats[i].num_stations;
+            total_segments  += stats[i].segment_count;
+            total_transit   += stats[i].total_transit_nm;
+            total_distance  += stats[i].total_distance_nm;
+        }
+        fprintf(out, "  \"survey_summary\": {\n");
+        fprintf(out, "    \"boat_count\": %d,\n", boat_count);
+        fprintf(out, "    \"total_stations\": %d,\n", total_stations);
+        fprintf(out, "    \"total_segments\": %d,\n", total_segments);
+        fprintf(out, "    \"total_transit_nm\": %.2f,\n", total_transit);
+        fprintf(out, "    \"total_distance_nm\": %.2f\n", total_distance);
+        fprintf(out, "  }\n");
+    }
+
+    fprintf(out, "}\n");
+    printf("[OK] Wrote %s (%d boats)\n", output_path, boat_count);
+
+cleanup:
+    fclose(out);
+    for (int i = 0; i < boat_count; i++) free_boat_stats(&stats[i]);
+    free(stats);
+    return result;
+}
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
-    /* Ensure UTF-8 console I/O for native Windows executable output */
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 #endif
-    /* Keep localized text handling, but force numeric formatting to dot separator for JSON. */
     setlocale(LC_CTYPE, "");
     setlocale(LC_NUMERIC, "C");
 
-    if (argc < 4) {
-        fprintf(stderr, "Usage: %s <survey2023spring.dat> <database.db> <output_subfolder> [boat_id]\n", argv[0]);
-        fprintf(stderr, "  Exports survey route to JSON format for plotting\n");
-        fprintf(stderr, "  If boat_id is 0 or not specified, exports all boats\n");
-        fprintf(stderr, "  Output files: <output_subfolder>/boat<id>.json\n");
-        fprintf(stderr, "\nExamples:\n");
-        fprintf(stderr, "  %s dat/survey2023spring.dat dat/gsp.db sol/survey\n", argv[0]);
-        fprintf(stderr, "  %s dat/survey2023spring.dat dat/gsp.db sol/survey 2\n", argv[0]);
+    if (argc < 5) {
+        fprintf(stderr, "Usage: %s <survey.dat> <database.db> <multivessel.json> <config.yaml>\n", argv[0]);
         return 1;
     }
 
-    const char *dat_path = argv[1];
-    const char *db_path = argv[2];
-    const char *output_subfolder = argv[3];
-    int boat_id = (argc > 4) ? atoi(argv[4]) : 0;
+    const char *dat_path       = argv[1];
+    const char *db_path        = argv[2];
+    const char *output_path    = argv[3];
+    const char *config_yaml    = argv[4];
 
     SurveyEntryVec entries;
     survey_entry_vec_init(&entries);
@@ -998,69 +1325,58 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-#ifdef _WIN32
-    // Create the subfolder in case it's missing (Windows)
-    _mkdir(output_subfolder);
-#else
-    // Create the subfolder in case it's missing (Unix-like)
-    mkdir(output_subfolder, 0755);
-#endif
-
-    int result = 0;
-
-    if (boat_id > 0) {
-        /* Export single boat */
-        char output_path[512];
-        snprintf(output_path, sizeof(output_path), "%s/boat%d.json", output_subfolder, boat_id);
-        result = export_boat_json(db, &entries, boat_id, output_path);
-    } else {
-        /* Export all boats */
-        printf("Exporting all boats from survey...\n\n");
-        int *boat_ids = NULL;
-        int boat_count = 0, boat_cap = 0;
-        int current_boat_id = 0;
-        for (int i = 0; i < entries.n; i++) {
-            if (entries.entries[i].type != NODE_TYPE_BOAT) continue;
-            current_boat_id = lookup_boat_id(db, entries.entries[i].name);
-            if (current_boat_id <= 0) {
-                fprintf(stderr, "Could not resolve boat named '%s'\n", entries.entries[i].name ? entries.entries[i].name : "(null)");
-                free(boat_ids);
-                sqlite3_close(db);
-                survey_entry_vec_free(&entries);
-                return 1;
-            }
-            if (!append_unique_int(&boat_ids, &boat_count, &boat_cap, current_boat_id)) {
-                free(boat_ids);
-                sqlite3_close(db);
-                survey_entry_vec_free(&entries);
-                return 1;
-            }
+    /* Collect all unique boat IDs from the survey entries */
+    int *boat_ids = NULL;
+    int boat_count = 0, boat_cap = 0;
+    int current_boat_id = 0;
+    for (int i = 0; i < entries.n; i++) {
+        if (entries.entries[i].type != NODE_TYPE_BOAT) continue;
+        current_boat_id = lookup_boat_id(db, entries.entries[i].name);
+        if (current_boat_id <= 0) {
+            fprintf(stderr, "Could not resolve boat named '%s'\n",
+                    entries.entries[i].name ? entries.entries[i].name : "(null)");
+            free(boat_ids);
+            sqlite3_close(db);
+            survey_entry_vec_free(&entries);
+            return 1;
         }
-
-        int exported_count = 0;
-        for (int i = 0; i < boat_count; i++) {
-            current_boat_id = boat_ids[i];
-            char output_path[512];
-            snprintf(output_path, sizeof(output_path), "%s/boat%d.json", output_subfolder, current_boat_id);
-
-            int ret = export_boat_json(db, &entries, current_boat_id, output_path);
-            if (ret != 0) {
-                result = ret;
-            } else {
-                exported_count++;
-            }
-            printf("\n");
-        }
-        free(boat_ids);
-
-        if (exported_count > 0) {
-            printf("[OK] Exported %d boat(s) successfully\n", exported_count);
-        } else {
-            fprintf(stderr, "No boats found in survey\n");
-            result = 1;
+        if (!append_unique_int(&boat_ids, &boat_count, &boat_cap, current_boat_id)) {
+            free(boat_ids);
+            sqlite3_close(db);
+            survey_entry_vec_free(&entries);
+            return 1;
         }
     }
 
+    if (boat_count == 0) {
+        fprintf(stderr, "No boats found in survey\n");
+        free(boat_ids);
+        sqlite3_close(db);
+        survey_entry_vec_free(&entries);
+        return 1;
+    }
+
+    /* Create output directory if needed */
+    {
+        char dir[512];
+        strncpy(dir, output_path, sizeof(dir) - 1);
+        dir[sizeof(dir) - 1] = '\0';
+        char *slash = strrchr(dir, '/');
+        char *bslash = strrchr(dir, '\\');
+        char *last = (slash > bslash) ? slash : bslash;
+        if (last) {
+            *last = '\0';
+#ifdef _WIN32
+            _mkdir(dir);
+#else
+            mkdir(dir, 0755);
+#endif
+        }
+    }
+
+    int result = export_multivessel_json(db, &entries, boat_ids, boat_count, output_path, config_yaml);
+
+    free(boat_ids);
     sqlite3_close(db);
     survey_entry_vec_free(&entries);
     return result;

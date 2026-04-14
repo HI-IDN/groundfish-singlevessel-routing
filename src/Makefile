@@ -21,10 +21,11 @@ METHOD_RAW := $(or $(METHOD),nn)
 METHOD_NAME := $(if $(filter gi,$(METHOD_RAW)),ge,$(METHOD_RAW))
 VALID_METHODS := nn ge ci noport fixedport
 VALID_REFINEMENT_METHODS := nn ge ci noport
-EXPERIMENT_REFINEMENT_METHODS := nn ci ge noport
-FIXEDPORT_CANDIDATE_JSON = ../dat/candidate_ports.json
+EXPERIMENT_REFINEMENT_METHODS := noport nn ge ci
+FIXEDPORT_CANDIDATE_JSON = ../sol/fixedport/candidate_ports.json
 SURVEY_DAT = ../dat/survey2023spring.dat
-SURVEY_BOAT_JSONS = ../sol/survey/boat1.json ../sol/survey/boat2.json ../sol/survey/boat3.json ../sol/survey/boat4.json
+SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
+SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
 .PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement noport sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
 
@@ -96,15 +97,16 @@ preprocessing: prepare-routing-data survey
 survey: $(BUILD_DIR)/CMakeCache.txt
 	@cd $(BUILD_DIR) && $(MAKE) survey
 
-../sol/survey/boat%.json: $(SURVEY_DAT) $(COUNTRY_DB) $(BUILD_DIR)/CMakeCache.txt
+../sol/survey/multivessel.json: $(SURVEY_DAT) $(COUNTRY_DB) $(CONFIG_YAML) $(BUILD_DIR)/CMakeCache.txt
 	@mkdir -p ../sol/survey
+	@echo "Generating multivessel survey JSON -> $@"
 	@cd $(BUILD_DIR) && $(MAKE) historical_survey
-	@bash -lc 'cd "$(BUILD_DIR)/common" && ../historical_survey "$(SURVEY_DAT)" "$(COUNTRY_DB)" "../sol/survey" "$*"'
+	@bash -lc 'cd "$(BUILD_DIR)" && ./historical_survey "$(abspath $(SURVEY_DAT))" "$(abspath $(COUNTRY_DB))" "$(abspath ../sol/survey/multivessel.json)" "$(abspath $(CONFIG_YAML))"'
 
-$(FIXEDPORT_CANDIDATE_JSON): $(SURVEY_BOAT_JSONS) $(CONFIG_YAML) $(BUILD_DIR)/CMakeCache.txt
-	@mkdir -p ../dat
+$(FIXEDPORT_CANDIDATE_JSON): $(SURVEY_MULTIVESSEL_JSON) $(BUILD_DIR)/CMakeCache.txt
+	@mkdir -p ../sol/fixedport
 	@cd $(BUILD_DIR) && $(MAKE) survey_fixedport_candidates
-	@bash -lc 'cd "$(BUILD_DIR)" && ./survey_fixedport_candidates "$(CONFIG_YAML)" "$(COUNTRY_DB)" "$(FIXEDPORT_CANDIDATE_JSON)" "../sol/survey/boat1.json" "../sol/survey/boat2.json" "../sol/survey/boat3.json" "../sol/survey/boat4.json"'
+	@bash -lc 'cd "$(BUILD_DIR)" && ./survey_fixedport_candidates "$(abspath $(SURVEY_MULTIVESSEL_JSON))" "$(abspath $(FIXEDPORT_CANDIDATE_JSON))"'
 
 fixedport_candidates: $(FIXEDPORT_CANDIDATE_JSON)
 
@@ -180,7 +182,7 @@ plot-routes: $(ROUTE_PNGS)
 	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R dat/gsp.db dat/survey_overview.png'
 
 ../sol/survey/multivessel.png:
-	@bash -lc 'cd .. && Rscript R/plot_multi_vessel_route.R "sol/survey/boat*.json" "sol/survey/multivessel.png" "dat/gsp.db"'
+	@bash -lc 'cd .. && Rscript R/plot_multi_vessel_route.R "sol/survey/multivessel.json" "sol/survey/multivessel.png" "dat/gsp.db"'
 
 ../sol/sweep_summary_panels.png:
 	@bash -lc 'cd .. && Rscript R/plot_sweep_summary_panels.R sol sol/sweep_summary_panels.png'
@@ -190,11 +192,9 @@ plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png ../sol/sur
 EXPERIMENT_TARGETS = \
 	../sol/noport/construction.json \
 	../sol/noport/segment.json \
-	$(foreach method,$(EXPERIMENT_REFINEMENT_METHODS),../sol/$(method)/refinement.json) \
-	../sol/fixedport/construction.json \
-	../sol/fixedport/segment.json
+	$(foreach method,$(EXPERIMENT_REFINEMENT_METHODS),../sol/$(method)/refinement.json)
 
-experiments: prepare-routing-data survey fixedport_candidates $(EXPERIMENT_TARGETS)
+experiments: prepare-routing-data $(EXPERIMENT_TARGETS)
 
 plot-survey-routes: ../sol/survey/multivessel.png
 
@@ -243,7 +243,7 @@ help:
 	@echo "  make -C src survey"
 	@echo "  make -C src fixedport_candidates"
 	@echo "  make -C src fixedport"
-	@echo "  make -C src experiments        # full pipeline: noport+fixedport+nn/ge/ci/noport refinement"
+	@echo "  make -C src experiments"
 	@echo "  make -C src plot"
 	@echo "  make -C src plot-routes"
 	@echo "  make -C src plot-survey-routes"

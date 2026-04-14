@@ -27,24 +27,17 @@ set_target_properties(survey_fixedport_candidates PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-target_link_libraries(survey_fixedport_candidates
-    ${SQLITE3_LIBRARIES}
-    m
-)
+target_link_libraries(survey_fixedport_candidates)
 
-target_include_directories(survey_fixedport_candidates PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
+target_include_directories(survey_fixedport_candidates PRIVATE)
 
 add_custom_target(fixedport_candidates
-    COMMAND survey_fixedport_candidates ${CMAKE_CURRENT_SOURCE_DIR}/../../config/gsp_solver.yaml ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/gsp.db ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/candidate_ports.json
-            ${CMAKE_CURRENT_SOURCE_DIR}/../../sol/survey/boat1.json
-            ${CMAKE_CURRENT_SOURCE_DIR}/../../sol/survey/boat2.json
-            ${CMAKE_CURRENT_SOURCE_DIR}/../../sol/survey/boat3.json
-            ${CMAKE_CURRENT_SOURCE_DIR}/../../sol/survey/boat4.json
+    COMMAND survey_fixedport_candidates
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../sol/survey/multivessel.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../sol/fixedport/candidate_ports.json
     DEPENDS survey_fixedport_candidates
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Aggregate fixed-port candidate sequence from survey boat JSONs"
+    COMMENT "Extract fixed-port candidate sequence from multivessel.json"
 )
 
 add_executable(gsp_country

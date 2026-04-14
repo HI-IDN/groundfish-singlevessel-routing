@@ -100,7 +100,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     )
 
     add_custom_target(run_fixedport
-        COMMAND $<TARGET_FILE:gsp_fixedport> --database ${DATABASE} --config ${CONFIG_YAML} --candidates ${CMAKE_CURRENT_SOURCE_DIR}/../../dat/candidate_ports.json --output ${SOL_FIXEDPORT_DIR}/fixedport.json
+        COMMAND $<TARGET_FILE:gsp_fixedport> --database ${DATABASE} --config ${CONFIG_YAML} --candidates ${CMAKE_CURRENT_SOURCE_DIR}/../../sol/fixedport/candidate_ports.json --output ${SOL_FIXEDPORT_DIR}/fixedport.json
         DEPENDS gsp_fixedport
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Preprocessing: fixed-port debug optimization"

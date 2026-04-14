@@ -3,9 +3,9 @@
 required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite")
 
 args <- commandArgs(trailingOnly = TRUE)
-input_glob <- if (length(args) >= 1) args[1] else "sol/survey/boat*.json"
+input_file <- if (length(args) >= 1) args[1] else "sol/survey/multivessel.json"
 output_file <- if (length(args) >= 2) args[2] else "sol/survey/multivessel.png"
-db_path <- if (length(args) >= 3) args[3] else "dat/gsp.db"
+db_path     <- if (length(args) >= 3) args[3] else "dat/gsp.db"
 
 script_file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_dir <- if (length(script_file_arg) > 0) {
@@ -18,18 +18,17 @@ load_required_packages(required_packages)
 log_file <- log_path_for_output(output_file)
 
 cat("=== GSP Multi-Vessel Route Plotter ===\n\n")
-cat(sprintf("Input glob: %s\n", input_glob))
+cat(sprintf("Input file: %s\n", input_file))
 cat(sprintf("Output: %s\n", output_file))
 cat(sprintf("Database: %s\n\n", db_path))
 
+if (!file.exists(input_file)) {
+  stop(sprintf("Multivessel JSON not found: %s", input_file), call. = FALSE)
+}
 if (!file.exists(db_path)) {
   stop(sprintf("Database file not found: %s", db_path), call. = FALSE)
 }
 
-survey_files <- Sys.glob(input_glob)
-if (length(survey_files) == 0) {
-  stop(sprintf("No survey files matched: %s", input_glob), call. = FALSE)
-}
 
 mix_with_white <- function(color, amount) {
   rgb_vals <- grDevices::col2rgb(color) / 255
@@ -41,27 +40,34 @@ first_word <- function(x) {
   sub("\\s+.*$", "", trimws(x))
 }
 
-read_solution_block <- function(path) {
-  survey <- jsonlite::fromJSON(path)
-  variant_name <- resolve_summary_final_variant(survey)
-  if (is.null(variant_name) || is.null(survey$solution[[variant_name]])) {
-    stop(sprintf("Missing final solution block in %s", path), call. = FALSE)
+read_solution_block <- function(boat_entry) {
+  variant_name <- resolve_summary_final_variant(boat_entry)
+  if (is.null(variant_name) || is.null(boat_entry$solution[[variant_name]])) {
+    stop("Missing final solution block in boat entry", call. = FALSE)
   }
-  distance_info <- extract_solution_distance(survey$solution[[variant_name]])
+  distance_info <- extract_solution_distance(boat_entry$solution[[variant_name]])
   list(
-    file = path,
-    boat_id = as.integer(survey$metadata$boat_id),
-    boat_name = survey$metadata$boat_name,
-    boat_location_id = as.integer(survey$metadata$boat_location_id),
-    boat_lat = survey$metadata$boat_docked_location$lat,
-    boat_lon = survey$metadata$boat_docked_location$lon,
-    capacity = as.numeric(survey$problem$capacity),
-    num_nodes = as.integer(survey$problem$num_nodes),
-    num_stations = as.integer(survey$problem$num_stations),
-    solution = survey$solution[[variant_name]],
-    distance = distance_info,
-    variant_name = variant_name
+    boat_id          = as.integer(boat_entry$metadata$boat_id),
+    boat_name        = boat_entry$metadata$boat_name,
+    boat_location_id = as.integer(boat_entry$metadata$boat_location_id),
+    boat_lat         = boat_entry$metadata$boat_docked_location$lat,
+    boat_lon         = boat_entry$metadata$boat_docked_location$lon,
+    capacity         = as.numeric(boat_entry$problem$capacity),
+    num_nodes        = as.integer(boat_entry$problem$num_nodes),
+    num_stations     = as.integer(boat_entry$problem$num_stations),
+    solution         = boat_entry$solution[[variant_name]],
+    distance         = distance_info,
+    variant_name     = variant_name
   )
+}
+
+cat("Loading multivessel JSON...\n")
+multivessel <- tryCatch(
+  jsonlite::fromJSON(input_file, simplifyDataFrame = FALSE),
+  error = function(e) stop(sprintf("Failed to parse %s: %s", input_file, e$message), call. = FALSE)
+)
+if (is.null(multivessel$boats) || length(multivessel$boats) == 0) {
+  stop("No boats found in multivessel JSON.", call. = FALSE)
 }
 
 cat("Loading coastline and locations...\n")
@@ -70,7 +76,7 @@ locations <- read_db_table(db_path, "SELECT id, lat, lon FROM locations")
 cat("Loading station endpoint data...\n")
 station_endpoints <- load_station_endpoints(db_path)
 
-boats <- lapply(survey_files, read_solution_block)
+boats <- lapply(multivessel$boats, read_solution_block)
 boats <- boats[order(vapply(boats, `[[`, integer(1), "boat_id"))]
 
 boat_base_colors <- c("#0B5FA5", "#C84C09", "#2A7F62", "#8B2E5F", "#6A4C93", "#B38B00")
@@ -235,7 +241,7 @@ if (any(summary_table$Feasible == "false[^1]")) {
 }
 
 combined_log_lines <- c(
-  sprintf("Input glob: %s", input_glob),
+  sprintf("Input file: %s", input_file),
   sprintf("Output plot: %s", output_file),
   sprintf("Database: %s", db_path),
   "",
@@ -373,7 +379,7 @@ p <- base_coastline_plot(coastline) +
     y = NULL,
     caption = paste(
       "Each boat keeps one base color; segments fade lighter as the route progresses.",
-      sprintf("Files: %s", paste(basename(survey_files), collapse = ", ")),
+      sprintf("Source: %s", basename(input_file)),
       sep = "\n"
     )
   )
