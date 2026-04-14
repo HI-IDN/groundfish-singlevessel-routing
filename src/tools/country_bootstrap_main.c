@@ -614,7 +614,11 @@ static int create_full_schema(sqlite3 *db) {
         "  distance_nm REAL,"
         "  crosses_land INTEGER DEFAULT 0,"
         "  waypoint_path TEXT"
-        ");";
+        ");"
+        "CREATE INDEX IF NOT EXISTS idx_distances_from_to"
+        "  ON distances(from_location_id, to_location_id);"
+        "CREATE INDEX IF NOT EXISTS idx_distances_to_from"
+        "  ON distances(to_location_id, from_location_id);";
 
     return sqlite3_exec(db, sql_schema, NULL, NULL, NULL);
 }

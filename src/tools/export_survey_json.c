@@ -42,6 +42,7 @@ typedef struct {
     int *segment_end_dock_ids; /* owned, [segment_count] - end dock location per segment */
     char *boat_name;           /* owned - boat name from database */
     int boat_start_loc_id;     /* home dock location id */
+    int boat_id;               /* boats.id from database */
 } boat_stats_t;
 
 static void free_boat_stats(boat_stats_t *s) {
@@ -1091,6 +1092,7 @@ static int export_boat_json_fp(sqlite3 *db, const SurveyEntryVec *entries, int b
         stats_out->total_distance_nm = total_breakdown.total_distance_nm;
         stats_out->boat_name = dup_mv(boat_name);
         stats_out->boat_start_loc_id = boat_start_loc_id;
+        stats_out->boat_id = boat_id;
         stats_out->segment_catch = (int *)malloc((size_t)segment_count * sizeof(int));
         if (stats_out->segment_catch)
             memcpy(stats_out->segment_catch, segment_catch, (size_t)segment_count * sizeof(int));
@@ -1177,6 +1179,21 @@ static int export_multivessel_json(
                 if (port_lookup[k].location_id == ordered[p]) { port_lookup[k].visit_count++; break; }
 
         fprintf(out, "  \"candidate_ports\": {\n");
+
+        /* port_visit_summary first */
+        fprintf(out, "    \"port_visit_summary\": [");
+        { int em = 0;
+          for (int k = 0; k < port_lookup_count; k++) {
+              if (port_lookup[k].visit_count <= 0) continue;
+              if (em++) fprintf(out, ",");
+              fprintf(out, "\n      {\"location_id\": %d, \"port_id\": %d, \"name\": \"%s\", \"visit_count\": %d}",
+                      port_lookup[k].location_id, port_lookup[k].port_id,
+                      port_lookup[k].name ? port_lookup[k].name : "", port_lookup[k].visit_count);
+          }
+          if (em) fprintf(out, "\n    ");
+        }
+        fprintf(out, "],\n");
+
         fprintf(out, "    \"min_segment_catch_kg\": %d,\n", min_catch_kg);
         fprintf(out, "    \"boat_count\": %d,\n", boat_count);
         fprintf(out, "    \"kept_segment_count\": %d,\n", total_kept);
@@ -1184,39 +1201,39 @@ static int export_multivessel_json(
         for (int p = 0; p < ordered_n; p++) { if (p) fprintf(out, ", "); fprintf(out, "%d", ordered[p]); }
         fprintf(out, "],\n");
 
-        /* Per-boat segment breakdown */
-        fprintf(out, "    \"boats\": [\n");
+        /* Per-boat segment breakdown — dict keyed by boat_id */
+        fprintf(out, "    \"boats\": {");
         for (int i = 0; i < boat_count; i++) {
-            if (i > 0) fprintf(out, ",\n");
+            if (i > 0) fprintf(out, ",");
             const boat_stats_t *bs = &stats[i];
             int n_segs = bs->segment_count;
-            fprintf(out, "      {\n");
-            fprintf(out, "        \"name\": \"%s\",\n", bs->boat_name ? bs->boat_name : "");
+            fprintf(out, "\n      \"%d\": {", bs->boat_id);
+            fprintf(out, "\n        \"name\": \"%s\",", bs->boat_name ? bs->boat_name : "");
             /* dock_location_ids: [start, end1, ..., endN] */
-            fprintf(out, "        \"dock_location_ids\": [%d", bs->boat_start_loc_id);
+            fprintf(out, "\n        \"dock_location_ids\": [%d", bs->boat_start_loc_id);
             for (int s = 0; s < n_segs; s++)
                 fprintf(out, ", %d", bs->segment_end_dock_ids ? bs->segment_end_dock_ids[s] : 0);
-            fprintf(out, "],\n");
-            fprintf(out, "        \"segment_end_dock_location_ids\": [");
+            fprintf(out, "],");
+            fprintf(out, "\n        \"segment_end_dock_location_ids\": [");
             for (int s = 0; s < n_segs; s++) {
                 if (s) fprintf(out, ", ");
                 fprintf(out, "%d", bs->segment_end_dock_ids ? bs->segment_end_dock_ids[s] : 0);
             }
-            fprintf(out, "],\n");
-            fprintf(out, "        \"segment_catch_amount\": [");
+            fprintf(out, "],");
+            fprintf(out, "\n        \"segment_catch_amount\": [");
             for (int s = 0; s < n_segs; s++) {
                 if (s) fprintf(out, ", ");
                 fprintf(out, "%d", bs->segment_catch ? bs->segment_catch[s] : 0);
             }
-            fprintf(out, "],\n");
+            fprintf(out, "],");
             int kept = 0, dropped = 0;
             for (int s = 0; s < n_segs; s++) {
                 if (bs->segment_catch && bs->segment_catch[s] >= min_catch_kg) kept++;
                 else dropped++;
             }
-            fprintf(out, "        \"kept_segment_count\": %d,\n", kept);
-            fprintf(out, "        \"dropped_segment_count\": %d,\n", dropped);
-            fprintf(out, "        \"kept_end_dock_location_ids\": [");
+            fprintf(out, "\n        \"kept_segment_count\": %d,", kept);
+            fprintf(out, "\n        \"dropped_segment_count\": %d,", dropped);
+            fprintf(out, "\n        \"kept_end_dock_location_ids\": [");
             { int first = 1;
               for (int s = 0; s < n_segs; s++) {
                   if (bs->segment_catch && bs->segment_catch[s] >= min_catch_kg) {
@@ -1226,37 +1243,22 @@ static int export_multivessel_json(
                   }
               }
             }
-            fprintf(out, "],\n");
-            fprintf(out, "        \"dropped_segments\": [");
+            fprintf(out, "],");
+            fprintf(out, "\n        \"dropped_segments\": [");
             { int first = 1;
               for (int s = 0; s < n_segs; s++) {
                   if (bs->segment_catch && bs->segment_catch[s] < min_catch_kg) {
                       if (!first) fprintf(out, ", ");
                       fprintf(out, "{\"segment\": %d, \"catch_kg\": %d, \"end_dock_location_id\": %d}",
-                              s + 1,
-                              bs->segment_catch[s],
+                              s + 1, bs->segment_catch[s],
                               bs->segment_end_dock_ids ? bs->segment_end_dock_ids[s] : 0);
                       first = 0;
                   }
               }
             }
-            fprintf(out, "]\n");
-            fprintf(out, "      }");
+            fprintf(out, "]\n      }");
         }
-        fprintf(out, "\n    ],\n");
-
-        fprintf(out, "    \"port_visit_summary\": [\n");
-        { int em = 0;
-          for (int k = 0; k < port_lookup_count; k++) {
-              if (port_lookup[k].visit_count <= 0) continue;
-              if (em++) fprintf(out, ",\n");
-              fprintf(out, "      {\"location_id\": %d, \"port_id\": %d, \"name\": \"%s\", \"visit_count\": %d}",
-                      port_lookup[k].location_id, port_lookup[k].port_id,
-                      port_lookup[k].name ? port_lookup[k].name : "", port_lookup[k].visit_count);
-          }
-          if (em) fprintf(out, "\n");
-        }
-        fprintf(out, "    ]\n");
+        fprintf(out, "\n    }\n");
         fprintf(out, "  },\n");
 
         free(ordered);

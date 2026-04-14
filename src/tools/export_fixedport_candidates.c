@@ -80,10 +80,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    FILE *fp = fopen(output_path, "w");
+    FILE *fp = fopen(output_path, "wb");
     if (!fp) { perror("fopen"); free(text); return 1; }
     fwrite(brace, 1, (size_t)(end - brace + 1), fp);
-    fprintf(fp, "\n");
+    fwrite("\n", 1, 1, fp);
     fclose(fp);
 
     printf("Wrote %s (extracted from %s)\n", output_path, multivessel_path);
