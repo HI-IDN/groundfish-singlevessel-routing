@@ -1183,7 +1183,7 @@ fail:
 }
 
 static void free_solution(nn_solution_t *sol) {
-    init_free_solution(sol);
+    segment_free_solution(sol);
 }
 
 static void free_instance(nn_instance_t *inst) {
@@ -1223,7 +1223,7 @@ int main(int argc, char **argv) {
     int is_feasible = 1;
     nn_solution_t pre_local_postopt_sol = {0};
     double mip_time_limit_seconds = 0.0;
-    double init_haul_distance_scale = 0.0;
+    double segment_haul_distance_scale = 0.0;
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     gsp_mip_solve_detail_t *local_postopt_details = NULL;
@@ -1243,7 +1243,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (!strategy) strategy = infer_strategy_from_path(input);
-    init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
+    segment_haul_distance_scale = read_segment_haul_distance_scale_from_yaml(config);
 
     clock_gettime(CLOCK_MONOTONIC, &t0);
     boat_id = read_boat_id_from_yaml(config);
@@ -1342,7 +1342,7 @@ int main(int argc, char **argv) {
     }
     clock_gettime(CLOCK_MONOTONIC, &t_seg_end);
 
-    if (!init_copy_solution(&sol, &pre_local_postopt_sol)) {
+    if (!segment_copy_solution(&sol, &pre_local_postopt_sol)) {
         fprintf(stderr, "Failed to copy pre-local-postopt init solution\n");
         sqlite3_close(db);
         free(station_order);
@@ -1357,16 +1357,16 @@ int main(int argc, char **argv) {
            pre_local_postopt_sol.segment_count, pre_local_postopt_sol.total_distance);
     fflush(stdout);
 
-    mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
-    if (!init_apply_local_postopt(&inst, &pre_local_postopt_sol,
-                                  boat_start_loc_id, boat_end_loc_id,
-                                  mip_time_limit_seconds,
-                                  init_haul_distance_scale,
-                                  &sol,
-                                  &local_postopt_runtime_seconds,
-                                  &local_postopt_segment_solve_count,
-                                  &local_postopt_details,
-                                  &local_postopt_detail_count)) {
+    mip_time_limit_seconds = read_segment_mip_time_limit_from_yaml(config);
+    if (!segment_apply_local_postopt(&inst, &pre_local_postopt_sol,
+                                     boat_start_loc_id, boat_end_loc_id,
+                                     mip_time_limit_seconds,
+                                     segment_haul_distance_scale,
+                                     &sol,
+                                     &local_postopt_runtime_seconds,
+                                     &local_postopt_segment_solve_count,
+                                     &local_postopt_details,
+                                     &local_postopt_detail_count)) {
         fprintf(stderr, "Failed to apply local post optimization to init solution\n");
         sqlite3_close(db);
         free(station_order);

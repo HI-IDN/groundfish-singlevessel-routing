@@ -81,7 +81,7 @@ static void zero_solution(nn_solution_t *sol) {
     memset(sol, 0, sizeof(*sol));
 }
 
-void init_free_solution(nn_solution_t *sol) {
+void segment_free_solution(nn_solution_t *sol) {
     if (!sol) return;
     free(sol->tour);
     free(sol->visit_station_ids);
@@ -94,7 +94,7 @@ void init_free_solution(nn_solution_t *sol) {
     zero_solution(sol);
 }
 
-int init_copy_solution(const nn_solution_t *src, nn_solution_t *dst) {
+int segment_copy_solution(const nn_solution_t *src, nn_solution_t *dst) {
     if (!src || !dst) return 0;
     zero_solution(dst);
 
@@ -132,11 +132,11 @@ int init_copy_solution(const nn_solution_t *src, nn_solution_t *dst) {
     return 1;
 
 fail:
-    init_free_solution(dst);
+    segment_free_solution(dst);
     return 0;
 }
 
-double read_init_mip_time_limit_from_yaml(const char *yaml_path) {
+double read_segment_mip_time_limit_from_yaml(const char *yaml_path) {
     return read_gurobi_phase_scalar_from_yaml(yaml_path, "time_limit_seconds", "1seg");
 }
 
@@ -156,7 +156,7 @@ double read_fixedport_mip_time_limit_from_yaml(const char *yaml_path) {
 static double read_phase_haul_distance_scale_from_yaml(const char *yaml_path, const char *phase_name) {
     const char *nested_phase_key = phase_name;
     if (strcmp(phase_name, "noport") == 0) nested_phase_key = "0seg";
-    else if (strcmp(phase_name, "init") == 0) nested_phase_key = "1seg";
+    else if (strcmp(phase_name, "segment") == 0) nested_phase_key = "1seg";
     else if (strcmp(phase_name, "sweep") == 0) nested_phase_key = "2seg";
     else if (strcmp(phase_name, "fixedport") == 0) nested_phase_key = "Xseg";
     return read_gurobi_phase_scalar_from_yaml(yaml_path, "haul_distance_scale", nested_phase_key);
@@ -166,8 +166,8 @@ double read_noport_haul_distance_scale_from_yaml(const char *yaml_path) {
     return read_phase_haul_distance_scale_from_yaml(yaml_path, "noport");
 }
 
-double read_init_haul_distance_scale_from_yaml(const char *yaml_path) {
-    return read_phase_haul_distance_scale_from_yaml(yaml_path, "init");
+double read_segment_haul_distance_scale_from_yaml(const char *yaml_path) {
+    return read_phase_haul_distance_scale_from_yaml(yaml_path, "segment");
 }
 
 double read_sweep_haul_distance_scale_from_yaml(const char *yaml_path) {
@@ -301,26 +301,26 @@ fail:
 }
 #endif
 
-int init_apply_local_postopt(const nn_instance_t *inst,
-                             const nn_solution_t *input,
-                             int boat_start_loc_id,
-                             int boat_end_loc_id,
-                             double time_limit_seconds,
-                             double haul_distance_scale,
-                             nn_solution_t *output,
-                             double *runtime_seconds_out,
-                             int *segment_solve_count_out,
-                             gsp_mip_solve_detail_t **solve_details_out,
-                             int *solve_detail_count_out) {
+int segment_apply_local_postopt(const nn_instance_t *inst,
+                                const nn_solution_t *input,
+                                int boat_start_loc_id,
+                                int boat_end_loc_id,
+                                double time_limit_seconds,
+                                double haul_distance_scale,
+                                nn_solution_t *output,
+                                double *runtime_seconds_out,
+                                int *segment_solve_count_out,
+                                gsp_mip_solve_detail_t **solve_details_out,
+                                int *solve_detail_count_out) {
     if (runtime_seconds_out) *runtime_seconds_out = 0.0;
     if (segment_solve_count_out) *segment_solve_count_out = 0;
     if (solve_details_out) *solve_details_out = NULL;
     if (solve_detail_count_out) *solve_detail_count_out = 0;
     if (!inst || !input || !output) return 0;
-    init_free_solution(output);
+    segment_free_solution(output);
 
 #ifndef HAVE_GUROBI
-    return init_copy_solution(input, output);
+    return segment_copy_solution(input, output);
 #else
     GRBenv *env = NULL;
     struct timespec t_postopt_start;
@@ -533,7 +533,7 @@ int init_apply_local_postopt(const nn_instance_t *inst,
 
 fail:
     if (env) GRBfreeenv(env);
-    init_free_solution(output);
+    segment_free_solution(output);
     free(tour);
     free(visit_ids);
     free(visit_seg);

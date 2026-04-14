@@ -266,7 +266,7 @@ static int is_port_location_id(const nn_instance_t *inst, int loc_id)
     return 0;
 }
 
-static int init_solution_has_valid_boundaries(const nn_instance_t *inst, const nn_solution_t *sol)
+static int segment_solution_has_valid_boundaries(const nn_instance_t *inst, const nn_solution_t *sol)
 {
     if (!inst || !sol) return 0;
     if (inst->num_stations <= 0) return sol->segment_count == 0;
@@ -283,7 +283,7 @@ static int init_solution_has_valid_boundaries(const nn_instance_t *inst, const n
     return 1;
 }
 
-static int init_solution_is_capacity_feasible(const nn_solution_t *sol, double capacity)
+static int segment_solution_is_capacity_feasible(const nn_solution_t *sol, double capacity)
 {
     if (!sol) return 0;
     return segments_within_capacity(sol->segment_catches, sol->segment_count, capacity);
@@ -344,7 +344,7 @@ typedef struct {
     waypoint_cache_t *cache;
     int *leg_query_count;
     int *total_waypoint_ids;
-} init_waypoint_lookup_ctx_t;
+} segment_waypoint_lookup_ctx_t;
 
 static void waypoint_cache_destroy(waypoint_cache_t *cache) {
     if (!cache) return;
@@ -566,7 +566,7 @@ static int lookup_waypoint_path_json_cb(const void *ctx,
                                         int to_loc_id,
                                         int **out_ids,
                                         int *out_count) {
-    const init_waypoint_lookup_ctx_t *lookup_ctx = (const init_waypoint_lookup_ctx_t*)ctx;
+    const segment_waypoint_lookup_ctx_t *lookup_ctx = (const segment_waypoint_lookup_ctx_t*)ctx;
     const waypoint_cache_entry_t *entry;
     int is_reverse = 0;
     int *ids = NULL;
@@ -598,7 +598,7 @@ static int lookup_waypoint_path_json_cb(const void *ctx,
     return 1;
 }
 
-static int init_leg_is_station_haul(const nn_instance_t *inst, int from_loc_id, int to_loc_id) {
+static int segment_leg_is_station_haul(const nn_instance_t *inst, int from_loc_id, int to_loc_id) {
     if (!inst) return 0;
     for (int i = 0; i < inst->num_stations + inst->num_ports; i++) {
         const nn_node_t *node = &inst->nodes[i];
@@ -611,7 +611,7 @@ static int init_leg_is_station_haul(const nn_instance_t *inst, int from_loc_id, 
     return 0;
 }
 
-static double init_distance_or_zero(const nn_instance_t *inst, int from_loc_id, int to_loc_id) {
+static double segment_distance_or_zero(const nn_instance_t *inst, int from_loc_id, int to_loc_id) {
     if (!inst || !inst->distances) return 0.0;
     if (from_loc_id == to_loc_id) return 0.0;
     if (from_loc_id < 0 || from_loc_id >= inst->max_loc_id) return 0.0;
@@ -620,14 +620,14 @@ static double init_distance_or_zero(const nn_instance_t *inst, int from_loc_id, 
         inst->distances[from_loc_id][to_loc_id] : 0.0;
 }
 
-static void init_accumulate_leg_distance(const nn_instance_t *inst,
-                                         int from_loc_id,
-                                         int to_loc_id,
-                                         gsp_distance_breakdown_t *breakdown) {
+static void segment_accumulate_leg_distance(const nn_instance_t *inst,
+                                            int from_loc_id,
+                                            int to_loc_id,
+                                            gsp_distance_breakdown_t *breakdown) {
     double d;
     if (!breakdown) return;
-    d = init_distance_or_zero(inst, from_loc_id, to_loc_id);
-    if (init_leg_is_station_haul(inst, from_loc_id, to_loc_id)) {
+    d = segment_distance_or_zero(inst, from_loc_id, to_loc_id);
+    if (segment_leg_is_station_haul(inst, from_loc_id, to_loc_id)) {
         breakdown->haul_distance_nm += d;
     } else {
         breakdown->transit_distance_nm += d;
@@ -635,23 +635,23 @@ static void init_accumulate_leg_distance(const nn_instance_t *inst,
     breakdown->total_distance_nm += d;
 }
 
-static void init_compute_segment_breakdowns(const nn_instance_t *inst,
-                                            const nn_solution_t *sol,
-                                            int boat_start_loc_id,
-                                            int boat_end_loc_id,
-                                            gsp_distance_breakdown_t *segment_breakdowns,
-                                            gsp_distance_breakdown_t *total_breakdown) {
+static void segment_compute_segment_breakdowns(const nn_instance_t *inst,
+                                               const nn_solution_t *sol,
+                                               int boat_start_loc_id,
+                                               int boat_end_loc_id,
+                                               gsp_distance_breakdown_t *segment_breakdowns,
+                                               gsp_distance_breakdown_t *total_breakdown) {
     if (!inst || !sol || !segment_breakdowns || !total_breakdown) return;
     memset(total_breakdown, 0, sizeof(*total_breakdown));
     for (int s = 0; s < sol->segment_count; s++) {
         int prev_loc = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
         memset(&segment_breakdowns[s], 0, sizeof(segment_breakdowns[s]));
         for (int i = sol->segment_starts[s]; i <= sol->segment_ends[s]; i++) {
-            init_accumulate_leg_distance(inst, prev_loc, sol->tour[i], &segment_breakdowns[s]);
+            segment_accumulate_leg_distance(inst, prev_loc, sol->tour[i], &segment_breakdowns[s]);
             prev_loc = sol->tour[i];
         }
         if (s == sol->segment_count - 1 && prev_loc != boat_end_loc_id) {
-            init_accumulate_leg_distance(inst, prev_loc, boat_end_loc_id, &segment_breakdowns[s]);
+            segment_accumulate_leg_distance(inst, prev_loc, boat_end_loc_id, &segment_breakdowns[s]);
         }
         total_breakdown->transit_distance_nm += segment_breakdowns[s].transit_distance_nm;
         total_breakdown->haul_distance_nm += segment_breakdowns[s].haul_distance_nm;
@@ -671,7 +671,7 @@ static void write_solution_section(FILE *fp, const char *label,
 {
     gsp_distance_breakdown_t *segment_breakdowns = NULL;
     gsp_distance_breakdown_t total_breakdown;
-    init_waypoint_lookup_ctx_t lookup_ctx;
+    segment_waypoint_lookup_ctx_t lookup_ctx;
 
     if (!fp || !inst || !sol || !cache) return;
     (void)segment_distances_include_return;
@@ -682,8 +682,8 @@ static void write_solution_section(FILE *fp, const char *label,
         fprintf(stderr, "ERROR: Failed to allocate segment distance breakdowns\n");
         return;
     }
-    init_compute_segment_breakdowns(inst, sol, boat_start_loc_id, boat_end_loc_id,
-                                    segment_breakdowns, &total_breakdown);
+    segment_compute_segment_breakdowns(inst, sol, boat_start_loc_id, boat_end_loc_id,
+                                       segment_breakdowns, &total_breakdown);
     lookup_ctx.cache = cache;
     lookup_ctx.leg_query_count = leg_query_count;
     lookup_ctx.total_waypoint_ids = total_waypoint_ids;
@@ -800,7 +800,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
 
     fprintf(fp, "  \"solution\": {\n");
     if (has_presolve) {
-        int before_feasible = init_solution_is_capacity_feasible(pre_capacity_sol, boat_capacity) &&
+        int before_feasible = segment_solution_is_capacity_feasible(pre_capacity_sol, boat_capacity) &&
                               stations_are_unique_and_complete(pre_capacity_sol->visit_station_ids,
                                                                pre_capacity_sol->visit_station_count,
                                                                inst->num_stations);
@@ -811,7 +811,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         fprintf(fp, ",\n");
     }
     if (has_pre_local_postopt) {
-        int pre_local_postopt_feasible = init_solution_is_capacity_feasible(pre_local_postopt_sol, boat_capacity) &&
+        int pre_local_postopt_feasible = segment_solution_is_capacity_feasible(pre_local_postopt_sol, boat_capacity) &&
                                          stations_are_unique_and_complete(pre_local_postopt_sol->visit_station_ids,
                                                                           pre_local_postopt_sol->visit_station_count,
                                                                           inst->num_stations);
@@ -1123,21 +1123,21 @@ static int run_segment_postopt(const char *config,
                                int *out_local_postopt_segment_solve_count,
                                gsp_mip_solve_detail_t **out_local_postopt_details,
                                int *out_local_postopt_detail_count) {
-    double mip_time_limit_seconds = read_init_mip_time_limit_from_yaml(config);
-    double init_haul_distance_scale = read_init_haul_distance_scale_from_yaml(config);
+    double mip_time_limit_seconds = read_segment_mip_time_limit_from_yaml(config);
+    double segment_haul_distance_scale = read_segment_haul_distance_scale_from_yaml(config);
 
-    if (!init_copy_solution(sol, pre_local_postopt_sol)) {
+    if (!segment_copy_solution(sol, pre_local_postopt_sol)) {
         return 0;
     }
-    if (!init_apply_local_postopt(inst, pre_local_postopt_sol,
-                                  boat_start_loc_id, boat_end_loc_id,
-                                  mip_time_limit_seconds,
-                                  init_haul_distance_scale,
-                                  sol,
-                                  out_local_postopt_runtime_seconds,
-                                  out_local_postopt_segment_solve_count,
-                                  out_local_postopt_details,
-                                  out_local_postopt_detail_count)) {
+    if (!segment_apply_local_postopt(inst, pre_local_postopt_sol,
+                                     boat_start_loc_id, boat_end_loc_id,
+                                     mip_time_limit_seconds,
+                                     segment_haul_distance_scale,
+                                     sol,
+                                     out_local_postopt_runtime_seconds,
+                                     out_local_postopt_segment_solve_count,
+                                     out_local_postopt_details,
+                                     out_local_postopt_detail_count)) {
         return 0;
     }
 
@@ -1325,7 +1325,7 @@ int mode_construction(int argc, char **argv) {
 
     int is_feasible = 0;
     int stations_ok = stations_are_unique_and_complete(sol.visit_station_ids, sol.visit_station_count, inst.num_stations);
-    int boundaries_ok = init_solution_has_valid_boundaries(&inst, &sol);
+    int boundaries_ok = segment_solution_has_valid_boundaries(&inst, &sol);
     if (!construction_output) {
         int capacity_ok = segments_within_capacity(sol.segment_catches, sol.segment_count, boat_capacity);
         is_feasible = capacity_ok && stations_ok && boundaries_ok;
@@ -1374,9 +1374,9 @@ int mode_construction(int argc, char **argv) {
 
     /* Cleanup */
     sqlite3_close(db);
-    init_free_solution(&sol);
-    init_free_solution(&pre_capacity_sol);
-    init_free_solution(&pre_local_postopt_sol);
+    segment_free_solution(&sol);
+    segment_free_solution(&pre_capacity_sol);
+    segment_free_solution(&pre_local_postopt_sol);
     free(local_postopt_details);
     free(inst.nodes);
     for (int i = 0; i < inst.max_loc_id; i++) {
