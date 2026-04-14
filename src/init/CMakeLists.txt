@@ -1,4 +1,4 @@
-add_executable(gsp_init_from_order
+add_executable(gsp_segment_from_construction
     segment_from_order.c
     segment_postopt.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/feasibility.c
@@ -7,26 +7,26 @@ add_executable(gsp_init_from_order
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/sql_utils.c
 )
 
-set_target_properties(gsp_init_from_order PROPERTIES
+set_target_properties(gsp_segment_from_construction PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-target_link_libraries(gsp_init_from_order
+target_link_libraries(gsp_segment_from_construction
     ${SQLITE3_LIBRARIES}
     m
 )
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
-    target_include_directories(gsp_init_from_order PRIVATE
+    target_include_directories(gsp_segment_from_construction PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../mip/include
         ${GUROBI_INCLUDE_DIR}
     )
-    target_compile_definitions(gsp_init_from_order PRIVATE HAVE_GUROBI=1)
-    target_sources(gsp_init_from_order PRIVATE
+    target_compile_definitions(gsp_segment_from_construction PRIVATE HAVE_GUROBI=1)
+    target_sources(gsp_segment_from_construction PRIVATE
         ${GSP_MIP_ENDPAIRED_SOURCE}
         ${GSP_MIP_SHARED_SOURCES}
     )
-    target_link_libraries(gsp_init_from_order
+    target_link_libraries(gsp_segment_from_construction
         -L${GUROBI_LIBRARY_DIR}
         gurobi130
     )
@@ -122,57 +122,57 @@ else()
 endif()
 
 if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
-    add_custom_target(run_init_nn
-        COMMAND gsp_gurobi --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/init.json --config ${CONFIG_YAML}
+    add_custom_target(run_construction_nn
+        COMMAND gsp_gurobi --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp_gurobi
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        COMMENT "Phase 0: NN (Nearest Neighbor)"
+        COMMENT "Construction: NN (Nearest Neighbor)"
     )
 
-    add_custom_target(run_init_ge
-        COMMAND gsp_gurobi --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/init.json --config ${CONFIG_YAML}
+    add_custom_target(run_construction_ge
+        COMMAND gsp_gurobi --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp_gurobi
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        COMMENT "Phase 0: GE (Greedy Edge)"
+        COMMENT "Construction: GE (Greedy Edge)"
     )
 
-    add_custom_target(run_init_ci
-        COMMAND gsp_gurobi --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/init.json --config ${CONFIG_YAML}
+    add_custom_target(run_construction_ci
+        COMMAND gsp_gurobi --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp_gurobi
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        COMMENT "Phase 0: CI (Cheapest Insertion)"
+        COMMENT "Construction: CI (Cheapest Insertion)"
     )
 else()
-    add_custom_target(run_init_nn
-        COMMAND gsp --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/init.json --config ${CONFIG_YAML}
+    add_custom_target(run_construction_nn
+        COMMAND gsp --mode init --strategy nn --database ${DATABASE} --output ${SOL_NN_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        COMMENT "Phase 0: NN (Nearest Neighbor)"
+        COMMENT "Construction: NN (Nearest Neighbor)"
     )
 
-    add_custom_target(run_init_ge
-        COMMAND gsp --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/init.json --config ${CONFIG_YAML}
+    add_custom_target(run_construction_ge
+        COMMAND gsp --mode init --strategy ge --database ${DATABASE} --output ${SOL_GE_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        COMMENT "Phase 0: GE (Greedy Edge)"
+        COMMENT "Construction: GE (Greedy Edge)"
     )
 
-    add_custom_target(run_init_ci
-        COMMAND gsp --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/init.json --config ${CONFIG_YAML}
+    add_custom_target(run_construction_ci
+        COMMAND gsp --mode init --strategy ci --database ${DATABASE} --output ${SOL_CI_DIR}/construction.json --config ${CONFIG_YAML}
         DEPENDS gsp
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        COMMENT "Phase 0: CI (Cheapest Insertion)"
+        COMMENT "Construction: CI (Cheapest Insertion)"
     )
 endif()
 
-add_custom_target(run_init_from_order
-    COMMAND $<TARGET_FILE:gsp_init_from_order> --database ${DATABASE} --config ${CONFIG_YAML} --input ${SOL_NOPORT_DIR}/construction.json --output ${SOL_NOPORT_DIR}/segment.json
-    DEPENDS gsp_init_from_order
+add_custom_target(run_segment_from_construction
+    COMMAND $<TARGET_FILE:gsp_segment_from_construction> --database ${DATABASE} --config ${CONFIG_YAML} --input ${SOL_NOPORT_DIR}/construction.json --output ${SOL_NOPORT_DIR}/segment.json
+    DEPENDS gsp_segment_from_construction
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Phase 0: initialization from ordered input"
+    COMMENT "Segment: build a segmented baseline from construction input"
 )
 
-add_custom_target(run_init_noport
-    DEPENDS run_noport run_init_from_order
-    COMMENT "Phase 0: no-port initialization"
+add_custom_target(run_segment_noport
+    DEPENDS run_noport run_segment_from_construction
+    COMMENT "Construction + segment: no-port route initialization"
 )

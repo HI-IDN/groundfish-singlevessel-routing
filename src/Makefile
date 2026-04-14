@@ -126,7 +126,7 @@ noport: ../sol/noport/construction.json
 ../sol/noport/segment.json: ../sol/noport/construction.json
 	@mkdir -p ../sol/noport
 	@echo "Generating segment from ordered input -> $@"
-	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_init_from_order --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/noport/construction.json" --output "../sol/noport/segment.json"'
+	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_segment_from_construction --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/noport/construction.json" --output "../sol/noport/segment.json"'
 
 define construction_rule
 ../sol/$(1)/construction.json: $(COUNTRY_DB)
@@ -139,7 +139,7 @@ define segment_from_construction_rule
 ../sol/$(1)/segment.json: ../sol/$(1)/construction.json
 	@mkdir -p ../sol/$(1)
 	@echo "Generating $(2) segment from construction -> $$@"
-	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_init_from_order --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/construction.json" --output "../sol/$(1)/segment.json" --strategy $(1)'
+	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_segment_from_construction --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/construction.json" --output "../sol/$(1)/segment.json" --strategy $(1)'
 endef
 
 define refinement_rule

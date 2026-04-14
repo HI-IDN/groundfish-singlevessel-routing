@@ -50,7 +50,7 @@ Current Executables And Entry Points
   non-Gurobi build of the main construction / refinement entrypoint
 - `gsp_gurobi`
   Gurobi-enabled build of the main construction / refinement entrypoint
-- `gsp_init_from_order`
+- `gsp_segment_from_construction`
   converts an ordered route, such as `construction.json`, into `segment.json`
 - `gsp_noport`
   standalone no-port ordering executable

@@ -123,7 +123,7 @@ install(TARGETS
     gsp_stations
     gsp_distances
     gsp_prepare_routing_data
-    gsp_init_from_order
+    gsp_segment_from_construction
     RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../bin
 )
 
