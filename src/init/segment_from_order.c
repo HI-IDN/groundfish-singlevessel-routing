@@ -942,7 +942,7 @@ static int segment_from_order(const nn_instance_t *inst,
     if (!tour) return -1;
 
     for (int ord = 0; ord < station_order_n; ord++) {
-        int station_id = station_order[ord];
+        int station_id = abs(station_order[ord]);   /* strip orientation sign */
         int station_idx = find_station_idx_by_table_id(inst, station_id);
         int station_amount;
         int stat_entry = -1;
