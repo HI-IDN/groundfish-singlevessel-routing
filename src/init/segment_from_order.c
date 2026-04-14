@@ -474,7 +474,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         double solution_runtime_trajectory[2];
         int distance_count = 0;
         int runtime_count = 0;
-        gsp_summary_json_t summary = {0};
+        gsp_summary_json_t summary;
         if (has_pre_local_postopt) {
             distance_trajectory[distance_count++] = pre_local_postopt_sol->total_distance;
         }
@@ -482,27 +482,32 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         solution_runtime_trajectory[runtime_count++] = solve_runtime_seconds;
         solution_runtime_trajectory[runtime_count++] = local_postopt_runtime_seconds;
 
-        summary.final_name = final_variant_name;
-        summary.stage_name = "segment_complete";
-        summary.feasible = is_feasible;
-        summary.method_name = method_name ? method_name : "unknown";
-        summary.has_baseline = has_pre_local_postopt;
-        summary.baseline_distance_nm = has_pre_local_postopt ? pre_local_postopt_sol->total_distance : 0.0;
-        summary.distance_trajectory_nm = distance_trajectory;
-        summary.distance_trajectory_count = distance_count;
-        summary.final_distance_nm = sol->total_distance;
-        summary.preprocessing_seconds = preprocessing_seconds;
-        summary.solution_runtime_seconds = solution_runtime_trajectory;
-        summary.solution_runtime_count = runtime_count;
-        summary.postprocessing_seconds = 0.0;
-        summary.grandtotal_seconds = preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds;
-        summary.include_runtime = 1;
-        summary.include_mip = 1;
-        summary.mip_solve_count = local_postopt_detail_count;
-        summary.mip_runtime_mean = mip_runtime_mean;
-        summary.mip_runtime_max = mip_runtime_max;
-        summary.mip_gap_mean = mip_gap_mean;
-        summary.mip_gap_max = mip_gap_max;
+        gsp_summary_reset(&summary);
+        gsp_summary_set_status_and_distance(
+            &summary,
+            final_variant_name,
+            "segment_complete",
+            is_feasible,
+            method_name ? method_name : "unknown",
+            has_pre_local_postopt,
+            has_pre_local_postopt ? pre_local_postopt_sol->total_distance : 0.0,
+            distance_trajectory,
+            distance_count,
+            sol->total_distance);
+        gsp_summary_set_runtime(
+            &summary,
+            preprocessing_seconds,
+            solution_runtime_trajectory,
+            runtime_count,
+            0.0,
+            preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds);
+        gsp_summary_set_mip(
+            &summary,
+            local_postopt_detail_count,
+            mip_runtime_mean,
+            mip_runtime_max,
+            mip_gap_mean,
+            mip_gap_max);
         gsp_write_summary_json(fp, "  ", &summary, 0);
     }
     fprintf(fp, "}\n");

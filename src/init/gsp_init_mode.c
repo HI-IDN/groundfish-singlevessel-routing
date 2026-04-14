@@ -846,7 +846,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         double total_runtime_seconds =
             preprocessing_seconds + solve_runtime_seconds + local_postopt_runtime_seconds +
             check_runtime_seconds + postprocessing_seconds;
-        gsp_summary_json_t summary = {0};
+        gsp_summary_json_t summary;
 
         if (has_presolve) {
             distance_trajectory[distance_count++] = pre_capacity_sol->total_distance;
@@ -860,27 +860,32 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
             solution_runtime_trajectory[runtime_count++] = local_postopt_runtime_seconds;
         }
 
-        summary.final_name = final_variant_name;
-        summary.stage_name = "segment_complete";
-        summary.feasible = is_feasible;
-        summary.method_name = method_name ? method_name : "unknown";
-        summary.has_baseline = has_pre_local_postopt;
-        summary.baseline_distance_nm = has_pre_local_postopt ? pre_local_postopt_sol->total_distance : 0.0;
-        summary.distance_trajectory_nm = distance_trajectory;
-        summary.distance_trajectory_count = distance_count;
-        summary.final_distance_nm = sol->total_distance;
-        summary.preprocessing_seconds = preprocessing_seconds;
-        summary.solution_runtime_seconds = solution_runtime_trajectory;
-        summary.solution_runtime_count = runtime_count;
-        summary.postprocessing_seconds = postprocessing_seconds;
-        summary.grandtotal_seconds = total_runtime_seconds;
-        summary.include_runtime = 1;
-        summary.include_mip = 1;
-        summary.mip_solve_count = local_postopt_detail_count;
-        summary.mip_runtime_mean = mip_runtime_mean;
-        summary.mip_runtime_max = mip_runtime_max;
-        summary.mip_gap_mean = mip_gap_mean;
-        summary.mip_gap_max = mip_gap_max;
+        gsp_summary_reset(&summary);
+        gsp_summary_set_status_and_distance(
+            &summary,
+            final_variant_name,
+            "segment_complete",
+            is_feasible,
+            method_name ? method_name : "unknown",
+            has_pre_local_postopt,
+            has_pre_local_postopt ? pre_local_postopt_sol->total_distance : 0.0,
+            distance_trajectory,
+            distance_count,
+            sol->total_distance);
+        gsp_summary_set_runtime(
+            &summary,
+            preprocessing_seconds,
+            solution_runtime_trajectory,
+            runtime_count,
+            postprocessing_seconds,
+            total_runtime_seconds);
+        gsp_summary_set_mip(
+            &summary,
+            local_postopt_detail_count,
+            mip_runtime_mean,
+            mip_runtime_max,
+            mip_gap_mean,
+            mip_gap_max);
         gsp_write_summary_json(fp, "  ", &summary, 0);
     }
 
@@ -967,26 +972,30 @@ static void write_construction_json(sqlite3 *db, const char *output_path, const 
         double distance_trajectory[1];
         double solution_runtime_trajectory[1];
         double postprocessing_seconds = elapsed_seconds(t_output_start, t_output_expand_end);
-        gsp_summary_json_t summary = {0};
+        gsp_summary_json_t summary;
 
         distance_trajectory[0] = sol->total_distance;
         solution_runtime_trajectory[0] = solve_runtime_seconds;
 
-        summary.final_name = "construction";
-        summary.stage_name = "construction_complete";
-        summary.feasible = 0;
-        summary.method_name = method_name ? method_name : "unknown";
-        summary.has_baseline = 0;
-        summary.distance_trajectory_nm = distance_trajectory;
-        summary.distance_trajectory_count = 1;
-        summary.final_distance_nm = sol->total_distance;
-        summary.preprocessing_seconds = preprocessing_seconds;
-        summary.solution_runtime_seconds = solution_runtime_trajectory;
-        summary.solution_runtime_count = 1;
-        summary.postprocessing_seconds = postprocessing_seconds;
-        summary.grandtotal_seconds = preprocessing_seconds + solve_runtime_seconds + postprocessing_seconds;
-        summary.include_runtime = 1;
-        summary.include_mip = 0;
+        gsp_summary_reset(&summary);
+        gsp_summary_set_status_and_distance(
+            &summary,
+            "construction",
+            "construction_complete",
+            0,
+            method_name ? method_name : "unknown",
+            0,
+            0.0,
+            distance_trajectory,
+            1,
+            sol->total_distance);
+        gsp_summary_set_runtime(
+            &summary,
+            preprocessing_seconds,
+            solution_runtime_trajectory,
+            1,
+            postprocessing_seconds,
+            preprocessing_seconds + solve_runtime_seconds + postprocessing_seconds);
         gsp_write_summary_json(fp, "  ", &summary, 0);
     }
 
@@ -1057,20 +1066,20 @@ static void write_metadata_only_json(const char *output_path,
 
     {
         double zero = 0.0;
-        gsp_summary_json_t summary = {0};
-        summary.final_name = "capacity-feasible";
-        summary.stage_name = "debug_metadata_only";
-        summary.feasible = 0;
-        summary.method_name = "none";
-        summary.distance_trajectory_nm = &zero;
-        summary.distance_trajectory_count = 1;
-        summary.final_distance_nm = 0.0;
-        summary.preprocessing_seconds = 0.0;
-        summary.solution_runtime_seconds = &zero;
-        summary.solution_runtime_count = 1;
-        summary.postprocessing_seconds = 0.0;
-        summary.grandtotal_seconds = 0.0;
-        summary.include_runtime = 1;
+        gsp_summary_json_t summary;
+        gsp_summary_reset(&summary);
+        gsp_summary_set_status_and_distance(
+            &summary,
+            "capacity-feasible",
+            "debug_metadata_only",
+            0,
+            "none",
+            0,
+            0.0,
+            &zero,
+            1,
+            0.0);
+        gsp_summary_set_runtime(&summary, 0.0, &zero, 1, 0.0, 0.0);
         gsp_write_summary_json(fp, "  ", &summary, 0);
     }
     fprintf(fp, "}\n");

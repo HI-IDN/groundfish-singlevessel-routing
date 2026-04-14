@@ -60,6 +60,30 @@ typedef struct {
     double mip_gap_max;
 } gsp_summary_json_t;
 
+void gsp_summary_reset(gsp_summary_json_t *summary);
+void gsp_summary_set_status_and_distance(gsp_summary_json_t *summary,
+                                         const char *final_name,
+                                         const char *stage_name,
+                                         int feasible,
+                                         const char *method_name,
+                                         int has_baseline,
+                                         double baseline_distance_nm,
+                                         const double *distance_trajectory_nm,
+                                         int distance_trajectory_count,
+                                         double final_distance_nm);
+void gsp_summary_set_runtime(gsp_summary_json_t *summary,
+                             double preprocessing_seconds,
+                             const double *solution_runtime_seconds,
+                             int solution_runtime_count,
+                             double postprocessing_seconds,
+                             double grandtotal_seconds);
+void gsp_summary_set_mip(gsp_summary_json_t *summary,
+                         int solve_count,
+                         double runtime_mean,
+                         double runtime_max,
+                         double gap_mean,
+                         double gap_max);
+
 typedef void (*gsp_json_extra_writer_fn)(FILE *fp, const char *indent, const void *ctx);
 
 typedef struct {

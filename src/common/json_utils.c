@@ -1,5 +1,6 @@
 #include "../include/json_utils.h"
 
+#include <string.h>
 #include <stdlib.h>
 #include <time.h>
 
@@ -56,6 +57,63 @@ static int append_unique_int_local_json(int **arr, int *n, int *cap, int v) {
         if ((*arr)[i] == v) return 1;
     }
     return append_int_local_json(arr, n, cap, v);
+}
+
+void gsp_summary_reset(gsp_summary_json_t *summary) {
+    if (!summary) return;
+    memset(summary, 0, sizeof(*summary));
+}
+
+void gsp_summary_set_status_and_distance(gsp_summary_json_t *summary,
+                                         const char *final_name,
+                                         const char *stage_name,
+                                         int feasible,
+                                         const char *method_name,
+                                         int has_baseline,
+                                         double baseline_distance_nm,
+                                         const double *distance_trajectory_nm,
+                                         int distance_trajectory_count,
+                                         double final_distance_nm) {
+    if (!summary) return;
+    summary->final_name = final_name;
+    summary->stage_name = stage_name;
+    summary->feasible = feasible;
+    summary->method_name = method_name;
+    summary->has_baseline = has_baseline;
+    summary->baseline_distance_nm = baseline_distance_nm;
+    summary->distance_trajectory_nm = distance_trajectory_nm;
+    summary->distance_trajectory_count = distance_trajectory_count;
+    summary->final_distance_nm = final_distance_nm;
+}
+
+void gsp_summary_set_runtime(gsp_summary_json_t *summary,
+                             double preprocessing_seconds,
+                             const double *solution_runtime_seconds,
+                             int solution_runtime_count,
+                             double postprocessing_seconds,
+                             double grandtotal_seconds) {
+    if (!summary) return;
+    summary->preprocessing_seconds = preprocessing_seconds;
+    summary->solution_runtime_seconds = solution_runtime_seconds;
+    summary->solution_runtime_count = solution_runtime_count;
+    summary->postprocessing_seconds = postprocessing_seconds;
+    summary->grandtotal_seconds = grandtotal_seconds;
+    summary->include_runtime = 1;
+}
+
+void gsp_summary_set_mip(gsp_summary_json_t *summary,
+                         int solve_count,
+                         double runtime_mean,
+                         double runtime_max,
+                         double gap_mean,
+                         double gap_max) {
+    if (!summary) return;
+    summary->include_mip = 1;
+    summary->mip_solve_count = solve_count;
+    summary->mip_runtime_mean = runtime_mean;
+    summary->mip_runtime_max = runtime_max;
+    summary->mip_gap_mean = gap_mean;
+    summary->mip_gap_max = gap_max;
 }
 
 void gsp_write_solution_json(FILE *fp,

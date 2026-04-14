@@ -793,25 +793,29 @@ static int write_fixedport_json(sqlite3 *db,
     solution_view.feasible = feasible;
     gsp_write_solution_json(fp, "", &solution_view, 0);
     fprintf(fp, "  },\n");
-    summary.final_name = "fixedport-capacity-feasible";
-    summary.stage_name = "fixedport_complete";
-    summary.feasible = feasible;
-    summary.method_name = "fixedport";
-    summary.distance_trajectory_nm = &grand_total.total_distance_nm;
-    summary.distance_trajectory_count = 1;
-    summary.final_distance_nm = grand_total.total_distance_nm;
-    summary.preprocessing_seconds = preprocessing_seconds;
-    summary.solution_runtime_seconds = &solution->runtime_seconds;
-    summary.solution_runtime_count = 1;
-    summary.postprocessing_seconds = 0.0;
-    summary.grandtotal_seconds = total_runtime_seconds;
-    summary.include_runtime = 1;
-    summary.include_mip = 1;
-    summary.mip_solve_count = 1;
-    summary.mip_runtime_mean = solution->runtime_seconds;
-    summary.mip_runtime_max = solution->runtime_seconds;
-    summary.mip_gap_mean = solution->gap * 100.0;
-    summary.mip_gap_max = solution->gap * 100.0;
+    gsp_summary_reset(&summary);
+    gsp_summary_set_status_and_distance(&summary,
+                                        "fixedport-capacity-feasible",
+                                        "fixedport_complete",
+                                        feasible,
+                                        "fixedport",
+                                        0,
+                                        0.0,
+                                        &grand_total.total_distance_nm,
+                                        1,
+                                        grand_total.total_distance_nm);
+    gsp_summary_set_runtime(&summary,
+                            preprocessing_seconds,
+                            &solution->runtime_seconds,
+                            1,
+                            0.0,
+                            total_runtime_seconds);
+    gsp_summary_set_mip(&summary,
+                        1,
+                        solution->runtime_seconds,
+                        solution->runtime_seconds,
+                        solution->gap * 100.0,
+                        solution->gap * 100.0);
     gsp_write_summary_json(fp, "  ", &summary, 0);
     fprintf(fp, ",\n");
     {
