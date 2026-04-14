@@ -1855,7 +1855,7 @@ static void parse_sweep_args(int argc, char **argv,
     }
 }
 
-int mode_sweep(int argc, char **argv) {
+int mode_refinement(int argc, char **argv) {
     const char *strategy = NULL, *database = NULL, *config = NULL, *input = NULL, *output = NULL;
     int time_limit = 0, debug_mode = 0;
     sqlite3 *db = NULL;
@@ -1876,7 +1876,7 @@ int mode_sweep(int argc, char **argv) {
     double preprocessing_seconds = 0.0;
 
     printf("============================================================\n");
-    printf("GSP Solver - Phase 1: Sweep\n");
+    printf("GSP Solver - Refinement\n");
     printf("============================================================\n\n");
     parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output, &time_limit, &debug_mode);
     if (!strategy || !database || !config || !input || !output) {

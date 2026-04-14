@@ -1,15 +1,11 @@
-/* GSP Phase 0: Initialization Solver - Common Entry Point
+/* GSP Construction / Segment Solver - Common Entry Point
  *
- * This is the common entry point for all initialization strategies.
- * Currently implements: NN (Nearest Neighbor)
+ * This executable stage handles:
+ * 1. heuristic construction generation for nn / ge / ci
+ * 2. segment-local post-optimization when writing segment.json
  *
- * Responsibilities:
- * 1. Parse command-line arguments
- * 2. Load all stations and ports from database
- * 3. Load boat information (capacity, start/end locations)
- * 4. Pre-load distance matrix from database
- * 5. Call strategy-specific solver (e.g., nn_solve)
- * 6. Output results to JSON in survey format
+ * The same entry point is kept behind the historical CLI alias `--mode init`
+ * for compatibility while the workflow naming settles.
  */
 
 #include <stdio.h>
@@ -1174,9 +1170,9 @@ static void parse_args(int argc, char **argv,
 }
 
 /* Main entry point */
-int mode_init(int argc, char **argv) {
+int mode_construction(int argc, char **argv) {
     printf("============================================================\n");
-    printf("GSP Solver - Phase 0: Initialization\n");
+    printf("GSP Solver - Construction / Segment\n");
     printf("============================================================\n\n");
 
     struct timespec t_mode_start;
@@ -1187,7 +1183,7 @@ int mode_init(int argc, char **argv) {
 
     if (!strategy || !database || !config) {
         fprintf(stderr, "ERROR: Missing required arguments\n");
-        fprintf(stderr, "Usage: gsp --mode init --strategy nn --database <db> --config <yaml> --output <json>\n");
+        fprintf(stderr, "Usage: gsp --mode construction --strategy nn --database <db> --config <yaml> --output <json>\n");
         return 1;
     }
 
