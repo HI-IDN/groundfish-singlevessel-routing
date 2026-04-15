@@ -12,8 +12,7 @@ sol/
 ├── ci/          Cheapest-insertion initialization
 ├── noport/      No-port MIP presolve + init/sweep from that ordering
 ├── fixedport/   Fixed-port MIP solution
-├── survey/      Observed 2023 spring survey routes (one file per vessel)
-└── nz/          Reserved
+└── survey/      Observed 2023 spring survey routes (multivessel)
 ```
 
 ## File types
@@ -26,16 +25,14 @@ sol/
 
 Within each heuristic strategy directory (`nn/`, `ge/`, `ci/`, `noport/`):
 
-| File | Produced by |
-|------|-------------|
-| `init.json` | `make -C src init INIT=<strategy>` |
-| `sweep.json` | `make -C src sweep INIT=<strategy>` |
+| File                | Produced by                                  |
+|---------------------|----------------------------------------------|
+| `construction.json` | `make -C src construction METHOD=<strategy>` |
+| `segment.json`      | `make -C src segment METHOD=<strategy>`      |
+| `refinement.json`   | `make -C src refinement METHOD=<strategy>`   |
 
-`noport/` additionally contains `noport.json` from `make -C src noport`,
-and `fixedport/` contains `fixedport.json` from `make -C src fixedport`.
 
-`survey/` contains one `boat<N>.json` per vessel from `make -C src survey`,
-plus a combined multi-vessel plot (`multivessel.png`).
+`survey/` contains one `multivessel.json` from `make -C src survey`.
 
 ## Regenerating outputs
 

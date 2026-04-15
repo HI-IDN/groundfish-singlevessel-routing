@@ -18,7 +18,7 @@ that is useful for benchmarking more sophisticated construction strategies.
 ## Route Plotting
 
 <table><tr>
-<td align="center"><img src="construction.png" width="300"/><br><sub>Construction — nearest-neighbor ordering</sub></td>
+<td align="center"><img src="construction.png" width="300"/><br><sub>Construction — nearest-neighbor ordering — transit 5,013.40 nm · total 7,256.25 nm (capacity infeasible)</sub></td>
 <td align="center"><img src="segment.png" width="300"/><br><sub>Segment — transit 6,264.57 nm · total 8,507.42 nm</sub></td>
 <td align="center"><img src="refinement.png" width="300"/><br><sub>Refinement (matheuristic sweep, pass 4) — transit 5,932.39 nm · total 8,175.24 nm</sub></td>
 </tr></table>

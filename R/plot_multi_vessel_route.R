@@ -119,11 +119,11 @@ for (idx in seq_along(boats)) {
         segment = seg_idx,
         point_order = seq_len(n()),
         segment_key = sprintf("%s #%d", first_word(boat$boat_name), seg_idx),
-        segment_label = sprintf("%s #%d\n%.0f nm | %.0f nm | %d kg",
+        segment_label = sprintf("%s #%d\n%.0f nm | %.1f nm | %.0f t",
                                 first_word(boat$boat_name), seg_idx,
                                 segment_transit_distance[seg_idx],
                                 segment_distance[seg_idx],
-                                segment_catch[seg_idx]),
+                                segment_catch[seg_idx]/1e3),
         segment_color = segment_colors[seg_idx],
         base_color = base_color
       )
@@ -379,7 +379,6 @@ p <- base_coastline_plot(coastline) +
     y = NULL,
     caption = paste(
       "Each boat keeps one base color; segments fade lighter as the route progresses.",
-      sprintf("Source: %s", basename(input_file)),
       sep = "\n"
     )
   )
