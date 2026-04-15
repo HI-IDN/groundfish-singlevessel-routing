@@ -248,11 +248,11 @@ boat_label <- tibble(
     ref_y = coastline$lat
   ))
 
-segment_labels <- sprintf("#%d\n%.0f nm | %.0f nm | %d kg",
+segment_labels <- sprintf("#%d\n%.0f nm | %.0f nm | %.0f t",
                           seq_along(segment_distance),
                           segment_transit_distance,
                           segment_distance,
-                          segment_catch)
+                          segment_catch/1e3)
 
 p <- p +
   geom_path(
