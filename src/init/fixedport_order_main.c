@@ -940,10 +940,23 @@ int main(int argc, char **argv) {
     mip_instance.max_location_id = app.max_location_id;
     mip_params.time_limit_seconds = time_limit_seconds;
     mip_params.thread_count = thread_count;
-    mip_params.verbose = 0;
+    mip_params.verbose = 1;
     mip_params.exclude_haul_distance = !(haul_distance_scale > 0.0);
     mip_params.use_scaled_haul_distance = (haul_distance_scale > 0.0);
     mip_params.haul_distance_scale = (haul_distance_scale > 0.0) ? haul_distance_scale : 0.0;
+
+    printf("Fixedport MIP instance\n");
+    printf("  boat: %s (id=%d)\n", app.boat.name ? app.boat.name : "Unknown", app.boat.boat_id);
+    printf("  stations: %d\n", fixedport_station_count);
+    printf("  candidate ports: %d\n", candidate_port_count);
+    printf("  time limit: %s%.0f s\n",
+           (time_limit_seconds > 0.0) ? "" : "none ",
+           (time_limit_seconds > 0.0) ? time_limit_seconds : 0.0);
+    printf("  threads: %d\n", thread_count);
+    printf("  objective: %s\n", (haul_distance_scale > 0.0) ? "scaled_haul" : "transit");
+    if (haul_distance_scale > 0.0)
+        printf("  haul distance scale: %.8f\n", haul_distance_scale);
+    printf("Solving...\n");
 
     if (solve_mip_fixedport(&mip_instance, &mip_params, &mip_solution) != 0) {
         fprintf(stderr, "Fixedport solve failed: status=%d solver_error=%d\n", mip_solution.status, mip_solution.solver_error);
