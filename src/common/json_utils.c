@@ -150,7 +150,7 @@ void gsp_write_solution_json(FILE *fp,
     fprintf(fp, "],\n");
     if (view->extra_writer) {
         view->extra_writer(fp, base, view->extra_ctx);
-        fprintf(fp, "\n");
+        fprintf(fp, ",\n");
     }
     gsp_write_distance_nm_json(fp, child, view->segment_breakdowns, view->segment_count,
                                view->grand_total, 1);
