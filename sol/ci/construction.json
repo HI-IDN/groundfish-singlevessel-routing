@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "construction_1.0",
-    "timestamp": "1776191634",
+    "timestamp": "1776208217",
     "mode": "construction",
     "strategy": "ci",
     "boat_id": 2,
@@ -58,10 +58,10 @@
       "final": 7091.54
     },
     "runtime_seconds": {
-      "preprocessing": 0.978025,
-      "solution": [2.551217],
-      "postprocessing": 0.719260,
-      "grandtotal": 4.248502
+      "preprocessing": 0.489642,
+      "solution": [1.300197],
+      "postprocessing": 0.429275,
+      "grandtotal": 2.219114
     }
   }
 }
