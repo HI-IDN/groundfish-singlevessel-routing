@@ -45,6 +45,11 @@ survey <- tryCatch({
   stop(sprintf("Failed to parse JSON: %s", e$message), call. = FALSE)
 })
 
+if (is.null(survey$metadata) || is.null(survey$solution)) {
+  warning(sprintf("Skipping %s: not a single-vessel route JSON (no 'metadata'/'solution' keys).", survey_file), call. = FALSE)
+  quit(status = 0)
+}
+
 resolve_solution_block <- function(survey, variant_name) {
   variant_name <- tolower(variant_name)
   if (variant_name %in% c("final", "solution")) {
