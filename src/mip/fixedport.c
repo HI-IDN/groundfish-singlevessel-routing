@@ -302,6 +302,21 @@ int solve_mip_fixedport(const mip_fixedport_instance_t *instance,
     if (GRBgetintattr(model, GRB_INT_ATTR_STATUS, &status) != 0) status = 0;
     if (GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount) != 0) solcount = 0;
     if (GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME, &runtime) != 0) runtime = 0.0;
+
+    /* If we hit the time limit with no incumbent yet, remove the limit and
+     * keep solving until Gurobi finds at least one feasible solution. */
+    if (status == GRB_TIME_LIMIT && solcount == 0) {
+        if (local_params.verbose) {
+            printf("Time limit reached with no incumbent — continuing until first solution is found...\n");
+            fflush(stdout);
+        }
+        GRBsetdblparam(GRBgetenv(model), GRB_DBL_PAR_TIMELIMIT, GRB_INFINITY);
+        optimize_error = GRBoptimize(model);
+        if (GRBgetintattr(model, GRB_INT_ATTR_STATUS,   &status)   != 0) status   = 0;
+        if (GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount)  != 0) solcount = 0;
+        if (GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME,  &runtime)   != 0) runtime  = 0.0;
+    }
+
     if (GRBgetdblattr(model, GRB_DBL_ATTR_MIPGAP, &gap) != 0) gap = 0.0;
 
     solution->status = status;
