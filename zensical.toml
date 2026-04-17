@@ -1,0 +1,29 @@
+[project]
+site_name = "Groundfish Survey Routing"
+site_url = "https://hi-idn.github.io/groundfish-singlevessel-routing/"
+repo_url = "https://github.com/HI-IDN/groundfish-singlevessel-routing"
+docs_dir = "docs"
+site_dir = "site"
+nav = [
+  {"Home" = "index.md"},
+  {"Paper" = [
+    {"Abstract" = "01-abstract.md"},
+    {"Introduction" = "02-introduction.md"},
+    {"Groundfish Survey Problem" = "03-groundfish-problem.md"},
+    {"Capacity-Aware MIP" = "04-capacity-aware-mip.md"},
+    {"Matheuristic Framework" = "05-matheuristic.md"},
+    {"Experimental Setup" = "06-experimental-setup.md"},
+    {"Results" = "07-results.md"},
+    {"Discussion and Conclusions" = "08-discussion-and-conclusion.md"},
+    {"Single-Page Version" = "groundfish_survey_routing_scalable_matheuristic.md"}
+  ]}
+]
+
+[project.theme]
+features = [
+  "navigation.instant",
+  "navigation.sections",
+  "navigation.top",
+  "search.highlight",
+  "search.suggest"
+]

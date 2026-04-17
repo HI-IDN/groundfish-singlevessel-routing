@@ -1,0 +1,74 @@
+# `sweep`
+
+Refinement (matheuristic sweep) logic for the survey-routing workflow.
+
+This directory owns the phase that starts from an existing segmented baseline
+and improves it through repeated local boundary re-optimization.
+
+Main Component
+--------------
+
+```text
+sweep/
+`-- gsp_sweep_mode.c  entrypoint for matheuristic refinement
+```
+
+Role In The Workflow
+--------------------
+
+Refinement (matheuristic sweep) starts from an existing `segment.json` and explores improvements
+around
+adjacent segment boundaries. The high-level orchestration lives here:
+
+- choose which boundary neighborhood to examine
+- build the two-segment subproblem
+- call the exact MIP solver in `mip/`
+- accept or reject the incumbent improvement
+- emit JSON snapshots and run summaries
+
+This phase is reported as:
+
+- `mip.phase = "2seg"`
+
+Configuration
+-------------
+
+Refinement uses:
+
+- `gurobi.time_limit_seconds.2seg`
+- `gurobi.haul_distance_scale.2seg`
+- `sweep.max_iterations`
+
+`haul_distance_scale.2seg` controls how haul distance enters the boundary MIP objective:
+
+- `0.0`
+  removes haul distance from the refinement MIP objective
+- `1e-5`
+  keeps haul only as a weak tie-breaker
+- `1.0`
+  uses full haul distance
+
+The recommended setting for refinement is `1.0`, so accepted improvements are judged
+using the real haul-distance contribution in the local MIP objective.
+
+JSON Notes
+----------
+
+- `solution.init`
+  the starting segmented route loaded from the segment phase
+- `solution.pass1`, `solution.pass2`, ...
+  later accepted refinement states
+- `tour_segments_station_ids`
+  signed station visit order for each segment
+- `tour_segments_station_mutation_ids`
+  only the station changes relative to the previous refinement state
+- `mip`
+  refinement-level solve details and aggregate MIP reporting
+
+Boundary
+--------
+
+- `sweep/` decides which neighborhoods to explore and when to stop during refinement (matheuristic
+  sweep)
+- `mip/` solves the exact subproblems
+- JSON formatting and generic helpers should live in `common/`, not be duplicated here

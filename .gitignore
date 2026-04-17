@@ -94,14 +94,8 @@ env/
 *.tmp
 *.bak
 
-# Matplotlib config/cache (do not commit runtime files)
-mplconfig/
-.matplotlib/
-matplotlib/
-fontList.cache
-fontlist-v*.json
-tex.cache/
-
 # Derived files
-dat/parsed_data.sqlite
-sol/solutions.sqlite
+dat/gsp.db
+
+# Log files
+*.log

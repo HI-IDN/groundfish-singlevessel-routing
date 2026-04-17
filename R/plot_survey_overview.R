@@ -1,172 +1,114 @@
 #!/usr/bin/env Rscript
-# plot_stations.R (robust)
-# Reads parsed_data.sqlite and plots island boundary and arrows for stations
-# Writes PNG and (optionally) TikZ into Paper/figs
 
-suppressPackageStartupMessages({
-  require(DBI)
-  require(RSQLite)
-  require(ggplot2)
-  require(viridis)
-  require(dplyr)
-})
+required_packages <- c("tidyverse", "DBI", "RSQLite")
+args <- commandArgs(trailingOnly = TRUE)
+db_path <- if (length(args) >= 1) args[1] else "dat/gsp.db"
+output_file <- if (length(args) >= 2) args[2] else "dat/survey_overview.png"
 
-## Ensure default CRAN repo so install.packages() is non-interactive
-options(repos = c(CRAN = "https://cran.r-project.org"))
-
-# Try to ensure tikzDevice is available (non-interactive). If installation fails, we continue
-if (!requireNamespace("tikzDevice", quietly = TRUE)) {
-  message("Package 'tikzDevice' not installed. Attempting non-interactive install from CRAN...")
-  tryCatch({
-    install.packages("tikzDevice", repos = getOption("repos"), dependencies = TRUE)
-  }, error = function(e) {
-    message("Automatic installation of tikzDevice failed: ", conditionMessage(e))
-  })
-}
-has_tikz <- require(tikzDevice, quietly = TRUE)
-if (!has_tikz) message("tikzDevice not available; .tex output will be skipped.")
-
-# Detect database path: try a few likely locations depending on where script is run from
-possible_db_paths <- c("dat/parsed_data.sqlite", "Code/dat/parsed_data.sqlite", "../dat/parsed_data.sqlite")
-db_path <- NULL
-for (p in possible_db_paths) {
-  if (file.exists(p)) { db_path <- p; break }
-}
-if (is.null(db_path)) stop("Could not find parsed_data.sqlite in expected locations. Run the parser first or set db_path manually.")
-
-# Determine output directory: prefer repo-root Paper/figs, else try ../Paper/figs
-possible_outdirs <- c("Paper/figs", "../Paper/figs")
-out_dir <- NULL
-for (d in possible_outdirs) {
-  if (dir.exists(d)) { out_dir <- d; break }
-}
-if (is.null(out_dir)) {
-  # create the primary location (Paper/figs) relative to current working dir
-  out_dir <- "Paper/figs"
-  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-}
-png_out <- file.path(out_dir, "survey_overview.png")
-tex_out <- file.path(out_dir, "survey_overview.tikz")
-
-message("Using DB: ", db_path)
-message("Output dir: ", out_dir)
-
-con <- dbConnect(RSQLite::SQLite(), db_path)
-
-# Read island polygon (if present)
-island_df <- NULL
-if (dbExistsTable(con, "island")) {
-  island_df <- dbGetQuery(con, "SELECT lat, lon FROM island ORDER BY id ASC;")
-  if (nrow(island_df) == 0) island_df <- NULL
-}
-
-# Read v_locations and stations
-vloc <- dbGetQuery(con, "SELECT id, lat, lon, type FROM v_locations;")
-stations <- dbGetQuery(con, "SELECT id, ext_id, start_loc, end_loc, catch, c1, c2, c3, bottom_depth_cast, bottom_depth_haul, comment FROM stations;")
-
-# Read boats to identify special boat locations (start/end locs)
-boats <- NULL
-if (dbExistsTable(con, "boats")) {
-  boats <- dbGetQuery(con, "SELECT id, start_loc, end_loc, name FROM boats;")
+script_file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_dir <- if (length(script_file_arg) > 0) {
+  dirname(normalizePath(sub("^--file=", "", script_file_arg[1])))
 } else {
-  boats <- data.frame(id=integer(0), start_loc=integer(0), end_loc=integer(0), name=character(0), stringsAsFactors = FALSE)
+  "R"
 }
+source(file.path(script_dir, "plot_utils.R"))
 
-dbDisconnect(con)
+load_required_packages(required_packages)
 
-if (nrow(stations) == 0) stop("No stations found in DB.")
+cat("=== Survey Overview Plotter ===\n\n")
 
-vl <- as.data.frame(vloc)
-st <- as.data.frame(stations)
+cat("Loading coastline data...\n")
+coastline <- read_db_table(db_path, "SELECT lat, lon FROM coastline")
 
-# Prepare markers for ports and a special boat named exactly "Árni Friðriksson"
-special_boat_name <- "Árni Friðriksson"
-special_locs <- integer(0)
-if (!is.null(boats) && nrow(boats) > 0) {
-  special <- boats[!is.na(boats$name) & boats$name == special_boat_name, , drop = FALSE]
-  if (nrow(special) > 0) special_locs <- unique(c(special$start_loc, special$end_loc))
-}
+cat("\nPlotting coastline...\n")
+p <- base_coastline_plot(coastline)
 
-# markers: all ports + any special boat locations
-markers <- vl %>% filter(type == 'P' | id %in% special_locs)
-markers$marker_fill <- ifelse(markers$id %in% special_locs, "black", "white")
-# marker stroke color
-markers$stroke_col <- "black"
+cat("\nLoading locations...\n")
+locations <- read_db_table(
+  db_path,
+  "SELECT p.name, l.lat, l.lon, 'Port' as type
+   FROM ports p
+   INNER JOIN locations l ON p.location_id = l.id
+   UNION ALL
+   SELECT b.name, l.lat, l.lon, 'Boat' as type
+   FROM boats b
+   INNER JOIN locations l ON b.location_id = l.id
+   ORDER BY type DESC"
+)
 
-st2 <- st %>%
-  left_join(vl %>% select(id, lat, lon), by = c("start_loc" = "id")) %>%
-  rename(start_lat = lat, start_lon = lon) %>%
-  left_join(vl %>% select(id, lat, lon), by = c("end_loc" = "id")) %>%
-  rename(end_lat = lat, end_lon = lon)
+cat("\nLoading trawl station locations...\n")
+stations <- read_db_table(
+  db_path,
+  "SELECT s.id, s.amount,
+          start.lat as start_lat, start.lon as start_lon,
+          end.lat as end_lat, end.lon as end_lon
+   FROM stations s
+   INNER JOIN locations start ON s.start_location_id = start.id
+   INNER JOIN locations end ON s.end_location_id = end.id
+   ORDER BY s.id"
+)
 
-# Drop rows with missing coords
-st2 <- st2 %>% filter(!is.na(start_lat) & !is.na(end_lat))
+cat("\nCreating final overview plot...\n")
+final_plot <- p +
+  geom_segment(
+    data = stations,
+    aes(
+      x = start_lon,
+      y = start_lat,
+      xend = end_lon,
+      yend = end_lat,
+      color = log10(amount + 1)
+    ),
+    arrow = grid::arrow(length = grid::unit(0.05, "cm")),
+    lineend = "round",
+    linewidth = 0.6,
+    inherit.aes = FALSE
+  ) +
+  scale_colour_gradientn(
+    colours = rev(rainbow(7)),
+    name = "Catch amount\n(log10 scale)",
+    na.value = "grey50",
+    guide = "colourbar"
+  ) +
+  geom_point(
+    data = locations,
+    aes(x = lon, y = lat, shape = type),
+    size = 3,
+    inherit.aes = FALSE
+  ) +
+  scale_shape_manual(
+    values = c("Port" = 1, "Boat" = 16),
+    name = "Locations"
+  ) +
+  labs(
+    title = "Iceland Groundfish Survey Overview",
+    subtitle = sprintf(
+      "Coastline, Ports (%d), Boats (%d), and Trawl Stations (%d)",
+      nrow(filter(locations, type == "Port")),
+      nrow(filter(locations, type == "Boat")),
+      nrow(stations)
+    ),
+    x = NULL,
+    y = NULL
+  ) +
+  coord_fixed_for_lat(c(stations$start_lat, stations$end_lat), fallback_lat = 65.0)
 
-# compute alpha from catch to emphasize high-catch stations
-st2$catch_num <- as.numeric(st2$catch)
-maxc <- max(st2$catch_num, na.rm = TRUE)
-if (is.finite(maxc) && maxc > 0) {
-  st2$alpha <- 0.2 + 0.8 * (sqrt(pmax(0, st2$catch_num)) / sqrt(maxc))
-} else {
-  st2$alpha <- 0.5
-}
+final_plot <- apply_degree_axes(final_plot)
+final_plot <- final_plot + gsp_common_theme(
+  legend_position = "bottom",
+  legend_direction = "horizontal"
+)
 
-## Use continuous numeric catch for coloring (no binning
-#  Map lower catches to blue and higher to red.
-st2$catch_num <- as.numeric(st2$catch)
+cat(sprintf("\nSaving plot to %s...\n", output_file))
 
-# Build plot
-p <- ggplot()
-if (!is.null(island_df)) {
-  p <- p + geom_path(data = island_df, aes(x = lon, y = lat), color = "gray40", size = 0.4)
-}
+ggsave(
+  filename = output_file,
+  plot = final_plot,
+  width = 8,
+  height = 6,
+  dpi = 300,
+  bg = "white"
+)
 
-# arrows from start->end, color by numeric catch (blue -> red)
-p <- p + geom_segment(data = st2,
-                      aes(x = start_lon, y = start_lat, xend = end_lon, yend = end_lat, color = catch_num, alpha = alpha),
-                      arrow = grid::arrow(length = unit(0.15, "cm")), lineend = "round",
-                      size = 0.6)
-
-# Continuous color scale: blue (low) -> red (high)
-p <- p + scale_color_gradient(low = "#2b83ba", high = "#d7191c", name = "Catch")
-p <- p + scale_alpha_identity(guide = "none")
-
-## Plot ports first (white-filled), then the special boat locations on top (black-filled)
-ports_df <- markers %>% filter(!(id %in% special_locs))
-boats_df <- markers %>% filter(id %in% special_locs)
-
-if (nrow(ports_df) > 0) {
-  p <- p + geom_point(data = ports_df, aes(x = lon, y = lat), shape = 21, fill = "white", color = "black", stroke = 0.5, size = 3)
-}
-if (nrow(boats_df) > 0) {
-  # draw boats slightly larger so they sit visibly on top
-  p <- p + geom_point(data = boats_df, aes(x = lon, y = lat), shape = 21, fill = "black", color = "black", stroke = 0.6, size = 3.5)
-}
-
-# Compute mean latitude from plotted points and set an exact fixed ratio: 1/cos(mean_lat)
-# coord_fixed(ratio) expects data units: one y unit equals 'ratio' x units, so to compensate
-# for longitude degree shrinking with latitude use ratio = 1 / cos(mean_lat_in_radians)
-mean_lat <- NA_real_
-if (nrow(st2) > 0) {
-  mean_lat <- mean(c(st2$start_lat, st2$end_lat), na.rm = TRUE)
-}
-if (is.na(mean_lat)) mean_lat <- 65.0 # fallback latitude
-mean_lat_rad <- mean_lat * pi / 180.0
-ratio <- 1.0 / cos(mean_lat_rad)
-p <- p + coord_fixed(ratio = ratio) + theme_minimal() + labs(title = NULL, x = NULL, y = NULL)
-
-# Save PNG
-ggsave(filename = png_out, plot = p, width = 8, height = 6, dpi = 300)
-message("Saved PNG: ", png_out)
-
-# Save TikZ if available
-if (has_tikz) {
-  tikz(file = tex_out, width = 5, height = 3)
-  print(p)
-  dev.off()
-  message("Saved TikZ: ", tex_out)
-} else {
-  message("Skipping TikZ output; install tikzDevice and LaTeX to enable .tex export.")
-}
-
-invisible(p)
+cat(sprintf("OK Plot saved to: %s\n", normalizePath(output_file)))
+cat("OK Survey overview plot complete!\n")

@@ -1,0 +1,61 @@
+# GSP Solver Configuration
+# Groundfish Survey Routing Optimization
+
+# Global wall-clock limit across long-running workflows (in seconds)
+global_time_limit_seconds: 172800      # 48 hours
+
+# Default boat configuration
+boat:
+  id: 2                                  # Árni Friðriksson (boat_id in database)
+
+# Phase 0: Initialization Strategies
+init:
+  target_catch_slack_kg: 1000            # Reserve slack so target capacity stays below raw capacity
+  fixedport_min_segment_catch_kg: 1000   # Survey segments below this catch are ignored when deriving fixed-port candidates
+  strategies:
+    - noport                             # No-port MIP station ordering
+    - fixedport                          # Fixed port-order MIP
+    - nn                                 # NN: Nearest Neighbor (fast)
+    - ge                                 # GE: Greedy Edge (fast)
+    - ci                                 # CI: Cheapest Insertion (moderate)
+
+  noport: {}                             # Reserved for method-specific init options
+  fixedport: {}                          # Reserved for method-specific init options
+  nn: {}                                 # Reserved for method-specific init options
+  ge: {}                                 # Reserved for method-specific init options
+  ci: {}                                 # Reserved for method-specific init options
+
+
+# Phase 1: Matheuristic Sweep Parameters
+sweep:
+  # Iteration control
+  max_iterations: 100                    # Maximum iterations per L2SEG sweep
+
+# Gurobi Solver Settings
+gurobi:
+  time_limit_seconds:
+    0seg: 0                              # No-port MIP time limit; 0 = no limit
+    1seg: 0                              # Per-segment init local postopt time limit; 0 = no limit
+    2seg: 0                              # Boundary-sweep segment MIP time limit; 0 = no limit
+    Xseg: 86400                          # Fixed-port MIP time limit after incumbent exists
+
+  haul_distance_scale:
+    0seg: 0.0                            # No-port MIP uses near-zero haul in the objective
+    1seg: 0.0                            # Init local postopt uses near-zero haul in the objective
+    2seg: 1.0                            # Sweep boundary MIPs use full haul distance
+    Xseg: 0.0                            # Reserved for fixed-port/full MIP objective scaling
+
+  env_log_file: log/gurobi.log           # null=no log file, or path like "log/gurobi.log"
+  threads: 2                             # 0=auto-detect, >0=fixed thread count
+  mip_focus: 0                           # 0=balanced, 1=feasible, 2=optimal, 3=best_bound
+  seed: -1                               # -1=random, >=0=fixed seed for reproducibility
+
+# Database Configuration
+database:
+  path: "dat/gsp.db"                     # Path to SQLite database
+  auto_create_schema: true               # Auto-create tables if not exist
+
+# Output and Logging
+output:
+  verbose: true                          # Verbose stdout logging
+  json_format: true                      # Output results as JSON

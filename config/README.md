@@ -1,35 +1,82 @@
-CONFIG_README
-=============
+# GSP Solver Configuration
 
-Purpose
--------
-This repository-level configuration file (`config.yaml`) centralizes parameters, path
-templates and variant-specific settings used by `scripts/` and binaries under `src/`.
-The goal is to remove hard-coded values from shell scripts and Makefiles and have a
-single authoritative source of truth.
+All solver parameters live in **`gsp_solver.yaml`**. Instance data (boat capacity,
+home port, station counts) is loaded from `dat/gsp.db` at runtime, so the YAML stays
+small and never drifts out of sync with the data.
 
-Location
---------
-- `experiments.yaml` (root `config/`) — main config storing global and per-variant settings.
+See `README.md` for pipeline commands (`make -C src construction`, `segment`, `refinement`, etc.).
 
-Key fields explained
---------------------
-- `global.repo_root`: top-level repo path. Useful when resolving relative paths.
-- `global.code_dir`: where C sources live (usually `src`).
-- `global.dat_dir`: directory containing input `.dat` files.
-- `global.bin_dir`: directory for compiled binaries.
-- `global.cap_time_limits`: list of capacity timelimits used in experiment runs.
-- `variants.<name>.binary`: path to the executable for that variant (relative to repo root).
-- `scripts.run_template`: command template showing how scripts should invoke binaries.
+---
 
-How to use (next steps)
------------------------
-1. Update `scripts/Makefile` and `scripts/make_matrices.sh` to read `config.yaml`
-   (for example with `python -c 'import yaml,sys;print(yaml.safe_load(open("config.yaml"))...)'`)
-   or use a small shell helper that extracts keys with `yq`/`python`.
+## Parameters
 
-2. Replace hard-coded values (like time limits, dataset paths, log paths) with
-   template substitutions that pull values from the config.
+### `global_time_limit_seconds`
 
-3. When adding a new variant, add an entry under `variants` with `binary` and
-   other per-variant customizations.
+Wall-clock cap for multi-phase workflows. Sweep returns early once the limit is
+reached, regardless of `sweep.max_iterations`.
+
+### `boat.id`
+
+Selects the vessel. Capacity, home port, and name are read from the database;
+changing this integer is sufficient to re-target the solver to a different boat.
+
+### `init.strategies`
+
+Controls which construction methods are available to the workflow. Per-strategy sub-keys (`nn: {}`,
+etc.) are reserved for future method-specific options.
+
+### `sweep.max_iterations`
+
+Maximum boundary-swap iterations per refinement (matheuristic sweep) run. Each iteration attempts to
+improve
+one adjacent segment pair; refinement terminates early if a full pass produces no improvement.
+
+### `gurobi.time_limit_seconds`
+
+Per-phase Gurobi time limits (seconds; `0` = no limit):
+
+| Key    | Phase                                                    |
+|--------|----------------------------------------------------------|
+| `0seg` | No-port MIP                                              |
+| `1seg` | Per-segment segment-stage TSP postopt                    |
+| `2seg` | Two-segment refinement (matheuristic sweep) boundary MIP |
+| `Xseg` | Fixed-port full MIP (applied after first incumbent)      |
+
+### `gurobi.haul_distance_scale`
+
+Each station is modelled as an entry/exit node pair; the arc between them is the
+haul (tow) distance. This multiplier scales those intra-station arcs in the MIP
+objective, giving three regimes:
+
+| `include_haul_distance` |       scale | Effective weight | Effect                                        |
+|:-----------------------:|------------:|-----------------:|-----------------------------------------------|
+|         `true`          | _(ignored)_ |              1.0 | Full haul in objective                        |
+|         `false`         |       `0.0` |              0.0 | Haul excluded; station orientation arbitrary  |
+|         `false`         |     `ε > 0` |                ε | Transit-primary; haul breaks orientation ties |
+
+A scale of `0.00001` (1e-5) makes haul ~1/100 000th of a typical transit leg —
+small enough to never distort the transit-optimal solution, large enough to steer
+station entry/exit orientation toward the shorter tow direction.
+
+Recommended settings:
+
+| Phase  |   Scale   | Rationale                                                                                            |
+|--------|:---------:|------------------------------------------------------------------------------------------------------|
+| `0seg` | `0.00001` | Transit-minimising global order; haul ties broken sensibly                                           |
+| `1seg` | `0.00001` | Single-segment postopt; per-segment haul is nearly constant                                          |
+| `2seg` |   `1.0`   | Refinement (matheuristic sweep) changes segment membership, so haul varies and must be fully counted |
+| `Xseg` | `0.00001` | Port schedule fixed; transit-primary with orientation tie-breaking                                   |
+
+Avoid `0.0` unless deliberately ignoring tow orientation — it admits free haul
+lengthening that `0.00001` prevents at no cost to transit quality.
+
+### `gurobi.threads / mip_focus / seed`
+
+Standard Gurobi controls. `seed: -1` uses a random seed (results vary across runs);
+set a non-negative integer for reproducibility.
+
+---
+
+## References
+
+- Gurobi Parameters: https://www.gurobi.com/documentation/

@@ -1,106 +1,252 @@
-.PHONY: all demo cap matheur matcapheur matcapmutheur matcapmut_v2 matcapmutheur_v3 utils clean db
+# Lightweight Makefile - CMake wrapper
+# Build directory is at ../build (root level)
 
-CC ?= clang
+BUILD_DIR = ../build
+CONFIG_YAML = ../config/gsp_solver.yaml
+ROUTE_JSONS = $(shell find ../sol -name "*.json")
+ROUTE_PNGS = $(patsubst %.json,%.png,$(ROUTE_JSONS))
 
-# Output directories (relative to src/)
-BIN_DIR ?= ../bin
-LIB_DIR ?= ../lib
+COUNTRY_DB ?= ../dat/gsp.db
+COUNTRY_ISLAND ?= ../dat/island.tsv
+COUNTRY_DAT ?= ../dat/waypoints.dat
+COUNTRY_PORT_FILE ?= ../dat/ports.dat
+COUNTRY_BOAT_FILE ?= ../dat/boats.dat
+COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
 
-# Detect OS
-UNAME_S := $(shell uname -s)
+METHOD ?=
+TABLE_FORMAT ?= tex
+TABLE_OUTPUT ?=
+L2SEG_UNIT ?= seconds
+METHOD_RAW := $(or $(METHOD),nn)
+METHOD_NAME := $(if $(filter gi,$(METHOD_RAW)),ge,$(METHOD_RAW))
+VALID_METHODS := nn ge ci noport fixedport
+VALID_REFINEMENT_METHODS := nn ge ci noport
+EXPERIMENT_REFINEMENT_METHODS := noport nn ge ci
+FIXEDPORT_CANDIDATE_JSON = ../sol/fixedport/candidate_ports.json
+SURVEY_DAT = ../dat/survey2023spring.dat
+SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
+SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
-# Robust Windows/MSYS/CYGWIN detection: prefer MSYSTEM env var when present
-# IS_WINDOWS will be '1' on MSYS/MINGW/CYGWIN or when OS=Windows_NT
-IS_WINDOWS := $(shell if [ -n "$$MSYSTEM" ]; then echo 1; elif echo "$(UNAME_S)" | grep -E -q "MINGW|MSYS|CYGWIN" 2>/dev/null; then echo 1; elif [ "x$(OS)" = "xWindows_NT" ]; then echo 1; fi)
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement noport sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
 
-# Fallback: if IS_WINDOWS contains '1' it'll be considered true
+all: build
 
-# -------- Gurobi --------
-# Adjust this if your Linux install lives elsewhere (common: /opt/gurobiXXXX/linux64)
-ifeq ($(UNAME_S),Darwin)
-GUROBI_HOME ?= /Library/gurobi1300/macos_universal2
+$(BUILD_DIR)/CMakeCache.txt:
+	@mkdir -p $(BUILD_DIR)
+	@cd $(BUILD_DIR) && cmake -DCMAKE_BUILD_TYPE=Release ../src
+
+config: $(BUILD_DIR)/CMakeCache.txt
+
+build: $(BUILD_DIR)/CMakeCache.txt
+	@cd $(BUILD_DIR) && $(MAKE)
+
+CONSTRUCTION_TARGET_JSON = ../sol/$(METHOD_NAME)/construction.json
+SEGMENT_TARGET_JSON = ../sol/$(METHOD_NAME)/segment.json
+REFINEMENT_TARGET_JSON = ../sol/$(METHOD_NAME)/refinement.json
+
+construction:
+ifeq ($(filter $(METHOD_NAME),$(VALID_METHODS)),)
+	@echo "Unsupported method: $(METHOD_RAW)"
+	@echo "Use METHOD=nn|ge|ci|noport|fixedport."
+	@exit 1
 else
-GUROBI_HOME ?= /opt/gurobi1300/linux64
+	@:
 endif
 
-GUROBI_INC = -I$(GUROBI_HOME)/include
-GUROBI_LIB = -L$(GUROBI_HOME)/lib -lgurobi130 -Wl,-rpath,$(GUROBI_HOME)/lib
+construction: $(CONSTRUCTION_TARGET_JSON)
 
-# -------- utils shared lib + rpath / windows dll + import lib --------
-ifeq ($(UNAME_S),Darwin)
-    UTILS_SO     = $(LIB_DIR)/libutils.dylib
-    UTILS_RPATH  = -Wl,-rpath,@loader_path/../lib
-    UTILS_IMPLIB =
+segment:
+ifeq ($(filter $(METHOD_NAME),$(VALID_METHODS)),)
+	@echo "Unsupported method: $(METHOD_RAW)"
+	@echo "Use METHOD=nn|ge|ci|noport|fixedport."
+	@exit 1
 else
-    ifeq ($(IS_WINDOWS),1)
-        # MSYS2 / MinGW / Cygwin: produce utils.dll and an import lib libutils.dll.a so -lutils works
-        UTILS_SO     = $(LIB_DIR)/utils.dll
-        UTILS_IMPLIB = $(LIB_DIR)/libutils.dll.a
-        UTILS_RPATH  =
-    else
-        UTILS_SO     = $(LIB_DIR)/libutils.so
-        # Use $$ to escape $ for make; the linker will see $ORIGIN at runtime.
-        UTILS_RPATH  = -Wl,-rpath,'$$ORIGIN/../lib'
-        UTILS_IMPLIB =
-    endif
+	@:
 endif
 
-# compute the platform-appropriate shared build flags once so recipes are simple
-ifeq ($(IS_WINDOWS),1)
-SHARED_FLAGS := -O3 -shared
-OUT_IMPLIB_FLAGS := -Wl,--out-implib,$(UTILS_IMPLIB)
-# copy the produced DLL into bin/ so the exe finds it at runtime (no-op on POSIX)
-POST_COPY := mkdir -p $(BIN_DIR) && cp -f $(UTILS_SO) $(BIN_DIR)/ || true
+segment: $(SEGMENT_TARGET_JSON)
+
+refinement:
+ifeq ($(filter $(METHOD_NAME),$(VALID_REFINEMENT_METHODS)),)
+	@echo "Unsupported refinement method: $(METHOD_RAW)"
+	@echo "Use METHOD=nn|ge|ci|noport."
+	@exit 1
 else
-SHARED_FLAGS := -O3 -fPIC -shared
-OUT_IMPLIB_FLAGS :=
-POST_COPY := true
+	@:
 endif
 
-UTILS_LIB = -L$(LIB_DIR) -lutils $(UTILS_RPATH)
+refinement: $(REFINEMENT_TARGET_JSON)
 
-# -------- Targets --------
-all: demo cap matheur matcapheur matcapmutheur matcapmut_v2 matcapmutheur_v3 utils db
+prepare-routing-data: $(COUNTRY_DB)
 
-demo: main.c utils
-	mkdir -p $(BIN_DIR)
-	$(CC) main.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/demo
+$(COUNTRY_DB): $(COUNTRY_ISLAND) $(COUNTRY_DAT) $(COUNTRY_PORT_FILE) $(COUNTRY_BOAT_FILE) $(COUNTRY_STATIONS_FILE) | $(BUILD_DIR)/CMakeCache.txt
+	@mkdir -p $(dir $@)
+	@cd $(BUILD_DIR) && $(MAKE) gsp_prepare_routing_data
+	@rm -f $@.tmp
+	@cd $(BUILD_DIR) && ./common/gsp_prepare_routing_data \
+		--db $@.tmp \
+		--coastline-file $(COUNTRY_ISLAND) \
+		--waypoint-file $(COUNTRY_DAT) \
+		--port-file $(COUNTRY_PORT_FILE) \
+		--boat-file $(COUNTRY_BOAT_FILE) \
+		--stations-file $(COUNTRY_STATIONS_FILE)
+	@mv $@.tmp $@
 
-cap: capacity.c utils
-	mkdir -p $(BIN_DIR)
-	$(CC) capacity.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/cap
+preprocessing: prepare-routing-data survey
 
-matheur: matheur.c utils
-	mkdir -p $(BIN_DIR)
-	$(CC) matheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matheur
+survey: $(BUILD_DIR)/CMakeCache.txt
+	@cd $(BUILD_DIR) && $(MAKE) survey
 
-matcapheur: matcapheur.c utils
-	mkdir -p $(BIN_DIR)
-	$(CC) matcapheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapheur
+../sol/survey/multivessel.json: $(SURVEY_DAT) $(COUNTRY_DB) $(CONFIG_YAML) $(BUILD_DIR)/CMakeCache.txt
+	@mkdir -p ../sol/survey
+	@echo "Generating multivessel survey JSON -> $@"
+	@cd $(BUILD_DIR) && $(MAKE) historical_survey
+	@bash -lc 'cd "$(BUILD_DIR)" && ./historical_survey "$(abspath $(SURVEY_DAT))" "$(abspath $(COUNTRY_DB))" "$(abspath ../sol/survey/multivessel.json)" "$(abspath $(CONFIG_YAML))"'
 
-matcapmutheur: matcapmutheur.c utils
-	mkdir -p $(BIN_DIR)
-	$(CC) matcapmutheur.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapmutheur
+$(FIXEDPORT_CANDIDATE_JSON): $(SURVEY_MULTIVESSEL_JSON) $(BUILD_DIR)/CMakeCache.txt
+	@mkdir -p ../sol/fixedport
+	@cd $(BUILD_DIR) && $(MAKE) survey_fixedport_candidates
+	@bash -lc 'cd "$(BUILD_DIR)" && ./survey_fixedport_candidates "$(abspath $(SURVEY_MULTIVESSEL_JSON))" "$(abspath $(FIXEDPORT_CANDIDATE_JSON))"'
 
-matcapmut_v2: matcapmut_v2.c utils
-	mkdir -p $(BIN_DIR)
-	$(CC) matcapmut_v2.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapmut_v2
+fixedport_candidates: $(FIXEDPORT_CANDIDATE_JSON)
 
-matcapmutheur_v3: matcapmutheur_v3.c utils
-	mkdir -p $(BIN_DIR)
-	$(CC) matcapmutheur_v3.c $(GUROBI_INC) $(GUROBI_LIB) $(UTILS_LIB) -lm -o $(BIN_DIR)/matcapmutheur_v3
+fixedport: ../sol/fixedport/construction.json
 
-utils: utils.c
-	mkdir -p $(LIB_DIR)
-	$(CC) $(SHARED_FLAGS) utils.c -lm -o $(UTILS_SO) $(OUT_IMPLIB_FLAGS)
-	$(POST_COPY)
+../sol/fixedport/construction.json: $(COUNTRY_DB) $(FIXEDPORT_CANDIDATE_JSON)
+	@mkdir -p ../sol/fixedport
+	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_fixedport --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --candidates "$(FIXEDPORT_CANDIDATE_JSON)" --output "../sol/fixedport/construction.json" 2>&1 | tee -a ../sol/fixedport/construction.log'
 
-# add parser target to build parse_dat_to_sqlite and a convenience 'db' target
-parse_dat_to_sqlite: parse_dat_to_sqlite.c utils
-	mkdir -p $(BIN_DIR)
-	$(CC) parse_dat_to_sqlite.c $(UTILS_LIB) -lsqlite3 -lm -o $(BIN_DIR)/parse_dat_to_sqlite
-db: parse_dat_to_sqlite
+noport: ../sol/noport/construction.json
+
+../sol/noport/construction.json: $(COUNTRY_DB)
+	@mkdir -p ../sol/noport
+	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_noport --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --output "../sol/noport/construction.json" 2>&1 | tee -a ../sol/noport/construction.log'
+
+../sol/noport/segment.json: ../sol/noport/construction.json
+	@mkdir -p ../sol/noport
+	@echo "Generating segment from ordered input -> $@"
+	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_segment_from_construction --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/noport/construction.json" --output "../sol/noport/segment.json"'
+
+define construction_rule
+../sol/$(1)/construction.json: $(COUNTRY_DB)
+	@mkdir -p ../sol/$(1)
+	@echo "Generating $(2) construction -> $$@"
+	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode construction --strategy $(1) --database "$(COUNTRY_DB)" --output "../sol/$(1)/construction.json" --config "$(CONFIG_YAML)"'
+endef
+
+define segment_from_construction_rule
+../sol/$(1)/segment.json: ../sol/$(1)/construction.json
+	@mkdir -p ../sol/$(1)
+	@echo "Generating $(2) segment from construction -> $$@"
+	@bash -lc 'cd "$(BUILD_DIR)" && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_segment_from_construction --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/construction.json" --output "../sol/$(1)/segment.json" --strategy $(1)'
+endef
+
+define refinement_rule
+../sol/$(1)/refinement.json: ../sol/$(1)/segment.json
+	@mkdir -p ../sol/$(1)
+	@echo "Running $(2) refinement -> $$@"
+	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "$$@" 2>&1 | tee "../sol/$(1)/refinement.log"'
+endef
+
+$(eval $(call construction_rule,nn,NN))
+$(eval $(call construction_rule,ge,GE))
+$(eval $(call construction_rule,ci,CI))
+
+$(eval $(call segment_from_construction_rule,nn,NN))
+$(eval $(call segment_from_construction_rule,ge,GE))
+$(eval $(call segment_from_construction_rule,ci,CI))
+$(eval $(call segment_from_construction_rule,fixedport,fixedport))
+
+$(eval $(call refinement_rule,nn,NN))
+$(eval $(call refinement_rule,ge,GE))
+$(eval $(call refinement_rule,ci,CI))
+$(eval $(call refinement_rule,noport,noport))
+
+sweep_table:
+	@bash -lc 'set -euo pipefail; cd ..; \
+		args=(R/make_sweep_table.R --input-dir "sol/$(METHOD_NAME)" --format "$(TABLE_FORMAT)" --l2seg-unit "$(L2SEG_UNIT)" --warn-missing); \
+		if [ -n "$(TABLE_OUTPUT)" ]; then \
+			args+=(--output "$(TABLE_OUTPUT)"); \
+		fi; \
+		Rscript "$${args[@]}"'
+
+plot-routes: $(ROUTE_PNGS)
+
+../sol/%.png: ../sol/%.json
+	@cd .. && Rscript R/plot_single_vessel_route.R "$(patsubst ../%,%,$<)" "$(patsubst ../%,%,$@)"
+
+../dat/coastline_waypoints_ports.png:
+	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp.db dat/coastline_waypoints_ports.png'
+
+../dat/survey_overview.png:
+	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R dat/gsp.db dat/survey_overview.png'
+
+../sol/survey/multivessel.png:
+	@bash -lc 'cd .. && Rscript R/plot_multi_vessel_route.R "sol/survey/multivessel.json" "sol/survey/multivessel.png" "dat/gsp.db"'
+
+../sol/sweep_summary_panels.png:
+	@bash -lc 'cd .. && Rscript R/plot_sweep_summary_panels.R sol sol/sweep_summary_panels.png'
+
+plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png ../sol/survey/multivessel.png plot-routes
+
+EXPERIMENT_TARGETS = \
+	../sol/noport/construction.json \
+	../sol/noport/segment.json \
+	$(foreach method,$(EXPERIMENT_REFINEMENT_METHODS),../sol/$(method)/refinement.json)
+
+experiments: prepare-routing-data $(EXPERIMENT_TARGETS)
+
+plot-survey-routes: ../sol/survey/multivessel.png
+
+plot-sweep-summary: ../sol/sweep_summary_panels.png
 
 clean:
-	rm -f $(BIN_DIR)/demo $(BIN_DIR)/cap $(BIN_DIR)/matheur $(BIN_DIR)/matcapheur $(BIN_DIR)/matcapmutheur $(BIN_DIR)/matcapmut_v2 $(BIN_DIR)/matcapmutheur_v3 \
-	      $(LIB_DIR)/libutils.so $(LIB_DIR)/libutils.dylib $(BIN_DIR)/parse_dat_to_sqlite
+	@echo "Cleaning build directory..."
+	@rm -rf $(BUILD_DIR)
+	@echo "Cleaning previous data generation"
+	@rm -rf $(COUNTRY_DB)
+	@echo "Build directory removed"
+
+reconfigure: clean config
+	@echo "Reconfigured"
+
+help:
+	@echo ""
+	@echo "GSP Solver - Lightweight Makefile"
+	@echo "=================================="
+	@echo ""
+	@echo "Build directory: ../build (root level)"
+	@echo "Run from repo root with: make -C src <target> ..."
+	@echo ""
+	@echo "Data Preparation:"
+	@echo "  make -C src prepare-routing-data"
+	@echo ""
+	@echo "Construction / Segment / Refinement"
+	@echo "  make -C src construction METHOD=nn"
+	@echo "  make -C src construction METHOD=noport"
+	@echo "  make -C src segment METHOD=nn"
+	@echo "  make -C src segment METHOD=noport"
+	@echo "  make -C src refinement METHOD=nn"
+	@echo "  make -C src refinement METHOD=noport"
+	@echo ""
+	@echo "Shortcuts"
+	@echo "  make -C src noport             # same as construction METHOD=noport"
+	@echo "  make -C src fixedport          # same as construction METHOD=fixedport"
+	@echo ""
+	@echo "Tables"
+	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex"
+	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex TABLE_OUTPUT=../Paper/tables/tbl_mh_init_ci.tex"
+	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=md L2SEG_UNIT=minutes"
+	@echo ""
+	@echo "Other targets:"
+	@echo "  make -C src build"
+	@echo "  make -C src survey"
+	@echo "  make -C src fixedport_candidates"
+	@echo "  make -C src fixedport"
+	@echo "  make -C src experiments"
+	@echo "  make -C src plot"
+	@echo "  make -C src plot-routes"
+	@echo "  make -C src plot-survey-routes"
+	@echo "  make -C src plot-sweep-summary"
+	@echo "  make -C src clean"
+	@echo "  make -C src reconfigure"

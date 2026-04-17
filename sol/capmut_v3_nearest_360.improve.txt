@@ -1,6 +1,0 @@
-/home/tpr/projects/matheuristic/sol/capmut_v3_nearest_360.improve_0000.txt
-/home/tpr/projects/matheuristic/sol/capmut_v3_nearest_360.improve_0001.txt
-/home/tpr/projects/matheuristic/sol/capmut_v3_nearest_360.improve_0002.txt
-/home/tpr/projects/matheuristic/sol/capmut_v3_nearest_360.improve_0003.txt
-/home/tpr/projects/matheuristic/sol/capmut_v3_nearest_360.improve_0004.txt
-/home/tpr/projects/matheuristic/sol/capmut_v3_nearest_360.improve_0005.txt
