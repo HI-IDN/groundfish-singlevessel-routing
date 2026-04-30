@@ -7,7 +7,7 @@
   <a href="https://orcid.org/0000-0002-1067-7694" target="_blank" rel="noopener"><img src="https://info.orcid.org/wp-content/uploads/2019/11/orcid_16x16.png" alt="ORCID" style="width:16px;height:16px;margin:0 4px 2px 0;vertical-align:middle;border:0"/>Tómas Philip Rúnarsson</a>
 </p>
 
---8<-- "docs/01-abstract.md"
+--8<-- "01-abstract.md"
 
 !!! quote "Cite"
     Ingimundardóttir, H., Þórisdóttir, M. V., Elvarsson, B., & Runarsson, T. P. (2026). *A scalable matheuristic for routing capacity-constrained groundfish surveys*. In *Proceedings of the Learning and Intelligent Optimization Conference (LION)* (accepted for publication).
