@@ -2,7 +2,8 @@
 
 ## Data and instance summary
 
-The experiments use data from the 2023 spring groundfish survey conducted by the Icelandic Marine and Freshwater Research Institute.
+The experiments use data from the 2023 spring groundfish survey conducted by the Icelandic Marine
+and Freshwater Research Institute.
 
 The instance contains:
 
@@ -12,13 +13,20 @@ The instance contains:
 - 27 waypoint nodes
 - 4 survey vessels in the full dataset
 
-For simplicity, the experiments focus on a single vessel, Arni Fridriksson, based in Hafnarfjordur, with capacity `C = 45` tonnes.
+For simplicity, the experiments focus on a single vessel, *Árni Friðriksson*, based in
+Hafnarfjörður, with capacity $C = 45$ tonnes.
 
-The full model contains 611 paired endpoint nodes, covering stations, ports, and vessel start/end. Station catch values are expected catches derived from historical time series. Total expected catch is 528 tonnes, implying a minimum of 12 capacity-feasible segments. Distances are waypoint-aware shortest-path distances that reroute land-crossing arcs via waypoints.
+The full model contains 611 paired endpoint nodes, covering stations, ports, and vessel start/end.
+Station catch values are expected catches derived from historical time series. Total expected catch
+is 528 tonnes, implying a minimum of 12 capacity-feasible segments. Distances are waypoint-aware
+shortest-path distances that reroute land-crossing arcs via waypoints.
 
 ## Port configuration
 
-The full C-MIP uses a fixed port list `P_fix`, including duplicated port entries to represent repeated visits. In the experiments this matches the 2023 survey structure and yields 13 segments. By contrast, the matheuristic selects ports dynamically from the unique candidate set.
+The full C-MIP uses a fixed port list $P_\text{fix}$, including duplicated port entries to
+represent repeated visits. In the experiments this matches the 2023 survey structure and yields 13
+segments.
+By contrast, the matheuristic selects ports dynamically from the unique candidate set.
 
 ## Model classes
 
@@ -41,7 +49,8 @@ Four initialization strategies are tested:
 
 All models are solved with Gurobi 13.
 
-The full C-MIP remains intractable on the full dataset: even with a 12-hour time limit it does not produce a feasible solution. By contrast:
+The full C-MIP remains intractable on the full dataset: even with a 12-hour time limit it does not
+produce a feasible solution. By contrast:
 
 - NP-MIP solves in a little over one hour.
 - Single-segment TSP subproblems usually solve in seconds and are not the bottleneck.
@@ -55,4 +64,6 @@ L_2seg in {1, 2, 3, 4, 5, 6, 7, 8} minutes
 
 ## Matheuristic settings
 
-The boundary-sweep procedure is capped at 100 sweeps, which is more than enough for all runs. Boundary updates consider only immediate neighbors. After each accepted change, the affected segments are re-solved using the directed segment-TSP.
+The boundary-sweep procedure is capped at 100 sweeps, which is more than enough for all runs.
+Boundary updates consider only immediate neighbors. After each accepted change, the affected
+segments are re-solved using the directed segment-TSP.

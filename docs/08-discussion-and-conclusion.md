@@ -35,4 +35,4 @@ Overall, restricted-MIP local improvement provides a practical and scalable way 
 
 The paper states that the implementation and the 2023 survey data are openly available at:
 
-`https://github.com/HI-IDN/groundfish-singlevessel-routing`
+[`https://github.com/HI-IDN/groundfish-singlevessel-routing`](https://github.com/HI-IDN/groundfish-singlevessel-routing)
