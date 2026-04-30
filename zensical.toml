@@ -24,7 +24,6 @@ nav = [
 
 [project.theme]
 features = [
-  "navigation.instant",
   "navigation.sections",
   "navigation.top",
   "navigation.footer",
