@@ -4,6 +4,7 @@ site_url = "https://hi-idn.github.io/groundfish-singlevessel-routing/"
 repo_url = "https://github.com/HI-IDN/groundfish-singlevessel-routing"
 docs_dir = "docs"
 site_dir = "site"
+copyright = "© 2026 Helga Ingimundardóttir et al."
 exclude_docs = "README.md"
 extra_javascript = [
   "javascripts/mathjax.js",
@@ -23,6 +24,7 @@ nav = [
 ]
 
 [project.theme]
+variant = "modern"
 features = [
   "navigation.sections",
   "navigation.top",
