@@ -9,6 +9,6 @@
 
 --8<-- "docs/01-abstract.md"
 
-!!! home "Cite"
+!!! quote "Cite"
     Ingimundardóttir, H., Þórisdóttir, M. V., Elvarsson, B., & Runarsson, T. P. (2026). *A scalable matheuristic for routing capacity-constrained groundfish surveys*. In *Proceedings of the Learning and Intelligent Optimization Conference (LION)* (accepted for publication).
     
