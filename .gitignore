@@ -96,6 +96,8 @@ env/
 
 # Derived files
 dat/gsp.db
+ # Generated site files from zensical build
+site/
 
 # Log files
 *.log

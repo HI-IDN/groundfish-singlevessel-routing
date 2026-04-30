@@ -14,8 +14,7 @@ nav = [
     {"Matheuristic Framework" = "05-matheuristic.md"},
     {"Experimental Setup" = "06-experimental-setup.md"},
     {"Results" = "07-results.md"},
-    {"Discussion and Conclusions" = "08-discussion-and-conclusion.md"},
-    {"Single-Page Version" = "groundfish_survey_routing_scalable_matheuristic.md"}
+    {"Discussion and Conclusions" = "08-discussion-and-conclusion.md"}
   ]}
 ]
 
