@@ -13,18 +13,20 @@
 #include <wchar.h>
 #include <sys/stat.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <direct.h>
+#else
+#include <sys/types.h>
+#include <ctype.h>
+#endif
+
 #include "../include/constants.h"
 #include "../include/dat_parser.h"
 #include "../include/feasibility.h"
 #include "../include/init_types.h"
 #include "../include/json_utils.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#include <direct.h>
-#else
-#include <sys/types.h>
-#endif
 
 static void die(const char *msg) {
     fprintf(stderr, "Error: %s\n", msg);
