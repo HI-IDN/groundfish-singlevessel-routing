@@ -306,11 +306,12 @@ int solve_mip_fixedport(const mip_fixedport_instance_t *instance,
     if (GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount) != 0) solcount = 0;
     if (GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME, &runtime) != 0) runtime = 0.0;
 
-    /* If we hit the time limit with no incumbent yet, remove the limit and
-     * keep solving until Gurobi finds at least one feasible solution. */
-    if (status == GRB_TIME_LIMIT && solcount == 0) {
+    /* Full fixed-port construction can request a first feasible incumbent
+     * after the nominal limit. Local refinement leaves this off and rejects
+     * the boundary if no incumbent is found within its L2SEG budget. */
+    if (local_params.wait_for_first_incumbent && status == GRB_TIME_LIMIT && solcount == 0) {
         if (local_params.verbose) {
-            printf("Time limit reached with no incumbent — continuing until first solution is found...\n");
+            printf("Time limit reached with no incumbent - continuing until first solution is found...\n");
             fflush(stdout);
         }
         GRBsetdblparam(GRBgetenv(model), GRB_DBL_PAR_TIMELIMIT, GRB_INFINITY);

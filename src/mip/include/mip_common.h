@@ -18,6 +18,7 @@ typedef struct {
     int use_scaled_haul_distance;
     double haul_distance_scale;
     GRBenv *shared_env;
+    int wait_for_first_incumbent;
 } mip_params_t;
 
 typedef struct {

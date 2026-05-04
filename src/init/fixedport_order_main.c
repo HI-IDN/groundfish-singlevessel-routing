@@ -944,6 +944,7 @@ int main(int argc, char **argv) {
     mip_params.exclude_haul_distance = !(haul_distance_scale > 0.0);
     mip_params.use_scaled_haul_distance = (haul_distance_scale > 0.0);
     mip_params.haul_distance_scale = (haul_distance_scale > 0.0) ? haul_distance_scale : 0.0;
+    mip_params.wait_for_first_incumbent = 1;
 
     printf("Fixedport MIP instance\n");
     printf("  boat: %s (id=%d)\n", app.boat.name ? app.boat.name : "Unknown", app.boat.boat_id);

@@ -17,6 +17,9 @@ METHOD ?=
 TABLE_FORMAT ?= tex
 TABLE_OUTPUT ?=
 L2SEG_UNIT ?= seconds
+L2SEG ?=
+L2SEG_VARIANTS ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*l2seg_variants:[[:space:]]*\\[([^]]*)\\].*/\\1/p' '$(CONFIG_YAML)' | tr ',' ' '")
+L2SEG_DEFAULT_VALUE ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*2seg:[[:space:]]*([0-9]+).*/\\1/p' '$(CONFIG_YAML)' | head -n 1")
 METHOD_RAW := $(or $(METHOD),nn)
 METHOD_NAME := $(if $(filter gi,$(METHOD_RAW)),ge,$(METHOD_RAW))
 VALID_METHODS := nn ge ci noport fixedport
@@ -27,7 +30,7 @@ SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
 SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement noport sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
 
 all: build
 
@@ -76,6 +79,20 @@ else
 endif
 
 refinement: $(REFINEMENT_TARGET_JSON)
+
+refinement_l2seg: $(SEGMENT_TARGET_JSON)
+	@mkdir -p ../sol/$(METHOD_NAME)
+	@bash -lc 'set -euo pipefail; \
+		case " $(VALID_REFINEMENT_METHODS) " in *" $(METHOD_NAME) "*) ;; *) echo "Unsupported refinement method: $(METHOD_RAW)"; echo "Use METHOD=nn|ge|ci|noport."; exit 1;; esac; \
+		if [ -z "$(strip $(L2SEG))" ]; then echo "Missing L2SEG value."; echo "Use L2SEG=$(L2SEG_VARIANTS) $(L2SEG_DEFAULT_VALUE)."; exit 1; fi; \
+		limit="$(strip $(L2SEG))"; \
+		suffix=""; \
+		if [ "$$limit" != "0" ]; then suffix="_$$limit"; fi; \
+		out="../sol/$(METHOD_NAME)/refinement$${suffix}.json"; \
+		log="../sol/$(METHOD_NAME)/refinement$${suffix}.log"; \
+		echo "Running $(METHOD_NAME) refinement L2SEG=$${limit}s -> $$out"; \
+		cd "$(BUILD_DIR)"; \
+		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(METHOD_NAME) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(METHOD_NAME)/segment.json" --output "$$out" --l2seg-limit "$$limit" 2>&1 | tee "$$log"'
 
 prepare-routing-data: $(COUNTRY_DB)
 
@@ -145,7 +162,9 @@ define refinement_rule
 ../sol/$(1)/refinement.json: ../sol/$(1)/segment.json
 	@mkdir -p ../sol/$(1)
 	@echo "Running $(2) refinement -> $$@"
-	@bash -lc 'cd "$(BUILD_DIR)" && set -o pipefail && PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "$$@" 2>&1 | tee "../sol/$(1)/refinement.log"'
+	@bash -lc 'set -euo pipefail; \
+		cd "$(BUILD_DIR)"; \
+		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "$$@" 2>&1 | tee "../sol/$(1)/refinement.log"'
 endef
 
 $(eval $(call construction_rule,nn,NN))
@@ -189,12 +208,22 @@ plot-routes: $(ROUTE_PNGS)
 
 plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png ../sol/survey/multivessel.png plot-routes
 
-EXPERIMENT_TARGETS = \
-	../sol/noport/construction.json \
-	../sol/noport/segment.json \
-	$(foreach method,$(EXPERIMENT_REFINEMENT_METHODS),../sol/$(method)/refinement.json)
-
-experiments: prepare-routing-data $(EXPERIMENT_TARGETS)
+experiments: prepare-routing-data
+	@bash -lc 'set -euo pipefail; \
+		echo "Preparing segment inputs for: $(EXPERIMENT_REFINEMENT_METHODS)"; \
+		for method in $(EXPERIMENT_REFINEMENT_METHODS); do \
+			$(MAKE) segment METHOD="$$method"; \
+		done; \
+		echo "Running capped L2SEG experiments: $(L2SEG_VARIANTS)"; \
+		for limit in $(L2SEG_VARIANTS); do \
+			for method in $(EXPERIMENT_REFINEMENT_METHODS); do \
+				$(MAKE) refinement_l2seg METHOD="$$method" L2SEG="$$limit"; \
+			done; \
+		done; \
+		echo "Running default L2SEG experiment: $(L2SEG_DEFAULT_VALUE)"; \
+		for method in $(EXPERIMENT_REFINEMENT_METHODS); do \
+			$(MAKE) refinement METHOD="$$method"; \
+		done'
 
 plot-survey-routes: ../sol/survey/multivessel.png
 
@@ -228,6 +257,7 @@ help:
 	@echo "  make -C src segment METHOD=noport"
 	@echo "  make -C src refinement METHOD=nn"
 	@echo "  make -C src refinement METHOD=noport"
+	@echo "  make -C src refinement_l2seg METHOD=nn L2SEG=60"
 	@echo ""
 	@echo "Shortcuts"
 	@echo "  make -C src noport             # same as construction METHOD=noport"
@@ -243,7 +273,7 @@ help:
 	@echo "  make -C src survey"
 	@echo "  make -C src fixedport_candidates"
 	@echo "  make -C src fixedport"
-	@echo "  make -C src experiments"
+	@echo "  make -C src experiments          # runs L2SEG values from config/gsp_solver.yaml in order"
 	@echo "  make -C src plot"
 	@echo "  make -C src plot-routes"
 	@echo "  make -C src plot-survey-routes"

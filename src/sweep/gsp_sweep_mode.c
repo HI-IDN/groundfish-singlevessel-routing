@@ -1941,13 +1941,15 @@ static int write_sweep_json(const char *output_path,
 static void parse_sweep_args(int argc, char **argv,
                              const char **strategy, const char **database,
                              const char **config, const char **input,
-                             const char **output, int *time_limit, int *debug_mode) {
+                             const char **output, int *time_limit,
+                             int *l2seg_time_limit, int *debug_mode) {
     *strategy = NULL;
     *database = NULL;
     *config = NULL;
     *input = NULL;
     *output = NULL;
     *time_limit = 0;
+    *l2seg_time_limit = -1;
     *debug_mode = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -1962,12 +1964,13 @@ static void parse_sweep_args(int argc, char **argv,
         else if (strcmp(argv[i], "--input") == 0) *input = argv[i + 1];
         else if (strcmp(argv[i], "--output") == 0) *output = argv[i + 1];
         else if (strcmp(argv[i], "--time-limit") == 0) *time_limit = atoi(argv[i + 1]);
+        else if (strcmp(argv[i], "--l2seg-limit") == 0) *l2seg_time_limit = atoi(argv[i + 1]);
     }
 }
 
 int mode_refinement(int argc, char **argv) {
     const char *strategy = NULL, *database = NULL, *config = NULL, *input = NULL, *output = NULL;
-    int time_limit = 0, debug_mode = 0;
+    int time_limit = 0, l2seg_time_limit = -1, debug_mode = 0;
     sqlite3 *db = NULL;
     nn_instance_t inst = {0};
     gsp_boat_t boat;
@@ -1988,12 +1991,16 @@ int mode_refinement(int argc, char **argv) {
     printf("============================================================\n");
     printf("GSP Solver - Refinement\n");
     printf("============================================================\n\n");
-    parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output, &time_limit, &debug_mode);
+    parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output,
+                     &time_limit, &l2seg_time_limit, &debug_mode);
     if (!strategy || !database || !config || !input || !output) {
         fprintf(stderr, "ERROR: sweep requires --strategy, --database, --config, --input, and --output\n");
         goto cleanup;
     }
     read_sweep_config_from_yaml(config, &sweep_cfg);
+    if (l2seg_time_limit >= 0) {
+        sweep_cfg.mip_time_limit_seconds = l2seg_time_limit;
+    }
 #ifndef HAVE_GUROBI
     fprintf(stderr, "ERROR: sweep mode requires Gurobi support at build time\n");
     goto cleanup;

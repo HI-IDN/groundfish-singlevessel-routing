@@ -30,13 +30,14 @@ init:
 sweep:
   # Iteration control
   max_iterations: 100                    # Maximum iterations per L2SEG sweep
+  l2seg_variants: [60, 120, 180]         # Additional refinement experiment limits, in seconds
 
 # Gurobi Solver Settings
 gurobi:
   time_limit_seconds:
     0seg: 0                              # No-port MIP time limit; 0 = no limit
     1seg: 0                              # Per-segment init local postopt time limit; 0 = no limit
-    2seg: 0                              # Boundary-sweep segment MIP time limit; 0 = no limit
+    2seg: 0                              # Default boundary-sweep segment MIP time limit; 0 = no limit
     Xseg: 86400                          # Fixed-port MIP time limit after incumbent exists
 
   haul_distance_scale:
