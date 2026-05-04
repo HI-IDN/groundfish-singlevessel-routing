@@ -59,7 +59,10 @@ int solve_mip_fixedport(const mip_fixedport_instance_t *instance,
     dist = (double*)mip_xmalloc((size_t)n * (size_t)n * sizeof(double));
 
     entry[0] = instance->boat->location_id;
-    exit[0] = instance->boat->location_id;
+    exit[0] = (instance->end_location_id > 0)
+        ? instance->end_location_id
+        : instance->boat->location_id;
+    is_port[0] = 1;
 
     for (int i = 0; i < instance->n_stations; i++) {
         int city = i + 1;

@@ -21,8 +21,8 @@ around
 adjacent segment boundaries. The high-level orchestration lives here:
 
 - choose which boundary neighborhood to examine
-- build the two-segment subproblem
-- call the exact MIP solver in `mip/`
+- build the two-segment subproblem with the two adjacent segment station sets
+- call the fixed-port capacity MIP in `mip/`, using the current boundary port as the single fixed unload
 - accept or reject the incumbent improvement
 - emit JSON snapshots and run summaries
 

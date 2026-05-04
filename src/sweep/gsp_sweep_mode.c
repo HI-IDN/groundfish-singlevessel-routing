@@ -16,6 +16,7 @@
 #ifdef HAVE_GUROBI
 #include <gurobi_c.h>
 #include "../mip/include/mip_endpaired_tsp.h"
+#include "../mip/include/mip_fixedport.h"
 #endif
 
 #ifndef __stdcall
@@ -1228,6 +1229,133 @@ static int reoptimize_all_segments(GRBenv *env, const nn_instance_t *inst,
     return 1;
 }
 
+static int solve_boundary_capacity_mip(GRBenv *env,
+                                       const nn_instance_t *inst,
+                                       const gsp_boat_t *boat,
+                                       const gsp_route_segment_t *left,
+                                       const gsp_route_segment_t *right,
+                                       int boundary_loc_id,
+                                       double haul_distance_scale,
+                                       double time_limit_seconds,
+                                       int **out_left_ids,
+                                       int *out_left_count,
+                                       int **out_right_ids,
+                                       int *out_right_count,
+                                       double *out_gap_percent,
+                                       double *out_runtime_seconds,
+                                       int *out_model_num_vars,
+                                       int *out_model_num_constrs) {
+    int total = left->count + right->count;
+    Station *stations = NULL;
+    int *candidate_ports = NULL;
+    Boat local_boat;
+    mip_fixedport_instance_t mip_instance;
+    mip_fixedport_solution_t mip_solution;
+    mip_params_t mip_params;
+    int seen_port = 0;
+    int left_count = 0;
+    int right_count = 0;
+    int *left_ids = NULL;
+    int *right_ids = NULL;
+    int error = 1;
+
+    if (!inst || !boat || !left || !right || boundary_loc_id <= 0 || total <= 0) return 0;
+    if (out_left_ids) *out_left_ids = NULL;
+    if (out_right_ids) *out_right_ids = NULL;
+    if (out_left_count) *out_left_count = 0;
+    if (out_right_count) *out_right_count = 0;
+
+    stations = (Station*)calloc((size_t)total, sizeof(Station));
+    candidate_ports = (int*)malloc(sizeof(int));
+    left_ids = (int*)malloc((size_t)total * sizeof(int));
+    right_ids = (int*)malloc((size_t)total * sizeof(int));
+    if (!stations || !candidate_ports || !left_ids || !right_ids) goto quit;
+
+    for (int i = 0; i < total; i++) {
+        int signed_station_id = (i < left->count)
+            ? left->signed_station_ids[i]
+            : right->signed_station_ids[i - left->count];
+        int station_idx = find_station_index(inst, abs(signed_station_id));
+        if (station_idx < 0) goto quit;
+        stations[i].station_id = inst->nodes[station_idx].table_id;
+        stations[i].amount = inst->nodes[station_idx].amount;
+        stations[i].start_location_id = inst->nodes[station_idx].start_loc_id;
+        stations[i].end_location_id = inst->nodes[station_idx].end_loc_id;
+    }
+
+    local_boat.boat_id = boat->boat_id;
+    local_boat.name = (char*)boat->boat_name;
+    local_boat.capacity = (int)boat->boat_capacity;
+    local_boat.location_id = left->start_loc_id;
+    candidate_ports[0] = boundary_loc_id;
+
+    memset(&mip_instance, 0, sizeof(mip_instance));
+    mip_instance.boat = &local_boat;
+    mip_instance.end_location_id = right->end_loc_id;
+    mip_instance.stations = stations;
+    mip_instance.n_stations = total;
+    mip_instance.candidate_port_location_ids = candidate_ports;
+    mip_instance.candidate_port_count = 1;
+    mip_instance.distances = inst->distances;
+    mip_instance.max_location_id = inst->max_loc_id;
+
+    memset(&mip_params, 0, sizeof(mip_params));
+    mip_params.verbose = 0;
+    mip_params.shared_env = env;
+    mip_params.time_limit_seconds = time_limit_seconds;
+    mip_params.exclude_haul_distance = !(haul_distance_scale > 0.0);
+    mip_params.use_scaled_haul_distance = (haul_distance_scale > 0.0);
+    mip_params.haul_distance_scale = (haul_distance_scale > 0.0) ? haul_distance_scale : 0.0;
+
+    memset(&mip_solution, 0, sizeof(mip_solution));
+    if (solve_mip_fixedport(&mip_instance, &mip_params, &mip_solution) != 0) goto quit;
+
+    for (int i = 0; i < mip_solution.visit_count; i++) {
+        int signed_visit_id = mip_solution.signed_visit_ids[i];
+        int visit_id = abs(signed_visit_id);
+        int sign = (signed_visit_id < 0) ? -1 : 1;
+        if (visit_id <= total) {
+            int station_id = stations[visit_id - 1].station_id;
+            if (!seen_port) left_ids[left_count++] = sign * station_id;
+            else right_ids[right_count++] = sign * station_id;
+        } else if (visit_id == total + 1) {
+            if (seen_port) goto quit;
+            seen_port = 1;
+        } else {
+            goto quit;
+        }
+    }
+    if (!seen_port || left_count <= 0 || right_count <= 0) goto quit;
+
+    if (out_gap_percent) *out_gap_percent = mip_solution.gap * 100.0;
+    if (out_runtime_seconds) *out_runtime_seconds = mip_solution.runtime_seconds;
+    if (out_model_num_vars) {
+        int size = 1 + total + 1;
+        int n = 2 * size;
+        *out_model_num_vars = 3 * n * n;
+    }
+    if (out_model_num_constrs) {
+        int size = 1 + total + 1;
+        *out_model_num_constrs = 5 * size;
+    }
+
+    *out_left_ids = left_ids;
+    *out_left_count = left_count;
+    *out_right_ids = right_ids;
+    *out_right_count = right_count;
+    left_ids = NULL;
+    right_ids = NULL;
+    error = 0;
+
+quit:
+    free_mip_fixedport_solution(&mip_solution);
+    free(stations);
+    free(candidate_ports);
+    free(left_ids);
+    free(right_ids);
+    return error == 0;
+}
+
 static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_boat_t *boat,
                              gsp_route_segment_t *left, gsp_route_segment_t *right,
                              double haul_distance_scale,
@@ -1238,121 +1366,103 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_b
                              int boundary_index,
                              int left_segment_index,
                              int right_segment_index,
+                             int boundary_loc_id,
                              double time_limit_seconds) {
-    int total = left->count + right->count;
-    int *merged = (int*)malloc((size_t)total * sizeof(int));
     double current_total = left->distance_nm + right->distance_nm;
-    double best_total = current_total - SWEEP_EPS;
-    int best_k = -1;
     int *best_left_ids = NULL;
     int *best_right_ids = NULL;
     int best_left_catch = 0, best_right_catch = 0;
     double best_left_dist = 0.0, best_right_dist = 0.0;
+    int left_count = 0;
+    int right_count = 0;
+    double capacity_gap_percent = -1.0;
+    double capacity_runtime_seconds = -1.0;
+    int capacity_num_vars = 0;
+    int capacity_num_constrs = 0;
+    int *left_station_ids = NULL;
+    int *right_station_ids = NULL;
+    int *left_abs_ids = NULL;
+    int *right_abs_ids = NULL;
+    int total = left->count + right->count;
 
-    if (!merged) return 0;
-    for (int i = 0; i < left->count; i++) merged[i] = abs(left->signed_station_ids[i]);
-    for (int i = 0; i < right->count; i++) merged[left->count + i] = abs(right->signed_station_ids[i]);
+    if (!solve_boundary_capacity_mip(env, inst, boat, left, right,
+                                     boundary_loc_id,
+                                     haul_distance_scale,
+                                     time_limit_seconds,
+                                     &left_station_ids, &left_count,
+                                     &right_station_ids, &right_count,
+                                     &capacity_gap_percent,
+                                     &capacity_runtime_seconds,
+                                     &capacity_num_vars,
+                                     &capacity_num_constrs)) {
+        return 0;
+    }
+    if (solve_count) (*solve_count)++;
 
-    for (int k = 1; k < total; k++) {
-        int left_catch = 0;
-        int right_catch = 0;
-        double left_dist = 0.0;
-        double right_dist = 0.0;
-        double left_gap_percent = -1.0;
-        double right_gap_percent = -1.0;
-        double left_runtime_seconds = -1.0;
-        double right_runtime_seconds = -1.0;
-        int left_num_vars = 0;
-        int right_num_vars = 0;
-        int left_num_constrs = 0;
-        int right_num_constrs = 0;
-        int *left_ids = NULL;
-        int *right_ids = NULL;
-
-        for (int i = 0; i < k; i++) left_catch += station_amount(inst, merged[i]);
-        for (int i = k; i < total; i++) right_catch += station_amount(inst, merged[i]);
-        if (left_catch > (int)boat->boat_capacity || right_catch > (int)boat->boat_capacity) continue;
-
-        if (!solve_segment_tsp(env, inst, left->start_loc_id, left->end_loc_id,
-                               merged, k, &left_catch, &left_dist, &left_ids,
-                               haul_distance_scale, solve_count,
-                               &left_gap_percent, &left_runtime_seconds,
-                               &left_num_vars, &left_num_constrs,
-                               time_limit_seconds)) {
-            continue;
-        }
-        if (solve_details && solve_detail_count && solve_detail_capacity) {
-            gsp_mip_solve_detail_t detail;
-            gsp_mip_solve_detail_init(&detail);
-            detail.boundary_index = boundary_index;
-            detail.candidate_split_index = k;
-            detail.segment_index = left_segment_index;
-            detail.segment_role = 0;
-            detail.station_count = k;
-            detail.node_count = k + 2;
-            detail.moved_stations = count_segment_station_changes(left, &(gsp_route_segment_t){
-                .signed_station_ids = left_ids, .count = k
-            });
-            detail.model_num_vars = left_num_vars;
-            detail.model_num_constrs = left_num_constrs;
-            detail.runtime_seconds = left_runtime_seconds;
-            detail.gap_percent = left_gap_percent;
-            if (!gsp_append_mip_solve_detail(solve_details, solve_detail_count, solve_detail_capacity, &detail)) {
-                free(left_ids);
-                return 0;
-            }
-        }
-        if (!solve_segment_tsp(env, inst, right->start_loc_id, right->end_loc_id,
-                               merged + k, total - k, &right_catch, &right_dist, &right_ids,
-                               haul_distance_scale, solve_count,
-                               &right_gap_percent, &right_runtime_seconds,
-                               &right_num_vars, &right_num_constrs,
-                               time_limit_seconds)) {
-            free(left_ids);
-            continue;
-        }
-        if (solve_details && solve_detail_count && solve_detail_capacity) {
-            gsp_mip_solve_detail_t detail;
-            gsp_mip_solve_detail_init(&detail);
-            detail.boundary_index = boundary_index;
-            detail.candidate_split_index = k;
-            detail.segment_index = right_segment_index;
-            detail.segment_role = 1;
-            detail.station_count = total - k;
-            detail.node_count = (total - k) + 2;
-            detail.moved_stations = count_segment_station_changes(right, &(gsp_route_segment_t){
-                .signed_station_ids = right_ids, .count = total - k
-            });
-            detail.model_num_vars = right_num_vars;
-            detail.model_num_constrs = right_num_constrs;
-            detail.runtime_seconds = right_runtime_seconds;
-            detail.gap_percent = right_gap_percent;
-            if (!gsp_append_mip_solve_detail(solve_details, solve_detail_count, solve_detail_capacity, &detail)) {
-                free(left_ids);
-                free(right_ids);
-                return 0;
-            }
-        }
-
-        if (left_dist + right_dist + SWEEP_EPS < best_total) {
-            free(best_left_ids);
-            free(best_right_ids);
-            best_left_ids = left_ids;
-            best_right_ids = right_ids;
-            best_left_catch = left_catch;
-            best_right_catch = right_catch;
-            best_left_dist = left_dist;
-            best_right_dist = right_dist;
-            best_total = left_dist + right_dist;
-            best_k = k;
-        } else {
-            free(left_ids);
-            free(right_ids);
+    if (solve_details && solve_detail_count && solve_detail_capacity) {
+        gsp_mip_solve_detail_t detail;
+        gsp_mip_solve_detail_init(&detail);
+        detail.boundary_index = boundary_index;
+        detail.candidate_split_index = 0;
+        detail.segment_index = 0;
+        detail.segment_role = 2;
+        detail.station_count = total;
+        detail.node_count = total + 3;
+        detail.moved_stations =
+            count_segment_station_changes(left, &(gsp_route_segment_t){.signed_station_ids = left_station_ids, .count = left_count}) +
+            count_segment_station_changes(right, &(gsp_route_segment_t){.signed_station_ids = right_station_ids, .count = right_count});
+        detail.model_num_vars = capacity_num_vars;
+        detail.model_num_constrs = capacity_num_constrs;
+        detail.runtime_seconds = capacity_runtime_seconds;
+        detail.gap_percent = capacity_gap_percent;
+        if (!gsp_append_mip_solve_detail(solve_details, solve_detail_count, solve_detail_capacity, &detail)) {
+            free(left_station_ids);
+            free(right_station_ids);
+            return 0;
         }
     }
 
-    free(merged);
-    if (best_k < 0) {
+    left_abs_ids = (int*)malloc((size_t)left_count * sizeof(int));
+    right_abs_ids = (int*)malloc((size_t)right_count * sizeof(int));
+    if (!left_abs_ids || !right_abs_ids) {
+        free(left_station_ids);
+        free(right_station_ids);
+        free(left_abs_ids);
+        free(right_abs_ids);
+        return 0;
+    }
+    for (int i = 0; i < left_count; i++) left_abs_ids[i] = abs(left_station_ids[i]);
+    for (int i = 0; i < right_count; i++) right_abs_ids[i] = abs(right_station_ids[i]);
+
+    if (!solve_segment_tsp(env, inst, left->start_loc_id, boundary_loc_id,
+                           left_abs_ids, left_count,
+                           &best_left_catch, &best_left_dist, &best_left_ids,
+                           haul_distance_scale, NULL, NULL, NULL, NULL, NULL,
+                           time_limit_seconds)) {
+        free(left_station_ids);
+        free(right_station_ids);
+        free(left_abs_ids);
+        free(right_abs_ids);
+        return 0;
+    }
+    if (!solve_segment_tsp(env, inst, boundary_loc_id, right->end_loc_id,
+                           right_abs_ids, right_count,
+                           &best_right_catch, &best_right_dist, &best_right_ids,
+                           haul_distance_scale, NULL, NULL, NULL, NULL, NULL,
+                           time_limit_seconds)) {
+        free(left_station_ids);
+        free(right_station_ids);
+        free(left_abs_ids);
+        free(right_abs_ids);
+        free(best_left_ids);
+        return 0;
+    }
+
+    free(left_station_ids);
+    free(right_station_ids);
+    free(left_abs_ids);
+    free(right_abs_ids);
+    if (best_left_dist + best_right_dist + SWEEP_EPS >= current_total) {
         free(best_left_ids);
         free(best_right_ids);
         return 0;
@@ -1362,8 +1472,8 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_b
     free(right->signed_station_ids);
     left->signed_station_ids = best_left_ids;
     right->signed_station_ids = best_right_ids;
-    left->count = best_k;
-    right->count = total - best_k;
+    left->count = left_count;
+    right->count = right_count;
     left->catch_amount = best_left_catch;
     right->catch_amount = best_right_catch;
     left->distance_nm = best_left_dist;
@@ -1772,7 +1882,7 @@ static int write_sweep_json(const char *output_path,
         fprintf(fp, "%s\n", (i + 1 < snapshot_count) ? "," : "");
     }
     fprintf(fp, "  },\n");
-    gsp_write_boundary_mip_section(fp, "l2seg", "endpaired_tsp",
+    gsp_write_boundary_mip_section(fp, "l2seg", "fixedport_capacity",
                                    cfg ? (double)cfg->mip_time_limit_seconds : 0.0,
                                    mip_details, mip_detail_count);
 
@@ -2107,6 +2217,7 @@ int mode_refinement(int argc, char **argv) {
                                       b + 1,
                                       b + 1,
                                       right_idx + 1,
+                                      boundary_loc_id,
                                       boundary_time_limit_seconds)) {
                     int station_changes = count_segment_station_changes(&left_before, &segments[b]) +
                                           count_segment_station_changes(&right_before, &segments[right_idx]);
