@@ -19,18 +19,18 @@ init:
     - ge                                 # GE: Greedy Edge (fast)
     - ci                                 # CI: Cheapest Insertion (moderate)
 
-  noport: {}                             # Reserved for method-specific init options
-  fixedport: {}                          # Reserved for method-specific init options
-  nn: {}                                 # Reserved for method-specific init options
-  ge: {}                                 # Reserved for method-specific init options
-  ci: {}                                 # Reserved for method-specific init options
+  noport: { }                             # Reserved for method-specific init options
+  fixedport: { }                          # Reserved for method-specific init options
+  nn: { }                                 # Reserved for method-specific init options
+  ge: { }                                 # Reserved for method-specific init options
+  ci: { }                                 # Reserved for method-specific init options
 
 
 # Phase 1: Matheuristic Sweep Parameters
 sweep:
   # Iteration control
   max_iterations: 100                    # Maximum iterations per L2SEG sweep
-  l2seg_variants: [60, 120, 180]         # Additional refinement experiment limits, in seconds
+  l2seg_variants: [ 60, 120, 180, 240, 300, 360 ] # Additional refinement limits, in seconds
 
 # Gurobi Solver Settings
 gurobi:
