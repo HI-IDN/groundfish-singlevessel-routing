@@ -144,37 +144,40 @@ trajectory_rows <- function(method, source = "refinement") {
     return(NULL)
   }
 
-  totals <- as.numeric(unlist(json$summary$distance_nm$trajectory))
-  station_distance <- extract_solution_distance(json, "haul")
-  transit <- totals - station_distance
-  initial_transit <- transit[[1]]
+  # Build ordered pass keys: init, pass1, pass2, ...
+  n_passes  <- as.integer(json$summary$sweep$sweep_pass_count)
+  pass_keys <- c("init", if (n_passes > 0L) paste0("pass", seq_len(n_passes)))
 
-  moved <- vapply(seq_along(transit), function(i) {
-    if (i == 1) return(NA_integer_)
-    pass_name <- sprintf("pass%d", i - 1)
-    value <- json$solution[[pass_name]]$stations_moved
-    if (is.null(value) || length(value) == 0 || is.na(value)) return(NA_integer_)
+  # Read transit distance directly from solution.<key>.distance_nm.grand_total.transit
+  transit <- vapply(pass_keys, function(k) {
+    val <- json$solution[[k]]$distance_nm$grand_total$transit
+    if (is.null(val) || length(val) == 0L) NA_real_ else as.numeric(val)
+  }, numeric(1))
+
+  initial_transit <- transit[[1L]]   # solution.init.distance_nm.grand_total.transit
+
+  moved <- vapply(seq_along(pass_keys), function(i) {
+    if (i == 1L) return(NA_integer_)
+    value <- json$solution[[pass_keys[i]]]$stations_moved
+    if (is.null(value) || length(value) == 0L || is.na(value)) return(NA_integer_)
     as.integer(value)
   }, integer(1))
-  accepted <- vapply(seq_along(transit), function(i) {
-    if (i == 1) return(NA_integer_)
-    pass_name <- sprintf("pass%d", i - 1)
-    value <- json$solution[[pass_name]]$accepted_capacity_solves
-    if (is.null(value) || length(value) == 0 || is.na(value)) return(NA_integer_)
+  accepted <- vapply(seq_along(pass_keys), function(i) {
+    if (i == 1L) return(NA_integer_)
+    value <- json$solution[[pass_keys[i]]]$accepted_capacity_solves
+    if (is.null(value) || length(value) == 0L || is.na(value)) return(NA_integer_)
     as.integer(value)
   }, integer(1))
-  capacity_solves <- vapply(seq_along(transit), function(i) {
-    if (i == 1) return(NA_integer_)
-    pass_name <- sprintf("pass%d", i - 1)
-    value <- json$solution[[pass_name]]$total_capacity_solves
-    if (is.null(value) || length(value) == 0 || is.na(value)) return(NA_integer_)
+  capacity_solves <- vapply(seq_along(pass_keys), function(i) {
+    if (i == 1L) return(NA_integer_)
+    value <- json$solution[[pass_keys[i]]]$total_capacity_solves
+    if (is.null(value) || length(value) == 0L || is.na(value)) return(NA_integer_)
     as.integer(value)
   }, integer(1))
-  mip_solves <- vapply(seq_along(transit), function(i) {
-    if (i == 1) return(NA_integer_)
-    pass_name <- sprintf("pass%d", i - 1)
-    value <- json$solution[[pass_name]]$mip_solves
-    if (is.null(value) || length(value) == 0 || is.na(value)) return(NA_integer_)
+  mip_solves <- vapply(seq_along(pass_keys), function(i) {
+    if (i == 1L) return(NA_integer_)
+    value <- json$solution[[pass_keys[i]]]$mip_solves
+    if (is.null(value) || length(value) == 0L || is.na(value)) return(NA_integer_)
     as.integer(value)
   }, integer(1))
 
@@ -182,7 +185,7 @@ trajectory_rows <- function(method, source = "refinement") {
     method = method,
     source = source,
     l2seg = l2seg_from_json(json),
-    sweep = seq_along(transit) - 1,
+    sweep = seq_along(pass_keys) - 1L,
     transit_nm = transit,
     relative_improvement_percent = 100 * (initial_transit - transit) / initial_transit,
     stations_moved = moved,
@@ -206,12 +209,11 @@ refinement_row <- function(method, source = "refinement") {
   moved <- json$summary$sweep$stations_moved_per_pass
   accepted <- json$summary$sweep$accepted_capacity_solves
   capacity_solves <- json$summary$sweep$total_capacity_solves
-  trajectory <- unlist(json$summary$distance_nm$trajectory)
-  initial_total <- as.numeric(trajectory[[1]])
-  station_distance <- extract_solution_distance(json, "haul")
-  initial_transit <- initial_total - station_distance
-  final_transit <- extract_solution_distance(json, "transit")
-  improvement <- initial_transit - final_transit
+
+  # Read transit directly — never use total or haul
+  initial_transit <- as.numeric(json$solution$init$distance_nm$grand_total$transit)
+  final_transit   <- as.numeric(json$solution[[json$summary$status$final]]$distance_nm$grand_total$transit)
+  improvement         <- initial_transit - final_transit
   relative_improvement <- 100 * improvement / initial_transit
 
   tibble::tibble(
@@ -299,169 +301,154 @@ trajectory_tbl$Label <- factor(
 )
 
 # ---------------------------------------------------------------------------
-# Plot settings
-# ---------------------------------------------------------------------------
-# Which l2seg to show in the sweep plots.
-# Defaults to the smallest finite value present; NA means uncapped only.
-plot_l2seg <- if (any(!is.na(trajectory_tbl$l2seg))) {
-  min(trajectory_tbl$l2seg, na.rm = TRUE)
-} else {
-  NA_integer_
-}
-
 # Whether to annotate the right end of each line with improvement values
 show_end_labels <- TRUE
 
 # ---------------------------------------------------------------------------
-# Filter trajectory to the chosen l2seg
+# Function: build and save one per-l2seg line plot
 # ---------------------------------------------------------------------------
-trajectory_plot_tbl <- trajectory_tbl %>%
-  dplyr::filter(
-    if (is.na(plot_l2seg)) is.na(l2seg) else (!is.na(l2seg) & l2seg == plot_l2seg)
-  )
+make_sweep_lineplot <- function(plot_l2seg, traj_tbl, show_end_labels = TRUE) {
+  tbl <- traj_tbl %>%
+    dplyr::filter(
+      if (is.na(plot_l2seg)) is.na(l2seg) else (!is.na(l2seg) & l2seg == plot_l2seg)
+    )
 
-l2seg_subtitle <- if (is.na(plot_l2seg)) {
-  "L2seg = \u221e (uncapped)"
-} else {
-  sprintf("L2seg = %d s", plot_l2seg)
+  if (nrow(tbl) == 0) {
+    warning(sprintf("No trajectory data for l2seg = %s", plot_l2seg))
+    return(invisible(NULL))
+  }
+
+  subtitle <- if (is.na(plot_l2seg)) {
+    bquote(L[2*seg] == infinity ~ "(uncapped)")
+  } else {
+    bquote(L[2*seg] == .(plot_l2seg) ~ s)
+  }
+
+  subtitle_txt <- if (is.na(plot_l2seg)) {
+    "L\u2082seg = \u221e (uncapped)"
+  } else {
+    sprintf("L\u2082seg = %d s", plot_l2seg)
+  }
+
+  x_max <- max(tbl$sweep)
+
+  end_tbl <- tbl %>%
+    dplyr::group_by(Label) %>%
+    dplyr::filter(sweep == max(sweep)) %>%
+    dplyr::ungroup() %>%
+    dplyr::left_join(
+      tbl %>%
+        dplyr::filter(sweep == 0) %>%
+        dplyr::select(Label, initial_nm = transit_nm),
+      by = "Label"
+    ) %>%
+    dplyr::mutate(
+      end_label_a = sprintf("%+.0f nm", transit_nm - initial_nm),
+      end_label_b = sprintf("%+.1f%%", relative_improvement_percent)
+    )
+
+  pa <- ggplot(tbl, aes(x = sweep, y = transit_nm, color = Label, group = Label)) +
+    geom_line(linewidth = 0.8) +
+    geom_point(size = 2) +
+    geom_text(
+      aes(label = point_label),
+      nudge_y = 95, size = 2.5, lineheight = 0.9,
+      color = "black", show.legend = FALSE, na.rm = TRUE
+    ) +
+    { if (show_end_labels) geom_text(
+        data = end_tbl,
+        aes(x = sweep, y = transit_nm, label = end_label_a, color = Label),
+        hjust = -0.15, size = 2.8, fontface = "bold", show.legend = FALSE
+      ) } +
+    expand_limits(
+      y = max(tbl$transit_nm, na.rm = TRUE) + 250,
+      x = x_max + if (show_end_labels) 0.6 else 0
+    ) +
+    scale_x_continuous(breaks = sort(unique(tbl$sweep))) +
+    labs(
+      title = "A: Transit Distance", subtitle = subtitle,
+      x = "Sweep", y = "Transit distance (nm)", color = "Variant"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(size = 9, color = "grey40"),
+      panel.grid.minor = element_blank()
+    )
+
+  pb <- ggplot(tbl, aes(x = sweep, y = relative_improvement_percent, color = Label, group = Label)) +
+    geom_hline(yintercept = 0, color = "grey65", linewidth = 0.4) +
+    geom_line(linewidth = 0.8) +
+    geom_point(size = 2) +
+    { if (show_end_labels) geom_text(
+        data = end_tbl,
+        aes(x = sweep, y = relative_improvement_percent, label = end_label_b, color = Label),
+        hjust = -0.15, size = 2.8, fontface = "bold", show.legend = FALSE
+      ) } +
+    expand_limits(x = x_max + if (show_end_labels) 0.6 else 0) +
+    scale_x_continuous(breaks = sort(unique(tbl$sweep))) +
+    labs(
+      title = "B: Relative Improvement", subtitle = subtitle,
+      x = "Sweep", y = "Improvement from initial transit (%)", color = "Variant"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(size = 9, color = "grey40"),
+      panel.grid.minor = element_blank()
+    )
+
+  leg <- cowplot::get_legend(pa)
+
+  footnote_grob <- cowplot::ggdraw() +
+    cowplot::draw_label(
+      paste0(
+        "All variants use ", subtitle_txt, ". ",
+        "End labels: (A) absolute transit improvement from sweep 0; ",
+        "(B) relative improvement from initial transit."
+      ),
+      x = 0.02, y = 0.5, hjust = 0, vjust = 0.5, size = 7.5, color = "grey30"
+    )
+
+  cowplot::plot_grid(
+    cowplot::plot_grid(
+      pa + theme(legend.position = "none"),
+      pb + theme(legend.position = "none"),
+      ncol = 2, rel_widths = c(1, 1)
+    ),
+    leg,
+    footnote_grob,
+    ncol = 1,
+    rel_heights = c(1, 0.10, 0.07)
+  )
 }
 
-x_max <- max(trajectory_plot_tbl$sweep)
-
-# End-of-line annotation data frames
-end_tbl <- trajectory_plot_tbl %>%
-  dplyr::group_by(Label) %>%
-  dplyr::filter(sweep == max(sweep)) %>%
-  dplyr::ungroup() %>%
-  dplyr::left_join(
-    trajectory_plot_tbl %>%
-      dplyr::filter(sweep == 0) %>%
-      dplyr::select(Label, initial_nm = transit_nm),
-    by = "Label"
-  ) %>%
-  dplyr::mutate(
-    end_label_a = sprintf("%+.0f nm", transit_nm - initial_nm),
-    end_label_b = sprintf("%+.1f%%", relative_improvement_percent)
-  )
-
 # ---------------------------------------------------------------------------
-# Plots
+# Generate one line plot per distinct l2seg value
 # ---------------------------------------------------------------------------
-plot_a <- ggplot(
-  trajectory_plot_tbl,
-  aes(x = sweep, y = transit_nm, color = Label, group = Label)
-) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 2) +
-  geom_text(
-    aes(label = point_label),
-    nudge_y = 95,
-    size = 2.5,
-    lineheight = 0.9,
-    color = "black",
-    show.legend = FALSE,
-    na.rm = TRUE
-  ) +
-  { if (show_end_labels) geom_text(
-      data = end_tbl,
-      aes(x = sweep, y = transit_nm, label = end_label_a, color = Label),
-      hjust = -0.15,
-      size = 2.8,
-      fontface = "bold",
-      show.legend = FALSE
-    ) } +
-  expand_limits(
-    y = max(trajectory_plot_tbl$transit_nm, na.rm = TRUE) + 250,
-    x = x_max + if (show_end_labels) 0.6 else 0
-  ) +
-  scale_x_continuous(breaks = sort(unique(trajectory_plot_tbl$sweep))) +
-  labs(
-    title = "A: Transit Distance",
-    subtitle = l2seg_subtitle,
-    x = "Sweep",
-    y = "Transit distance (nm)",
-    color = "Variant"
-  ) +
-  theme_bw(base_size = 12) +
-  theme(
-    legend.position = "bottom",
-    plot.title = element_text(face = "bold"),
-    plot.subtitle = element_text(size = 9, color = "grey40"),
-    panel.grid.minor = element_blank()
-  )
-
-plot_b <- ggplot(
-  trajectory_plot_tbl,
-  aes(x = sweep, y = relative_improvement_percent, color = Label, group = Label)
-) +
-  geom_hline(yintercept = 0, color = "grey65", linewidth = 0.4) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 2) +
-  { if (show_end_labels) geom_text(
-      data = end_tbl,
-      aes(x = sweep, y = relative_improvement_percent, label = end_label_b, color = Label),
-      hjust = -0.15,
-      size = 2.8,
-      fontface = "bold",
-      show.legend = FALSE
-    ) } +
-  expand_limits(x = x_max + if (show_end_labels) 0.6 else 0) +
-  scale_x_continuous(breaks = sort(unique(trajectory_plot_tbl$sweep))) +
-  labs(
-    title = "B: Relative Improvement",
-    subtitle = l2seg_subtitle,
-    x = "Sweep",
-    y = "Improvement from initial transit (%)",
-    color = "Variant"
-  ) +
-  theme_bw(base_size = 12) +
-  theme(
-    legend.position = "bottom",
-    plot.title = element_text(face = "bold"),
-    plot.subtitle = element_text(size = 9, color = "grey40"),
-    panel.grid.minor = element_blank()
-  )
-
-panels <- cowplot::plot_grid(
-  plot_a + theme(legend.position = "none"),
-  plot_b + theme(legend.position = "none"),
-  ncol = 2,
-  rel_widths = c(1, 1)
+all_l2seg_plot_vals <- c(
+  sort(unique(trajectory_tbl$l2seg[!is.na(trajectory_tbl$l2seg)])),
+  if (any(is.na(trajectory_tbl$l2seg))) NA_integer_
 )
 
-legend <- cowplot::get_legend(plot_a)
-
-# Common footnote below the legend
-footnote_text <- paste0(
-  "All variants use ", l2seg_subtitle, ". ",
-  "End labels: (A) absolute transit improvement from sweep 0; (B) relative improvement from initial transit."
-)
-footnote_grob <- cowplot::ggdraw() +
-  cowplot::draw_label(
-    footnote_text,
-    x = 0.02, y = 0.5,
-    hjust = 0, vjust = 0.5,
-    size = 7.5,
-    color = "grey30"
-  )
-refinement_plot <- cowplot::plot_grid(
-  panels,
-  legend,
-  footnote_grob,
-  ncol = 1,
-  rel_heights = c(1, 0.10, 0.07)
-)
-
-# Name the per-l2seg plot after the l2seg value it shows
-plot_l2seg_str <- if (is.na(plot_l2seg)) "inf" else as.character(plot_l2seg)
-plot_file <- file.path(sol_dir, sprintf("refinement_transit_sweeps_%s.png", plot_l2seg_str))
-ggsave(plot_file, plot = refinement_plot, width = 11, height = 5.5, dpi = 150)
-cat(sprintf("Plot saved to: %s\n\n", plot_file))
+for (lv in all_l2seg_plot_vals) {
+  lv_str <- if (is.na(lv)) "inf" else as.character(lv)
+  plt    <- make_sweep_lineplot(lv, trajectory_tbl, show_end_labels)
+  if (!is.null(plt)) {
+    out <- file.path(sol_dir, sprintf("refinement_transit_sweeps_%s.png", lv_str))
+    ggsave(out, plot = plt, width = 11, height = 5.5, dpi = 150)
+    cat(sprintf("Plot saved to: %s\n", out))
+  }
+}
+cat("\n")
 
 # ---------------------------------------------------------------------------
 # Summary boxplot across ALL l2seg values
-# Each sweep position: boxplot over all (method x l2seg) observations.
-# Line + point overlay shows the per-sweep mean.
+# Per sweep: one box per method coloured by Notation; the distribution within
+# each box spans the available l2seg runs for that method.
+# A line connects per-method means across sweeps.
 # ---------------------------------------------------------------------------
 all_l2seg_vals <- sort(unique(trajectory_tbl$l2seg[!is.na(trajectory_tbl$l2seg)]))
 has_uncapped   <- any(is.na(trajectory_tbl$l2seg))
@@ -469,117 +456,202 @@ l2seg_list_str <- paste(
   c(as.character(all_l2seg_vals), if (has_uncapped) "\u221e"),
   collapse = ", "
 )
-box_subtitle <- sprintf("All L\u2082seg values: %s s", l2seg_list_str)
+box_subtitle <- bquote(
+  "All " * L[2*seg] * " values: " * .(l2seg_list_str) * " s"
+)
 
 box_sweeps <- sort(unique(trajectory_tbl$sweep))
+box_x_max  <- max(box_sweeps)
 
-mean_tbl_a <- trajectory_tbl %>%
-  dplyr::group_by(sweep) %>%
-  dplyr::summarise(mean_val = mean(transit_nm, na.rm = TRUE), .groups = "drop")
+# Ensure Notation is a factor in trajectory_tbl (inherits level order from all_runs)
+trajectory_tbl$Notation <- factor(
+  trajectory_tbl$Notation,
+  levels = notation_rows$Notation
+)
 
-mean_tbl_b <- trajectory_tbl %>%
-  dplyr::group_by(sweep) %>%
-  dplyr::summarise(mean_val = mean(relative_improvement_percent, na.rm = TRUE), .groups = "drop")
-
-# End annotations for the boxplot panels (final sweep mean)
-end_mean_a <- mean_tbl_a %>% dplyr::filter(sweep == max(sweep)) %>%
-  dplyr::left_join(
-    mean_tbl_a %>% dplyr::filter(sweep == 0) %>% dplyr::rename(initial = mean_val),
-    by = "sweep"
+# Map l2seg values to linetypes for background lines
+l2seg_lt_levels <- c(
+  as.character(sort(unique(trajectory_tbl$l2seg[!is.na(trajectory_tbl$l2seg)]))),
+  if (any(is.na(trajectory_tbl$l2seg))) "Inf"
+)
+lt_palette <- c("solid", "dashed", "dotted", "dotdash", "longdash", "twodash")
+lt_values  <- setNames(
+  lt_palette[seq_along(l2seg_lt_levels)],
+  l2seg_lt_levels
+)
+trajectory_tbl <- trajectory_tbl %>%
+  dplyr::mutate(
+    l2seg_fct = factor(
+      ifelse(is.na(l2seg), "Inf", as.character(l2seg)),
+      levels = l2seg_lt_levels
+    )
   )
-# Recompute initial for end label
-initial_mean_a <- mean_tbl_a$mean_val[mean_tbl_a$sweep == 0]
-final_mean_a   <- mean_tbl_a$mean_val[mean_tbl_a$sweep == max(mean_tbl_a$sweep)]
-final_mean_b   <- mean_tbl_b$mean_val[mean_tbl_b$sweep == max(mean_tbl_b$sweep)]
 
-box_x_max <- max(box_sweeps)
+# Per-run final improvement (each run's own last sweep, not global max sweep)
+final_per_run <- trajectory_tbl %>%
+  dplyr::group_by(Notation, source) %>%
+  dplyr::filter(sweep == max(sweep)) %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(
+    trajectory_tbl %>%
+      dplyr::filter(sweep == 0) %>%
+      dplyr::select(Notation, source, initial_nm = transit_nm),
+    by = c("Notation", "source")
+  ) %>%
+  dplyr::mutate(
+    abs_improv = initial_nm - transit_nm,
+    rel_improv = 100 * abs_improv / initial_nm
+  )
 
-bplot_a <- ggplot(trajectory_tbl, aes(x = sweep, y = transit_nm)) +
-  geom_boxplot(
-    aes(group = sweep),
-    width = 0.35,
-    outlier.size = 1.2,
-    fill = "grey92",
-    color = "grey50"
-  ) +
+# Summary per method: mean ± SD of improvement across l2seg runs
+improv_summary <- final_per_run %>%
+  dplyr::group_by(Notation) %>%
+  dplyr::summarise(
+    mean_abs = mean(abs_improv, na.rm = TRUE),
+    sd_abs   = sd(abs_improv, na.rm = TRUE),
+    mean_pct = mean(rel_improv, na.rm = TRUE),
+    sd_pct   = sd(rel_improv, na.rm = TRUE),
+    mean_final_nm  = mean(transit_nm, na.rm = TRUE),
+    mean_final_pct = mean(rel_improv, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    end_label_a = ifelse(
+      is.na(sd_abs),
+      sprintf("-%d nm\n%+.1f%%", round(mean_abs), mean_pct),
+      sprintf("-%d \u00b1 %d nm\n%+.1f \u00b1 %.1f%%",
+              round(mean_abs), round(sd_abs), mean_pct, sd_pct)
+    ),
+    end_label_b = ifelse(
+      is.na(sd_pct),
+      sprintf("%+.1f%%", mean_pct),
+      sprintf("%+.1f \u00b1 %.1f%%", mean_pct, sd_pct)
+    )
+  )
+
+end_mean_a <- improv_summary %>% dplyr::mutate(mean_val = mean_final_nm)
+end_mean_b <- improv_summary %>% dplyr::mutate(mean_val = mean_final_pct,
+                                               end_label = end_label_b)
+
+end_mean_b <- improv_summary %>%
+  dplyr::mutate(mean_val = mean_final_pct, end_label = end_label_b)
+
+box_dodge <- position_dodge(width = 0.6)
+
+bplot_a <- ggplot(
+  trajectory_tbl,
+  aes(x = sweep, y = transit_nm, fill = Notation, color = Notation)
+) +
+  # Background: one thin line per (method × l2seg), linetype by l2seg
   geom_line(
-    data = mean_tbl_a,
-    aes(y = mean_val),
-    color = "steelblue", linewidth = 0.9, inherit.aes = FALSE,
-    aes(x = sweep)
+    aes(group = interaction(Notation, source), linetype = l2seg_fct),
+    linewidth = 0.4, alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE
   ) +
   geom_point(
-    data = mean_tbl_a,
-    aes(x = sweep, y = mean_val),
-    color = "steelblue", size = 2.5, inherit.aes = FALSE
+    aes(group = interaction(Notation, source)),
+    size = 0.9, alpha = 0.35, inherit.aes = TRUE, show.legend = FALSE
   ) +
-  { if (show_end_labels) annotate(
-      "text",
-      x = box_x_max + 0.15,
-      y = final_mean_a,
-      label = sprintf("%+.0f nm", final_mean_a - initial_mean_a),
-      hjust = -0.05, size = 2.8, fontface = "bold", color = "steelblue"
+  # Foreground: boxplot distribution across l2seg values per method
+  geom_boxplot(
+    aes(group = interaction(sweep, Notation)),
+    position = box_dodge,
+    width = 0.5,
+    outlier.size = 1.2,
+    alpha = 0.55,
+    linewidth = 0.5
+  ) +
+  { if (show_end_labels) geom_text(
+      data = end_mean_a,
+      aes(x = Inf, y = mean_val, label = end_label_a, color = Notation),
+      hjust = 0, vjust = 0.5,
+      size = 2.4, lineheight = 0.85,
+      inherit.aes = FALSE,
+      show.legend = FALSE
     ) } +
-  expand_limits(x = box_x_max + if (show_end_labels) 0.7 else 0) +
+  coord_cartesian(clip = "off") +
   scale_x_continuous(breaks = box_sweeps) +
+  scale_linetype_manual(
+    values = lt_values,
+    name   = bquote(L[2*seg] ~ "(s)")
+  ) +
   labs(
     title = "A: Transit Distance",
     subtitle = box_subtitle,
     x = "Sweep",
-    y = "Transit distance (nm)"
+    y = "Transit distance (nm)",
+    fill = "Variant", color = "Variant"
   ) +
   theme_bw(base_size = 12) +
   theme(
-    plot.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    plot.title    = element_text(face = "bold"),
     plot.subtitle = element_text(size = 9, color = "grey40"),
-    panel.grid.minor = element_blank()
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(t = 5, r = 90, b = 5, l = 5, unit = "pt")
   )
 
-bplot_b <- ggplot(trajectory_tbl, aes(x = sweep, y = relative_improvement_percent)) +
+bplot_b <- ggplot(
+  trajectory_tbl,
+  aes(x = sweep, y = relative_improvement_percent, fill = Notation, color = Notation)
+) +
   geom_hline(yintercept = 0, color = "grey65", linewidth = 0.4) +
-  geom_boxplot(
-    aes(group = sweep),
-    width = 0.35,
-    outlier.size = 1.2,
-    fill = "grey92",
-    color = "grey50"
-  ) +
+  # Background: one thin line per (method × l2seg), linetype by l2seg
   geom_line(
-    data = mean_tbl_b,
-    aes(x = sweep, y = mean_val),
-    color = "steelblue", linewidth = 0.9, inherit.aes = FALSE
+    aes(group = interaction(Notation, source), linetype = l2seg_fct),
+    linewidth = 0.4, alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE
   ) +
   geom_point(
-    data = mean_tbl_b,
-    aes(x = sweep, y = mean_val),
-    color = "steelblue", size = 2.5, inherit.aes = FALSE
+    aes(group = interaction(Notation, source)),
+    size = 0.9, alpha = 0.35, inherit.aes = TRUE, show.legend = FALSE
   ) +
-  { if (show_end_labels) annotate(
-      "text",
-      x = box_x_max + 0.15,
-      y = final_mean_b,
-      label = sprintf("%+.1f%%", final_mean_b),
-      hjust = -0.05, size = 2.8, fontface = "bold", color = "steelblue"
+  # Foreground: boxplot distribution across l2seg values per method
+  geom_boxplot(
+    aes(group = interaction(sweep, Notation)),
+    position = box_dodge,
+    width = 0.5,
+    outlier.size = 1.2,
+    alpha = 0.55,
+    linewidth = 0.5
+  ) +
+  { if (show_end_labels) geom_text(
+      data = end_mean_b,
+      aes(x = Inf, y = mean_val, label = end_label, color = Notation),
+      hjust = 0, vjust = 0.5,
+      size = 2.4, lineheight = 0.85,
+      inherit.aes = FALSE,
+      show.legend = FALSE
     ) } +
-  expand_limits(x = box_x_max + if (show_end_labels) 0.7 else 0) +
+  coord_cartesian(clip = "off") +
   scale_x_continuous(breaks = box_sweeps) +
+  scale_linetype_manual(
+    values = lt_values,
+    name   = bquote(L[2*seg] ~ "(s)")
+  ) +
   labs(
     title = "B: Relative Improvement",
     subtitle = box_subtitle,
     x = "Sweep",
-    y = "Improvement from initial transit (%)"
+    y = "Improvement from initial transit (%)",
+    fill = "Variant", color = "Variant"
   ) +
   theme_bw(base_size = 12) +
   theme(
-    plot.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    plot.title    = element_text(face = "bold"),
     plot.subtitle = element_text(size = 9, color = "grey40"),
-    panel.grid.minor = element_blank()
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(t = 5, r = 90, b = 5, l = 5, unit = "pt")
   )
 
+box_legend <- cowplot::get_legend(bplot_a)
+
 box_footnote_text <- paste0(
-  "Boxes span all (variant \u00d7 L\u2082seg) combinations at each sweep; whiskers are 1.5\u00d7IQR. ",
-  "Blue line and end labels show the per-sweep mean. ",
-  if (show_end_labels) "End labels: (A) mean absolute improvement from sweep 0; (B) mean relative improvement."
+  "Faint lines show individual trajectories for each L\u2082seg value per variant. ",
+  "Boxes summarise the distribution across L\u2082seg values at each sweep; whiskers are 1.5\u00d7IQR. ",
+  if (show_end_labels) paste0(
+    "End labels: expected improvement = mean absolute change \u00f7 mean initial transit. ",
+    "(A) relative (\u0025) and absolute (nm); (B) relative (\u0025)."
+  )
 )
 box_footnote_grob <- cowplot::ggdraw() +
   cowplot::draw_label(
@@ -591,10 +663,15 @@ box_footnote_grob <- cowplot::ggdraw() +
   )
 
 box_plot <- cowplot::plot_grid(
-  cowplot::plot_grid(bplot_a, bplot_b, ncol = 2, rel_widths = c(1, 1)),
+  cowplot::plot_grid(
+    bplot_a + theme(legend.position = "none"),
+    bplot_b + theme(legend.position = "none"),
+    ncol = 2, rel_widths = c(1, 1)
+  ),
+  box_legend,
   box_footnote_grob,
   ncol = 1,
-  rel_heights = c(1, 0.09)
+  rel_heights = c(1, 0.10, 0.08)
 )
 
 box_plot_file <- file.path(sol_dir, "refinement_transit_sweeps.png")
