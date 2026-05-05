@@ -3,8 +3,17 @@
 
 BUILD_DIR = ../build
 CONFIG_YAML = ../config/gsp_solver.yaml
-ROUTE_JSONS = $(shell find ../sol -name "*.json")
-ROUTE_PNGS = $(patsubst %.json,%.png,$(ROUTE_JSONS))
+
+# construction.json / segment.json → single-vessel route PNGs + .md summaries
+ROUTE_JSONS = $(shell find ../sol \( -name "construction.json" -o -name "segment.json" \) ! -path "*/survey/*")
+ROUTE_PNGS  = $(patsubst %.json,%.png,$(ROUTE_JSONS))
+
+# refinement*.json → route PNGs + .md summaries (separate so we can depend on them)
+REFINEMENT_ROUTE_JSONS = $(shell find ../sol -name "refinement*.json")
+REFINEMENT_ROUTE_PNGS  = $(patsubst %.json,%.png,$(REFINEMENT_ROUTE_JSONS))
+
+# Alias used for trajectory / MIP-runtime plot dependencies
+REFINEMENT_JSONS = $(REFINEMENT_ROUTE_JSONS)
 
 COUNTRY_DB ?= ../dat/gsp.db
 COUNTRY_ISLAND ?= ../dat/island.tsv
@@ -30,7 +39,7 @@ SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
 SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport sweep_table plot plot-routes plot-survey-routes plot-sweep-summary experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport sweep_table plot plot-routes plot-refinement plot-mip-runtime plot-survey-routes plot-sweep-summary experiments help
 
 all: build
 
@@ -220,7 +229,7 @@ sweep_table:
 		fi; \
 		Rscript "$${args[@]}"'
 
-plot-routes: $(ROUTE_PNGS)
+plot-routes: $(ROUTE_PNGS) $(REFINEMENT_ROUTE_PNGS)
 
 ../sol/%.png: ../sol/%.json
 	@cd .. && Rscript R/plot_single_vessel_route.R "$(patsubst ../%,%,$<)" "$(patsubst ../%,%,$@)"
@@ -237,7 +246,23 @@ plot-routes: $(ROUTE_PNGS)
 ../sol/sweep_summary_panels.png:
 	@bash -lc 'cd .. && Rscript R/plot_sweep_summary_panels.R sol sol/sweep_summary_panels.png'
 
-plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png ../sol/survey/multivessel.png plot-routes
+# Refinement sweep trajectory plots (make_refinement_table.R writes multiple PNGs;
+# use refinement_transit_sweeps.png as the representative stamp target).
+../sol/refinement_transit_sweeps.png: $(REFINEMENT_JSONS) $(CONFIG_YAML)
+	@bash -lc 'cd .. && Rscript R/make_refinement_table.R'
+
+plot-refinement: ../sol/refinement_transit_sweeps.png
+
+# MIP runtime plot
+../sol/mip_runtime_vs_size.png: $(REFINEMENT_JSONS) \
+    $(shell find ../sol \( -name "construction.json" -o -name "segment.json" \) ! -path "*/survey/*")
+	@bash -lc 'cd .. && Rscript R/plot_mip_runtime.R'
+
+plot-mip-runtime: ../sol/mip_runtime_vs_size.png
+
+plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png \
+      ../sol/survey/multivessel.png \
+      plot-routes plot-refinement plot-mip-runtime
 
 experiments: prepare-routing-data $(EXPERIMENT_L2SEG_TARGETS) $(EXPERIMENT_DEFAULT_TARGETS)
 	@echo "All experiments up to date."
@@ -291,8 +316,10 @@ help:
 	@echo "  make -C src fixedport_candidates"
 	@echo "  make -C src fixedport"
 	@echo "  make -C src experiments          # runs L2SEG values from config/gsp_solver.yaml in order"
-	@echo "  make -C src plot"
-	@echo "  make -C src plot-routes"
+	@echo "  make -C src plot                  # all plots"
+	@echo "  make -C src plot-routes           # construction/segment/refinement route PNGs"
+	@echo "  make -C src plot-refinement       # sweep trajectory PNGs (make_refinement_table.R)"
+	@echo "  make -C src plot-mip-runtime      # MIP runtime plot (plot_mip_runtime.R)"
 	@echo "  make -C src plot-survey-routes"
 	@echo "  make -C src plot-sweep-summary"
 	@echo "  make -C src clean"
