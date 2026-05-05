@@ -23,7 +23,7 @@ if (length(args) == 0) {
 
 survey_file <- args[1]
 output_file <- if (length(args) >= 2 && grepl("\\.png$", args[2], ignore.case = TRUE)) args[2] else gsub("\\.json$", ".png", survey_file)
-log_file <- log_path_for_output(output_file)
+
 selected_variant <- if (length(args) >= 3 && grepl("\\.png$", args[2], ignore.case = TRUE)) {
   args[3]
 } else if (length(args) >= 2 && !grepl("\\.png$", args[2], ignore.case = TRUE)) {
@@ -138,40 +138,6 @@ cat(sprintf("| **Total** | **%d** | **%d** | **%d** | **%.2f** | **%.2f** |\n\n"
             transit_distance,
             total_distance))
 
-segment_log_lines <- c(
-  sprintf("Survey file: %s", survey_file),
-  sprintf("Variant: %s", variant_label),
-  sprintf("Boat: %s (ID: %d)", boat_name, boat_id),
-  sprintf("Transit distance: %.2f nm", transit_distance),
-  sprintf("Total distance: %.2f nm", total_distance),
-  sprintf("Capacity: %d kg", capacity),
-  sprintf("Feasible: %s", ifelse(feasible, "true", "false")),
-  "",
-  "Segment summary",
-  "| Segment | Length | Stations | Catch | Transit (nm) | Total (nm) |",
-  "|---:|---:|---:|---:|---:|---:|"
-)
-for (i in seq_len(nrow(segment_summary))) {
-  segment_log_lines <- c(
-    segment_log_lines,
-    sprintf("| %d | %d | %d | %d | %.2f | %.2f |",
-            segment_summary$Segment[i],
-            segment_summary$Length[i],
-            segment_summary$Stations[i],
-            segment_summary$Catch[i],
-            segment_summary$`Transit (nm)`[i],
-            segment_summary$`Total (nm)`[i])
-  )
-}
-segment_log_lines <- c(
-  segment_log_lines,
-  sprintf("| **Total** | **%d** | **%d** | **%d** | **%.2f** | **%.2f** |",
-          sum(segment_summary$Length),
-          sum(segment_summary$Stations),
-          sum(segment_summary$Catch),
-          transit_distance,
-          total_distance)
-)
 
 if (!feasible) {
   cat("Capacity violations detected:\n")
@@ -248,10 +214,9 @@ boat_label <- tibble(
     ref_y = coastline$lat
   ))
 
-segment_labels <- sprintf("#%d\n%.0f nm | %.0f nm | %.0f t",
-                          seq_along(segment_distance),
+segment_labels <- sprintf("#%d | %.0f nm | %.0f t",
+                          seq_along(segment_transit_distance),
                           segment_transit_distance,
-                          segment_distance,
                           segment_catch/1e3)
 
 p <- p +
@@ -264,7 +229,7 @@ p <- p +
   ) +
   scale_color_viridis_d(
     option = "turbo",
-    name = "Segment stats\n(order | transit | total | catch)",
+    name = "Segment stats\n(order | transit | catch)",
     labels = segment_labels
   )
 
@@ -316,7 +281,7 @@ p <- p +
     data = boat_label,
     aes(x = label_lon, y = label_lat, label = boat_name),
     size = 3.1,
-    label.size = 0.25,
+    linewidth = 0.25,
     fontface = "bold",
     fill = "#0B5FA5",
     color = "white",
@@ -332,6 +297,22 @@ subtitle_text <- sprintf(
   segment_count,
   capacity / 1000
 )
+
+# Append L₂seg footnote only for refinement*.json files
+is_refinement <- grepl("^refinement", basename(survey_file), ignore.case = TRUE)
+l2seg_footnote <- if (is_refinement) {
+  l2seg_seconds <- tryCatch(
+    as.integer(survey$metadata$mip_time_limit_seconds),
+    error = function(e) NA_integer_
+  )
+  if (!is.na(l2seg_seconds) && l2seg_seconds > 0L) {
+    sprintf("L\u2082seg\u00a0=\u00a0%d\u00a0s", l2seg_seconds)
+  } else {
+    "L\u2082seg\u00a0=\u00a0\u221e"   # refinement.json with limit=0 means uncapped
+  }
+} else {
+  NULL
+}
 
 title_text <- describe_single_route_title(survey_file)
 variant_text <- title_case_variant(variant_label)
@@ -377,8 +358,8 @@ if (identical(basename(survey_file), "fixedport.json")) {
 p <- p +
   coord_fixed_for_lat(route_path$lat, fallback_lat = 65.0) +
   labs(
-    title = title_text,
-    subtitle = paste(subtitle_parts, collapse = " | "),
+    title    = title_text,
+    subtitle = paste(c(subtitle_parts, l2seg_footnote), collapse = " | "),
     x = NULL,
     y = NULL
   )
@@ -399,5 +380,4 @@ ggsave(
 )
 
 cat(sprintf("OK Plot saved to: %s\n", normalizePath(output_file)))
-write_log_lines(log_file, segment_log_lines)
 cat("OK Visualization complete!\n")

@@ -132,6 +132,17 @@ describe_single_route_title <- function(path) {
     if (identical(family, "fixedport")) return("Refinement from Fixed-Port Segmentation")
     return("Refinement")
   }
+  # refinement_<l2seg>.json — same title style as refinement.json;
+  # the L₂seg value is added as a subtitle footnote in plot_single_vessel_route.R
+  m <- regmatches(file_name, regexpr("^refinement_(\\d+)\\.json$", file_name))
+  if (length(m) > 0 && nchar(m) > 0) {
+    if (identical(family, "noport")) return("Refinement from No-Port Segmentation")
+    if (identical(family, "nn")) return("Refinement from Nearest-Neighbor Segmentation")
+    if (identical(family, "ge")) return("Refinement from Greedy-Edge Segmentation")
+    if (identical(family, "ci")) return("Refinement from Cheapest-Insertion Segmentation")
+    if (identical(family, "fixedport")) return("Refinement from Fixed-Port Segmentation")
+    return("Refinement")
+  }
 
   title_case_variant(tools::file_path_sans_ext(file_name))
 }
