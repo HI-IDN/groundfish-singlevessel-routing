@@ -90,6 +90,11 @@ refinement_l2seg: $(SEGMENT_TARGET_JSON)
 		if [ "$$limit" != "0" ]; then suffix="_$$limit"; fi; \
 		out="../sol/$(METHOD_NAME)/refinement$${suffix}.json"; \
 		log="../sol/$(METHOD_NAME)/refinement$${suffix}.log"; \
+		if [ -f "$$out" ]; then \
+			echo "Already complete (file exists): $$out"; \
+			echo "  To force re-run: rm $$out && make -C src refinement_l2seg METHOD=$(METHOD_NAME) L2SEG=$$limit"; \
+			exit 0; \
+		fi; \
 		echo "Running $(METHOD_NAME) refinement L2SEG=$${limit}s -> $$out"; \
 		cd "$(BUILD_DIR)"; \
 		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(METHOD_NAME) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(METHOD_NAME)/segment.json" --output "$$out" --l2seg-limit "$$limit" 2>&1 | tee "$$log"'
@@ -181,6 +186,32 @@ $(eval $(call refinement_rule,ge,GE))
 $(eval $(call refinement_rule,ci,CI))
 $(eval $(call refinement_rule,noport,noport))
 
+# ---------------------------------------------------------------------------
+# Per-L2SEG refinement file rules (one real file target per method × l2seg)
+# Make checks timestamps so completed runs are skipped automatically.
+# ---------------------------------------------------------------------------
+define refinement_l2seg_rule
+../sol/$(1)/refinement_$(2).json: ../sol/$(1)/segment.json $(CONFIG_YAML)
+	@mkdir -p ../sol/$(1)
+	@echo "Running $(1) refinement L2SEG=$(2)s -> $$@"
+	@bash -lc 'set -euo pipefail; \
+		cd "$(BUILD_DIR)"; \
+		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "../sol/$(1)/refinement_$(2).json" --l2seg-limit $(2) 2>&1 | tee "../sol/$(1)/refinement_$(2).log"'
+endef
+
+$(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
+  $(foreach l,$(L2SEG_VARIANTS),\
+    $(eval $(call refinement_l2seg_rule,$(m),$(l)))))
+
+# All l2seg file targets (used by experiments)
+EXPERIMENT_L2SEG_TARGETS = $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
+  $(foreach l,$(L2SEG_VARIANTS),\
+    ../sol/$(m)/refinement_$(l).json))
+
+# Default (uncapped) targets
+EXPERIMENT_DEFAULT_TARGETS = $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
+  ../sol/$(m)/refinement.json)
+
 sweep_table:
 	@bash -lc 'set -euo pipefail; cd ..; \
 		args=(R/make_sweep_table.R --input-dir "sol/$(METHOD_NAME)" --format "$(TABLE_FORMAT)" --l2seg-unit "$(L2SEG_UNIT)" --warn-missing); \
@@ -208,22 +239,8 @@ plot-routes: $(ROUTE_PNGS)
 
 plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png ../sol/survey/multivessel.png plot-routes
 
-experiments: prepare-routing-data
-	@bash -lc 'set -euo pipefail; \
-		echo "Preparing segment inputs for: $(EXPERIMENT_REFINEMENT_METHODS)"; \
-		for method in $(EXPERIMENT_REFINEMENT_METHODS); do \
-			$(MAKE) segment METHOD="$$method"; \
-		done; \
-		echo "Running capped L2SEG experiments: $(L2SEG_VARIANTS)"; \
-		for limit in $(L2SEG_VARIANTS); do \
-			for method in $(EXPERIMENT_REFINEMENT_METHODS); do \
-				$(MAKE) refinement_l2seg METHOD="$$method" L2SEG="$$limit"; \
-			done; \
-		done; \
-		echo "Running default L2SEG experiment: $(L2SEG_DEFAULT_VALUE)"; \
-		for method in $(EXPERIMENT_REFINEMENT_METHODS); do \
-			$(MAKE) refinement METHOD="$$method"; \
-		done'
+experiments: prepare-routing-data $(EXPERIMENT_L2SEG_TARGETS) $(EXPERIMENT_DEFAULT_TARGETS)
+	@echo "All experiments up to date."
 
 plot-survey-routes: ../sol/survey/multivessel.png
 
