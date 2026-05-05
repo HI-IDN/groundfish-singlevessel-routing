@@ -21,7 +21,7 @@ load_required_packages <- function(pkgs) {
   }
 }
 
-load_required_packages(c("jsonlite", "dplyr", "ggplot2", "cowplot", "knitr"))
+load_required_packages(c("jsonlite", "dplyr", "ggplot2", "cowplot", "knitr", "scales"))
 
 script_dir <- tryCatch(
   dirname(normalizePath(sys.frame(1)$ofile)),
@@ -548,8 +548,8 @@ bplot_a <- ggplot(
     linewidth = 0.4, alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE
   ) +
   geom_point(
-    aes(group = interaction(Notation, source)),
-    size = 0.9, alpha = 0.35, inherit.aes = TRUE, show.legend = FALSE
+    aes(group = interaction(Notation, source), size = stations_moved),
+    alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE, na.rm = TRUE
   ) +
   # Foreground: boxplot distribution across l2seg values per method
   geom_boxplot(
@@ -573,6 +573,11 @@ bplot_a <- ggplot(
   scale_linetype_manual(
     values = lt_values,
     name   = bquote(L[2*seg] ~ "(s)")
+  ) +
+  scale_size_continuous(
+    name   = "Stations moved",
+    range  = c(0.5, 4),
+    breaks = scales::breaks_pretty(n = 4)
   ) +
   labs(
     title = "A: Transit Distance",
@@ -601,8 +606,8 @@ bplot_b <- ggplot(
     linewidth = 0.4, alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE
   ) +
   geom_point(
-    aes(group = interaction(Notation, source)),
-    size = 0.9, alpha = 0.35, inherit.aes = TRUE, show.legend = FALSE
+    aes(group = interaction(Notation, source), size = stations_moved),
+    alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE, na.rm = TRUE
   ) +
   # Foreground: boxplot distribution across l2seg values per method
   geom_boxplot(
@@ -627,6 +632,11 @@ bplot_b <- ggplot(
     values = lt_values,
     name   = bquote(L[2*seg] ~ "(s)")
   ) +
+  scale_size_continuous(
+    name   = "Stations moved",
+    range  = c(0.5, 4),
+    breaks = scales::breaks_pretty(n = 4)
+  ) +
   labs(
     title = "B: Relative Improvement",
     subtitle = box_subtitle,
@@ -646,11 +656,12 @@ bplot_b <- ggplot(
 box_legend <- cowplot::get_legend(bplot_a)
 
 box_footnote_text <- paste0(
-  "Faint lines show individual trajectories for each L\u2082seg value per variant. ",
-  "Boxes summarise the distribution across L\u2082seg values at each sweep; whiskers are 1.5\u00d7IQR. ",
+  "Faint lines show individual trajectories per L\u2082seg value; point size \u221d stations moved that sweep (sweep\u00a00 points omitted). ",
+  "Line type encodes L\u2082seg. ",
+  "Boxes summarise distribution across L\u2082seg values; whiskers 1.5\u00d7IQR. ",
   if (show_end_labels) paste0(
-    "End labels: expected improvement = mean absolute change \u00f7 mean initial transit. ",
-    "(A) relative (\u0025) and absolute (nm); (B) relative (\u0025)."
+    "Right-margin labels: mean \u00b1 SD improvement across L\u2082seg runs ",
+    "(A: nm and %; B: %)."
   )
 )
 box_footnote_grob <- cowplot::ggdraw() +
