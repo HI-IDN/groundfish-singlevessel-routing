@@ -2,7 +2,7 @@
 # plot_refinement_example.R
 #
 # Plots the initial and final-pass routes for a single refinement JSON as
-# camera-ready country maps with segment annotations placed *inside* the plot.
+# camera-ready country maps with right-edge segment summary tables.
 #
 # Usage:
 #   Rscript R/plot_refinement_example.R [path/to/refinement_NNN.json]
@@ -43,6 +43,10 @@ rf       <- load_refinement_json(refinement_file)
 map_data <- load_map_data()
 
 boat_location_id <- as.integer(rf$doc$metadata$boat_location_id)
+boat_label <- tryCatch({
+  nm <- rf$doc$metadata$boat_name
+  if (is.null(nm) || !nzchar(nm)) "Vessel" else sprintf("Vessel: %s", nm)
+}, error = function(cond) "Vessel")
 
 # init  = solution.init  (== segment.json baseline before any sweep)
 # final = last pass in the refinement
@@ -52,13 +56,21 @@ init_dist      <- rf$distances[["init"]]
 final_dist     <- rf$distances[[rf$final_pass_name]]
 
 n_sweeps <- length(rf$pass_names) - 1L   # pass_names includes "init"
+n_palette_segments <- max(
+  length(init_solution$tour_segments_location_ids),
+  length(final_solution$tour_segments_location_ids)
+)
+segment_palette <- stats::setNames(
+  scales::viridis_pal(option = "turbo")(n_palette_segments),
+  as.character(seq_len(n_palette_segments))
+)
 
 # L₂seg label
 l2seg_raw <- tryCatch(as.integer(rf$doc$metadata$mip_time_limit_seconds), error = function(cond) NA_integer_)
-l2seg_label <- if (!is.na(l2seg_raw) && l2seg_raw > 0L) {
-  sprintf("L\u2082seg\u202f=\u202f%d\u202fs", l2seg_raw)
+l2seg_expr <- if (!is.na(l2seg_raw) && l2seg_raw > 0L) {
+  bquote(L[2*seg] == .(l2seg_raw)~s)
 } else {
-  "L\u2082seg\u202f=\u202f\u221e"
+  quote(L[2*seg] == infinity)
 }
 
 # Method label from directory name
@@ -90,57 +102,62 @@ all_pts <- dplyr::bind_rows(
 bounds <- compute_map_bounds(all_pts, pad_frac = 0.03)
 
 # ---------------------------------------------------------------------------
-# Segment table inset — one summary data frame per solution, placed via
-# geom_table_npc in the bottom-right corner of the map.
+# Right-edge segment summary tables.
 # ---------------------------------------------------------------------------
 
-segment_table_inset <- function(dist_info, solution, npcx = 0.5, npcy = 0.5) {
+segment_table_inset <- function(dist_info, solution) {
   segment_catch <- as.numeric(solution$segment_catch_amount)
   n_segs        <- length(dist_info$segment_transit)
   has_catch     <- !is.null(segment_catch) && length(segment_catch) >= n_segs
 
-  # Transposed layout:  rows = metrics ("nm", "t"),  cols = segment numbers
-  nm_vals <- sprintf("%.0f", dist_info$segment_transit)
-  t_vals  <- if (has_catch) sprintf("%.0f", segment_catch[seq_len(n_segs)] / 1e3) else NULL
-
-  rows <- if (has_catch) list(nm = nm_vals, t = t_vals) else list(nm = nm_vals)
-  mat  <- do.call(rbind, rows)                   # nrow=1 or 2, ncol=n_segs
-  tbl  <- as.data.frame(mat, stringsAsFactors = FALSE)
-  colnames(tbl) <- as.character(seq_len(n_segs)) # column headers = "1".."N"
-
-  # Prepend a label column (" " header, values = "nm" / "t")
-  tbl <- cbind(
-    data.frame(` ` = names(rows), check.names = FALSE, stringsAsFactors = FALSE),
-    tbl
+  tbl <- tibble::tibble(
+    `#` = as.character(seq_len(n_segs)),
+    nm  = sprintf("%.0f", dist_info$segment_transit),
+    t   = if (has_catch) sprintf("%.0f", segment_catch[seq_len(n_segs)] / 1e3) else "-"
   )
 
-  # Colour: label column = white, each segment column = its turbo palette colour
-  # fill_vec is ordered left→right, top→bottom (gridExtra convention)
-  seg_cols     <- scales::viridis_pal(option = "turbo")(n_segs)
-  col_fills    <- c("white", scales::alpha(seg_cols, 0.30))  # length n_segs+1
-  fill_vec     <- rep(col_fills, times = nrow(tbl))          # same pattern each row
+  total <- tibble::tibble(
+    `#` = "Total",
+    nm  = sprintf("%.0f", dist_info$grand_transit),
+    t   = if (has_catch) sprintf("%.0f", sum(segment_catch[seq_len(n_segs)]) / 1e3) else "-"
+  )
+
+  tbl <- dplyr::bind_rows(tbl, total)
+  fill_rows <- c(scales::alpha(unname(segment_palette[seq_len(n_segs)]), 0.30), "grey92")
 
   list(
-    data     = tibble::tibble(npcx = npcx, npcy = npcy, label = list(tbl)),
-    fill_vec = fill_vec
+    data = tibble::tibble(
+      lon = Inf,
+      lat = Inf,
+      label = list(tbl)
+    ),
+    fill_matrix = matrix(fill_rows, nrow = length(fill_rows), ncol = ncol(tbl))
   )
 }
 
 # ---------------------------------------------------------------------------
-# Core map builder — returns a ggplot without title/caption
+# Core map builder - returns a ggplot without title/caption
 # ---------------------------------------------------------------------------
 
-build_route_map <- function(solution, dist_info, include_title = FALSE, title_text = NULL) {
+build_route_map <- function(
+  solution,
+  dist_info,
+  include_title = FALSE,
+  title_text = NULL
+) {
   route_path    <- build_paths_for(solution)
   station_lines <- build_station_line_segments(
     solution$tour_segments_station_ids, map_data$station_endpoints
   )
   display_pts  <- route_display_points(route_path)
-  inset        <- segment_table_inset(dist_info, solution)
+  boat_point   <- map_data$locations |>
+    dplyr::filter(id == boat_location_id) |>
+    dplyr::mutate(label = boat_label)
+  table_inset  <- segment_table_inset(dist_info, solution)
 
-  color_scale <- ggplot2::scale_color_viridis_d(
-    option = "turbo",
-    guide  = "none"   # legend suppressed; labels go inside the map
+  color_scale <- ggplot2::scale_color_manual(
+    values = segment_palette,
+    guide  = "none"
   )
 
   p <- base_coastline_plot(map_data$coastline) +
@@ -176,6 +193,25 @@ build_route_map <- function(solution, dist_info, include_title = FALSE, title_te
       color     = "grey20",
       inherit.aes = FALSE
     ) +
+    # Vessel dock marker and label
+    ggplot2::geom_point(
+      data        = boat_point,
+      ggplot2::aes(x = lon, y = lat),
+      shape       = 23,
+      size        = 3.6,
+      stroke      = 0.7,
+      fill        = "#FFD24A",
+      color       = "grey15",
+      inherit.aes = FALSE
+    ) +
+    ggplot2::geom_text(
+      data = boat_point,
+      ggplot2::aes(x = lon, y = lat, label = label),
+      nudge_x = 0.28,
+      size = 2.6,
+      hjust = 0, vjust = 0.5,
+      inherit.aes = FALSE
+    ) +
     # Waypoint ticks
     ggplot2::geom_point(
       data      = display_pts$waypoints,
@@ -186,20 +222,22 @@ build_route_map <- function(solution, dist_info, include_title = FALSE, title_te
       alpha     = 0.5,
       inherit.aes = FALSE
     ) +
-    # In-map segment stats table (centred inside the map)
-    ggpp::geom_table_npc(
-      data    = inset$data,
-      mapping = ggplot2::aes(npcx = npcx, npcy = npcy, label = label),
-      hjust   = 0.5,
-      vjust   = 0.5,
+    ggpp::geom_table(
+      data = table_inset$data,
+      mapping = ggplot2::aes(x = lon, y = lat, label = label),
+      hjust = 1.06,
+      vjust = 0.85,
       table.theme = gridExtra::ttheme_default(
         base_size = 6,
-        padding   = grid::unit(c(2.5, 2.5), "pt"),
-        core      = list(
-          bg_params = list(fill = inset$fill_vec),
+        padding = grid::unit(c(2.1, 2.4), "pt"),
+        core = list(
+          bg_params = list(fill = table_inset$fill_matrix),
           fg_params = list(fontface = "plain", col = "grey10")
         ),
-        colhead = list(fg_params = list(fontface = "bold", col = "grey10"))
+        colhead = list(
+          bg_params = list(fill = "white"),
+          fg_params = list(fontface = "bold", col = "grey10")
+        )
       )
     ) +
     color_scale +
@@ -215,7 +253,7 @@ build_route_map <- function(solution, dist_info, include_title = FALSE, title_te
 
   p + gsp_common_theme(legend_position = "none") +
     ggplot2::theme(
-      plot.margin = ggplot2::margin(4, 4, 4, 4, "pt"),
+      plot.margin = ggplot2::margin(2, 2, 2, 2, "pt"),
       plot.title  = ggplot2::element_text(hjust = 0.5, size = 11, face = "bold")
     )
 }
@@ -231,7 +269,7 @@ transit_delta_str <- function(init_d, final_d) {
 }
 
 # ---------------------------------------------------------------------------
-# Build the two panels
+# Build the panels
 # ---------------------------------------------------------------------------
 
 cat("Building init route map...\n")
@@ -257,7 +295,7 @@ out_cmp   <- file.path(out_dir, "refinement_compare.png")
 # Save camera-ready singles (no title, no caption)
 # ---------------------------------------------------------------------------
 
-# (singles not written — only the comparison figure is produced)
+# (singles not written - only the comparison figure is produced)
 
 # ---------------------------------------------------------------------------
 # Compare plot: cowplot A + B with panel labels and captions
@@ -275,7 +313,8 @@ p_init_titled <- p_init +
   ) +
   ggplot2::theme(
     plot.title    = ggplot2::element_text(hjust = 0, size = 10, face = "bold"),
-    plot.subtitle = ggplot2::element_text(hjust = 0, size = 8.5, color = "grey30")
+    plot.subtitle = ggplot2::element_text(hjust = 0, size = 8.5, color = "grey30"),
+    plot.margin   = ggplot2::margin(1, 1, 1, 1, "pt")
   )
 
 p_final_titled <- p_final +
@@ -285,21 +324,20 @@ p_final_titled <- p_final +
       n_sweeps, if (n_sweeps == 1L) "" else "s",
       method_label
     ),
-    subtitle = sprintf(
-      "Transit\u202f%.0f\u202fnm | Improvement %s | %s",
-      final_dist$grand_transit,
-      #length(final_solution$tour_segments_location_ids),
-      transit_delta_str(init_dist, final_dist),
-      l2seg_label
+    subtitle = bquote(
+      "Transit " * .(sprintf("%.0f nm", final_dist$grand_transit)) *
+        " | Improvement " * .(transit_delta_str(init_dist, final_dist)) *
+        " | " * .(l2seg_expr)
     )
   ) +
   ggplot2::theme(
     plot.title    = ggplot2::element_text(hjust = 0, size = 10, face = "bold"),
-    plot.subtitle = ggplot2::element_text(hjust = 0, size = 8.5, color = "grey30")
+    plot.subtitle = ggplot2::element_text(hjust = 0, size = 8.5, color = "grey30"),
+    plot.margin   = ggplot2::margin(1, 1, 1, 1, "pt")
   )
 
 footnote_text <- paste0(
-  "Segment annotations show: segment index / transit distance (nm) / catch (t). ",
+  "Right-edge tables show segment index, transit distance (nm), and catch (t). ",
   "Station tow lines are drawn thicker; thin lines show transit routing between ports and waypoints."
 )
 
@@ -327,12 +365,10 @@ p_cmp_with_note <- cowplot::plot_grid(
   p_cmp,
   footnote_grob,
   ncol        = 1,
-  rel_heights = c(1, 0.06)
+  rel_heights = c(1, 0.035)
 )
 
-ggplot2::ggsave(out_cmp, plot = p_cmp_with_note, width = 14, height = 7, dpi = 200, bg = "white")
+ggplot2::ggsave(out_cmp, plot = p_cmp_with_note, width = 14, height = 5.2, dpi = 200, bg = "white")
 cat(sprintf("Saved: %s\n", normalizePath(out_cmp, winslash = "/")))
 
 cat("\nDone.\n")
-
-
