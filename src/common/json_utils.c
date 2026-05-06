@@ -59,6 +59,14 @@ static int append_unique_int_local_json(int **arr, int *n, int *cap, int v) {
     return append_int_local_json(arr, n, cap, v);
 }
 
+static int find_station_node_index_local_json(const nn_instance_t *inst, int station_id) {
+    if (!inst) return -1;
+    for (int i = 0; i < inst->num_stations; i++) {
+        if (inst->nodes[i].table_id == station_id) return i;
+    }
+    return -1;
+}
+
 void gsp_summary_reset(gsp_summary_json_t *summary) {
     if (!summary) return;
     memset(summary, 0, sizeof(*summary));
@@ -216,9 +224,8 @@ int gsp_write_segmented_solution_entry_json(FILE *fp,
     }
 
     for (int s = 0; s < sol->segment_count; s++) {
-        int start = sol->segment_starts[s];
-        int end = sol->segment_ends[s];
-        int base_cap = (end - start + 1) + 2;
+        int segment_end_loc = (s == sol->segment_count - 1) ? boat_end_loc_id : sol->tour[sol->segment_ends[s]];
+        int base_cap = 2 * sol->visit_station_count + 2;
         int *base = (int*)malloc((size_t)base_cap * sizeof(int));
         int *expanded = NULL;
         int expanded_n = 0, expanded_cap = 0;
@@ -227,23 +234,39 @@ int gsp_write_segmented_solution_entry_json(FILE *fp,
         int base_n = 0;
         if (!base) goto cleanup;
 
-        tour_length[s] = end - start + 1;
+        tour_length[s] = 0;
         base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
-        for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
-        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
-            base[base_n++] = boat_end_loc_id;
-        }
 
         for (int i = 0; i < sol->visit_station_count; i++) {
             if (sol->visit_station_segment[i] == s) {
-                if (!append_int_local_json(&station_ids, &station_n, &station_cap,
-                                           sol->visit_station_ids[i] *
-                                           ((sol->visit_station_direction &&
-                                             sol->visit_station_direction[i] < 0) ? -1 : 1))) {
+                int direction = (sol->visit_station_direction &&
+                                 sol->visit_station_direction[i] < 0) ? -1 : 1;
+                int station_idx = find_station_node_index_local_json(inst, sol->visit_station_ids[i]);
+                if (station_idx < 0) {
                     free(base);
                     free(station_ids);
                     goto cleanup;
                 }
+                if (!append_int_local_json(&station_ids, &station_n, &station_cap,
+                                           sol->visit_station_ids[i] * direction) ||
+                    !append_int_local_json(&base, &base_n, &base_cap,
+                                           direction > 0 ? inst->nodes[station_idx].start_loc_id
+                                                         : inst->nodes[station_idx].end_loc_id) ||
+                    !append_int_local_json(&base, &base_n, &base_cap,
+                                           direction > 0 ? inst->nodes[station_idx].end_loc_id
+                                                         : inst->nodes[station_idx].start_loc_id)) {
+                    free(base);
+                    free(station_ids);
+                    goto cleanup;
+                }
+                tour_length[s]++;
+            }
+        }
+        if (base_n == 0 || base[base_n - 1] != segment_end_loc) {
+            if (!append_int_local_json(&base, &base_n, &base_cap, segment_end_loc)) {
+                free(base);
+                free(station_ids);
+                goto cleanup;
             }
         }
 

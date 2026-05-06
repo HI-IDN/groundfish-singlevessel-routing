@@ -1619,10 +1619,10 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
 
     fprintf(fp, "      \"tour_segments_location_ids\": [\n");
     for (int s = 0; s < sol->segment_count; s++) {
-        int start = sol->segment_starts[s];
-        int end = sol->segment_ends[s];
-        int base_cap = (end - start + 1) + 2;
+        int segment_end_loc = (s == sol->segment_count - 1) ? boat->boat_loc_id : sol->tour[sol->segment_ends[s]];
+        int base_cap = 2 * sol->visit_station_count + 2;
         int base_n = 0;
+        int base_ok = 1;
         int *base = (int*)malloc((size_t)base_cap * sizeof(int));
         fprintf(fp, "        [");
         if (!base) {
@@ -1630,9 +1630,33 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
             continue;
         }
         base[base_n++] = (s == 0) ? boat->boat_loc_id : sol->tour[sol->segment_ends[s - 1]];
-        for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
-        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat->boat_loc_id)) {
-            base[base_n++] = boat->boat_loc_id;
+        for (int i = 0; i < sol->visit_station_count; i++) {
+            if (sol->visit_station_segment[i] == s) {
+                int station_idx = find_station_index(inst, sol->visit_station_ids[i]);
+                int direction = (sol->visit_station_direction && sol->visit_station_direction[i] < 0) ? -1 : 1;
+                int entry_loc;
+                int exit_loc;
+                if (station_idx < 0) continue;
+                entry_loc = (direction > 0) ? inst->nodes[station_idx].start_loc_id
+                                            : inst->nodes[station_idx].end_loc_id;
+                exit_loc = (direction > 0) ? inst->nodes[station_idx].end_loc_id
+                                           : inst->nodes[station_idx].start_loc_id;
+                if (!append_int(&base, &base_n, &base_cap, entry_loc) ||
+                    !append_int(&base, &base_n, &base_cap, exit_loc)) {
+                    base_ok = 0;
+                    break;
+                }
+            }
+        }
+        if (base_ok && (base_n == 0 || base[base_n - 1] != segment_end_loc)) {
+            if (!append_int(&base, &base_n, &base_cap, segment_end_loc)) {
+                base_ok = 0;
+            }
+        }
+        if (!base_ok) {
+            free(base);
+            fprintf(fp, "]%s\n", (s + 1 < sol->segment_count) ? "," : "");
+            continue;
         }
         if (base_n > 0) {
             fprintf(fp, "%d", base[0]);

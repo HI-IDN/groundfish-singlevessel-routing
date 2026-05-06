@@ -167,8 +167,9 @@ find_refinement_sources <- function(method) {
       path = file.path(method_dir, sprintf("refinement_%d.json", configured_l2seg))
     )
 
+    existing <- candidates %>% dplyr::filter(file.exists(path))
     missing <- candidates %>% dplyr::filter(!file.exists(path))
-    if (nrow(missing) > 0) {
+    if (nrow(existing) > 0 && nrow(missing) > 0) {
       warning(
         sprintf(
           "Omitting missing configured refinement results for %s: %s",
@@ -179,8 +180,7 @@ find_refinement_sources <- function(method) {
       )
     }
 
-    return(candidates %>%
-      dplyr::filter(file.exists(path)) %>%
+    return(existing %>%
       dplyr::select(source, l2seg) %>%
       dplyr::arrange(l2seg))
   }
@@ -320,12 +320,16 @@ all_runs <- lapply(seq_len(nrow(notation_rows)), function(i) {
   }
   srcs <- find_refinement_sources(method)
   if (nrow(srcs) == 0) {
-    warning(sprintf("No refinement JSON files found for method: %s", method))
     return(NULL)
   }
   cbind(notation_rows[i, ], srcs)
 }) %>%
   dplyr::bind_rows()
+
+if (nrow(all_runs) == 0) {
+  message("No refinement JSON files found; skipping refinement table and plots.")
+  quit(save = "no", status = 0)
+}
 
 # Label: append "(Xs)" when a method has >1 run; use Inf symbol for uncapped
 run_counts <- table(all_runs$method)
