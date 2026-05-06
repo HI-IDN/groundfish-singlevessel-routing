@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # Build pass-by-pass refinement frames and an optional GIF.
-# Usage: Rscript R/sandbox_refinement_pass_gif.R sol/noport/refinement_180.json [output_dir] [output.gif]
+# Usage: Rscript R/sandbox_refinement_pass_gif.R sol/noport/refinement_180.json [output_dir] [output.gif] [comparison.png]
 
 required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite", "grid")
 
@@ -17,8 +17,12 @@ cat("=== GSP Refinement Pass GIF Builder ===\n\n")
 
 args <- commandArgs(trailingOnly = TRUE)
 refinement_file <- if (length(args) >= 1) args[1] else "sol/noport/refinement_180.json"
-frame_dir <- if (length(args) >= 2) args[2] else sub("\\.[Jj][Ss][Oo][Nn]$", "_pass_frames", refinement_file)
-gif_file <- if (length(args) >= 3) args[3] else sub("\\.[Jj][Ss][Oo][Nn]$", "_pass_sequence.gif", refinement_file)
+frame_dir <- if (length(args) >= 2) args[2] else sub("\\.[Jj][Ss][Oo][Nn]$", "_sweep_frames",
+                                                     refinement_file)
+gif_file <- if (length(args) >= 3) args[3] else sub("\\.[Jj][Ss][Oo][Nn]$", "_sweep.gif",
+                                                    refinement_file)
+comparison_file <- if (length(args) >= 4) args[4] else sub("\\.[Jj][Ss][Oo][Nn]$", "_sweep.png",
+                                                           refinement_file)
 
 if (!file.exists(refinement_file)) {
   stop(sprintf("Refinement file not found: %s", refinement_file), call. = FALSE)
@@ -388,6 +392,123 @@ transition_plot <- function(prev_name, curr_name, color_stage = c("leaving", "ar
     )
 }
 
+init_to_final_plot <- function() {
+  init_name <- pass_names[1]
+  final_name <- final_pass_name
+  init_solution <- solutions[[init_name]]
+  final_solution <- solutions[[final_name]]
+  init_distance <- distances[[init_name]]
+  final_distance <- distances[[final_name]]
+
+  boat_location_id <- as.integer(doc$metadata$boat_location_id)
+  init_path <- build_regular_route_path(init_solution, locations, boat_location_id)
+  final_path <- build_regular_route_path(final_solution, locations, boat_location_id)
+  display_points <- route_display_points(final_path)
+
+  init_assign <- station_assignment(init_solution$tour_segments_station_ids)
+  final_assign <- station_assignment(final_solution$tour_segments_station_ids)
+  compare <- final_assign %>%
+    dplyr::select(station_id, final_segment = segment) %>%
+    dplyr::left_join(
+      init_assign %>% dplyr::select(station_id, init_segment = segment),
+      by = "station_id"
+    ) %>%
+    dplyr::mutate(moved_segment = !is.na(init_segment) & init_segment != final_segment)
+
+  final_station_lines <- build_station_line_segments(final_solution$tour_segments_station_ids, station_endpoints) %>%
+    dplyr::left_join(compare, by = "station_id") %>%
+    dplyr::mutate(
+      moved_segment = dplyr::coalesce(moved_segment, FALSE),
+      init_segment = dplyr::coalesce(init_segment, final_segment)
+    )
+  moved_station_lines <- final_station_lines %>%
+    dplyr::filter(moved_segment)
+
+  total_moved <- nrow(moved_station_lines)
+  total_improvement <- init_distance$grand_transit - final_distance$grand_transit
+  total_improvement_pct <- if (init_distance$grand_transit == 0) 0 else total_improvement / init_distance$grand_transit * 100
+
+  subtitle_text <- sprintf(
+    "Transit %.0f nm | Overall improvement %.0f nm (%.1f%%)",
+    final_distance$grand_transit,
+    total_improvement,
+    total_improvement_pct
+  )
+  footer_text <- sprintf(
+    "Stations moved %d | Total improvement %.0f nm (%.1f%%)",
+    total_moved,
+    total_improvement,
+    total_improvement_pct
+  )
+
+  p <- base_coastline_plot(coastline) +
+    ggplot2::geom_path(
+      data = init_path,
+      ggplot2::aes(x = lon, y = lat, group = segment),
+      color = "grey45",
+      linewidth = route_linewidth_stable,
+      alpha = alpha_stable,
+      linetype = "22",
+      inherit.aes = FALSE
+    ) +
+    ggplot2::geom_path(
+      data = final_path,
+      ggplot2::aes(x = lon, y = lat, color = factor(segment), group = segment),
+      linewidth = route_linewidth_active,
+      alpha = alpha_active,
+      inherit.aes = FALSE
+    ) +
+    ggplot2::geom_segment(
+      data = final_station_lines,
+      ggplot2::aes(x = lon, y = lat, xend = lon_end, yend = lat_end, color = factor(final_segment)),
+      linewidth = station_linewidth_stable,
+      alpha = alpha_stable,
+      lineend = "round",
+      inherit.aes = FALSE,
+      show.legend = FALSE
+    ) +
+    ggplot2::geom_segment(
+      data = moved_station_lines,
+      ggplot2::aes(x = lon, y = lat, xend = lon_end, yend = lat_end, color = factor(init_segment)),
+      linewidth = station_linewidth_active,
+      alpha = alpha_moving,
+      lineend = "round",
+      inherit.aes = FALSE,
+      show.legend = FALSE
+    ) +
+    ggplot2::geom_point(
+      data = display_points$ports,
+      ggplot2::aes(x = lon, y = lat),
+      size = 2.8,
+      shape = 1,
+      inherit.aes = FALSE
+    ) +
+    ggplot2::geom_point(
+      data = display_points$waypoints,
+      ggplot2::aes(x = lon, y = lat),
+      shape = 42,
+      size = 1.25,
+      inherit.aes = FALSE
+    ) +
+    ggplot2::scale_color_viridis_d(option = "turbo", name = "Segment") +
+    fixed_map_coord() +
+    ggplot2::labs(
+      title = "Initial to Final",
+      subtitle = subtitle_text,
+      caption = footer_text,
+      x = NULL,
+      y = NULL
+    )
+
+  p <- apply_degree_axes(p)
+  p + gsp_common_theme(legend_position = "none") +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(hjust = 0.5, size = 18, face = "bold"),
+      plot.subtitle = ggplot2::element_text(hjust = 0.5, size = 12),
+      plot.caption = ggplot2::element_text(hjust = 0.5, size = 10, color = "grey25")
+    )
+}
+
 frame_paths <- character()
 frame_idx <- 1L
 
@@ -415,6 +536,11 @@ for (i in seq_len(length(pass_names) - 1L)) {
     curr_name
   )
 }
+
+comparison_plot <- init_to_final_plot()
+save_plot(comparison_plot, comparison_file)
+cat(sprintf("Saved comparison frame: %s\n", normalizePath(comparison_file, winslash = "/", mustWork = FALSE)))
+add_frame(comparison_plot, "init_to_final")
 
 if (requireNamespace("magick", quietly = TRUE)) {
   cat(sprintf("\nBuilding GIF with 3s frame delay and 10s final frame: %s\n", gif_file))
