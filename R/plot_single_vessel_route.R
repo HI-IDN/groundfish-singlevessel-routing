@@ -2,7 +2,7 @@
 # GSP Single-Vessel Route Plotter
 # Usage: Rscript plot_single_vessel_route.R <path/to/boat*.json> [path/to/output.png] [final|capacity-feasible|presolve]
 
-required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite")
+required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite", "ggpp", "gridExtra")
 
 script_file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_dir <- if (length(script_file_arg) > 0) {
@@ -202,35 +202,53 @@ station_lines <- build_station_line_segments(solution$tour_segments_station_ids,
 cat(sprintf("Built %d station line segments\n\n", nrow(station_lines)))
 
 p <- base_coastline_plot(coastline)
-boat_label <- tibble(
-  boat_name = boat_name,
-  boat_lon = boat_docked_location$lon,
-  boat_lat = boat_docked_location$lat
-) %>%
-  bind_cols(compute_interior_label_position(
-    x = boat_docked_location$lon,
-    y = boat_docked_location$lat,
-    ref_x = coastline$lon,
-    ref_y = coastline$lat
-  ))
+boat_point <- tibble(
+  boat_name = if (is.null(boat_name) || !nzchar(boat_name)) "Vessel" else sprintf("Vessel: %s", boat_name),
+  lon = boat_docked_location$lon,
+  lat = boat_docked_location$lat
+)
 
-segment_labels <- sprintf("#%d | %.0f nm | %.0f t",
-                          seq_along(segment_transit_distance),
-                          segment_transit_distance,
-                          segment_catch/1e3)
+segment_palette <- stats::setNames(
+  scales::viridis_pal(option = "turbo")(segment_count),
+  as.character(seq_len(segment_count))
+)
+
+segment_table_inset <- function() {
+  n_segs <- length(segment_transit_distance)
+  tbl <- tibble(
+    `#` = as.character(seq_len(n_segs)),
+    `|S|` = as.character(segment_station_count[seq_len(n_segs)]),
+    nm  = sprintf("%.0f", segment_transit_distance),
+    t   = sprintf("%.0f", segment_catch[seq_len(n_segs)] / 1e3)
+  )
+  total <- tibble(
+    `#` = "Total",
+    `|S|` = as.character(sum(segment_station_count[seq_len(n_segs)])),
+    nm  = sprintf("%.0f", transit_distance),
+    t   = sprintf("%.0f", sum(segment_catch[seq_len(n_segs)]) / 1e3)
+  )
+  tbl <- bind_rows(tbl, total)
+  fill_rows <- c(scales::alpha(unname(segment_palette[seq_len(n_segs)]), 0.30), "grey92")
+
+  list(
+    data = tibble(lon = Inf, lat = Inf, label = list(tbl)),
+    fill_matrix = matrix(fill_rows, nrow = length(fill_rows), ncol = ncol(tbl))
+  )
+}
+
+table_inset <- segment_table_inset()
 
 p <- p +
   geom_path(
     data = route_path,
     aes(x = lon, y = lat, color = factor(segment)),
-    linewidth = 0.35,
-    alpha = 0.45,
+    linewidth = 0.25,
+    alpha = 0.38,
     inherit.aes = FALSE
   ) +
-  scale_color_viridis_d(
-    option = "turbo",
-    name = "Segment stats\n(order | transit | catch)",
-    labels = segment_labels
+  scale_color_manual(
+    values = segment_palette,
+    guide = "none"
   )
 
 port_points <- route_path %>% filter(point_type == "PORT") %>% distinct(lat, lon, .keep_all = TRUE)
@@ -240,10 +258,11 @@ p <- p +
   geom_segment(
     data = station_lines,
     aes(x = lon, y = lat, xend = lon_end, yend = lat_end, color = factor(segment)),
-    linewidth = 1.35,
-    alpha = 0.9,
+    linewidth = 0.75,
+    alpha = 0.82,
     lineend = "round",
-    inherit.aes = FALSE
+    inherit.aes = FALSE,
+    show.legend = FALSE
   ) +
   geom_point(
     data = port_points,
@@ -260,41 +279,48 @@ p <- p +
     inherit.aes = FALSE
   ) +
   geom_point(
-    data = boat_label,
-    aes(x = boat_lon, y = boat_lat),
-    shape = 21,
-    size = 3.4,
+    data = boat_point,
+    aes(x = lon, y = lat),
+    shape = 23,
+    size = 3.6,
     stroke = 0.7,
-    fill = "#0B5FA5",
-    color = "black",
+    fill = "#FFD24A",
+    color = "grey15",
     inherit.aes = FALSE
   ) +
-  geom_segment(
-    data = boat_label,
-    aes(x = boat_lon, y = boat_lat, xend = label_lon, yend = label_lat),
-    linewidth = 0.45,
-    color = "grey35",
+  geom_text(
+    data = boat_point,
+    aes(x = lon, y = lat, label = boat_name),
+    nudge_x = 0.28,
+    size = 2.6,
+    hjust = 0,
+    vjust = 0.5,
     inherit.aes = FALSE,
     show.legend = FALSE
   ) +
-  geom_label(
-    data = boat_label,
-    aes(x = label_lon, y = label_lat, label = boat_name),
-    size = 3.1,
-    linewidth = 0.25,
-    fontface = "bold",
-    fill = "#0B5FA5",
-    color = "white",
-    inherit.aes = FALSE,
-    show.legend = FALSE
+  ggpp::geom_table(
+    data = table_inset$data,
+    mapping = aes(x = lon, y = lat, label = label),
+    hjust = 1.02,
+    vjust = 1.04,
+    table.theme = gridExtra::ttheme_default(
+      base_size = 6,
+      padding = grid::unit(c(2.1, 2.4), "pt"),
+      core = list(
+        bg_params = list(fill = table_inset$fill_matrix),
+        fg_params = list(fontface = "plain", col = "grey10")
+      ),
+      colhead = list(
+        bg_params = list(fill = "white"),
+        fg_params = list(fontface = "bold", col = "grey10")
+      )
+    )
   )
 
 subtitle_text <- sprintf(
-  "Transit: %.0f nm | Total: %.0f nm | Stations: %d | Segments: %d | Capacity: %d tons",
+  "Transit: %.0f nm | Total: %.0f nm | Capacity: %d tons",
   transit_distance,
   total_distance,
-  num_stations,
-  segment_count,
   capacity / 1000
 )
 
@@ -360,13 +386,18 @@ p <- p +
   labs(
     title    = title_text,
     subtitle = paste(c(subtitle_parts, l2seg_footnote), collapse = " | "),
+    caption  = paste0(
+      "Station tow lines are drawn thicker; thin lines show transit routing between ports and waypoints.\n",
+      "Right-edge tables show segment index, station count, transit distance (nm), and catch (t)."),
     x = NULL,
     y = NULL
   )
 
 p <- apply_degree_axes(p)
-p <- p + gsp_common_theme(legend_position = "bottom", legend_direction = "horizontal")
-p <- p + guides(color = guide_legend(ncol = 4, byrow = TRUE))
+p <- p + gsp_common_theme(legend_position = "none") +
+  theme(
+    plot.caption = element_text(hjust = 0, size = 7, color = "grey35")
+  )
 
 cat(sprintf("\nSaving plot to %s...\n", output_file))
 

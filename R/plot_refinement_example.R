@@ -337,7 +337,7 @@ p_final_titled <- p_final +
   )
 
 footnote_text <- paste0(
-  "Right-edge tables show segment index, transit distance (nm), and catch (t). ",
+  "Right-edge tables show segment index (#), transit distance (nm), and catch (t). ",
   "Station tow lines are drawn thicker; thin lines show transit routing between ports and waypoints."
 )
 
