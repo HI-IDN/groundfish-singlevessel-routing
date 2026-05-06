@@ -30,7 +30,7 @@ init:
 sweep:
   # Iteration control
   max_iterations: 100                    # Maximum iterations per L2SEG sweep
-  l2seg_variants: [ 60, 120, 180, 240, 300, 360 ] # Additional refinement limits, in seconds
+  l2seg_variants: [ 10, 30, 60, 120, 180, 240, 300, 600 ] # Additional refinement limits, in seconds
 
 # Gurobi Solver Settings
 gurobi:
