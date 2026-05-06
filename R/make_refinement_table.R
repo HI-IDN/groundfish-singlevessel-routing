@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 # make_refinement_table.R
 #
-# Builds a LaTeX summary table from sol/*/refinement*.json files.
-# Discovers all refinement_<l2seg>.json (and refinement.json) per method.
+# Builds a LaTeX summary table from configured refinement JSON files.
+# Uses config/gsp_solver.yaml sweep.l2seg_variants and omits missing results.
 # refinement.json without a numeric suffix is treated as L2seg = Inf
 # (uncapped / solver time-limit = 0).
 #
@@ -28,9 +28,13 @@ script_dir <- tryCatch(
   error = function(e) getwd()
 )
 sol_dir <- normalizePath(file.path(script_dir, "..", "sol"), mustWork = FALSE)
+config_file <- normalizePath(file.path(script_dir, "..", "config", "gsp_solver.yaml"), mustWork = FALSE)
 
 if (!dir.exists(sol_dir)) {
   sol_dir <- "sol"
+}
+if (!file.exists(config_file)) {
+  config_file <- file.path("config", "gsp_solver.yaml")
 }
 
 format_runtime <- function(seconds) {
@@ -107,20 +111,83 @@ notation_rows <- tibble::tribble(
 )
 
 # ---------------------------------------------------------------------------
-# Discover all refinement JSON sources for a given method directory.
+# Read configured refinement methods and l2seg values.
+# This intentionally avoids a YAML dependency because the needed config values
+# are simple lists.
+# ---------------------------------------------------------------------------
+read_yaml_list <- function(path, key) {
+  if (!file.exists(path)) return(character(0))
+  lines <- readLines(path, warn = FALSE)
+  line <- lines[grepl(sprintf("^\\s*%s\\s*:", key), lines)]
+  if (length(line) == 0) return(character(0))
+  value <- sub("^[^:]+:\\s*", "", line[1])
+  value <- sub("\\s*#.*$", "", value)
+  value <- gsub("^\\[|\\]$", "", trimws(value))
+  if (!nzchar(value)) return(character(0))
+  trimws(strsplit(value, ",", fixed = TRUE)[[1]])
+}
+
+configured_l2seg_variants <- function() {
+  vals <- suppressWarnings(as.integer(read_yaml_list(config_file, "l2seg_variants")))
+  vals <- vals[!is.na(vals)]
+  if (!length(vals)) {
+    warning("No sweep.l2seg_variants found in config; falling back to existing refinement JSON files.", call. = FALSE)
+  }
+  vals
+}
+
+configured_methods <- function() {
+  if (!file.exists(config_file)) return(notation_rows$method)
+  lines <- readLines(config_file, warn = FALSE)
+  strategies_start <- grep("^\\s*strategies\\s*:", lines)
+  if (!length(strategies_start)) return(notation_rows$method)
+
+  tail_lines <- lines[(strategies_start[1] + 1L):length(lines)]
+  strategy_lines <- tail_lines[grepl("^\\s*-\\s+", tail_lines)]
+  if (!length(strategy_lines)) return(notation_rows$method)
+
+  methods <- trimws(sub("^\\s*-\\s*", "", strategy_lines))
+  methods <- sub("\\s*#.*$", "", methods)
+  methods[methods %in% notation_rows$method]
+}
+
+# ---------------------------------------------------------------------------
+# Discover configured refinement JSON sources for a given method directory.
 # Returns a tibble: source (file stem), l2seg (integer or NA = uncapped).
 # Sorted: numbered ascending, uncapped (NA) last.
 # ---------------------------------------------------------------------------
 find_refinement_sources <- function(method) {
   method_dir <- file.path(sol_dir, method)
-  files <- list.files(
-    method_dir,
-    pattern = "^refinement(_\\d+)?\\.json$",
-    full.names = FALSE
-  )
-  if (length(files) == 0) {
-    return(tibble::tibble(source = character(0), l2seg = integer(0)))
+  configured_l2seg <- configured_l2seg_variants()
+
+  if (length(configured_l2seg)) {
+    candidates <- tibble::tibble(
+      source = sprintf("refinement_%d", configured_l2seg),
+      l2seg = configured_l2seg,
+      path = file.path(method_dir, sprintf("refinement_%d.json", configured_l2seg))
+    )
+
+    missing <- candidates %>% dplyr::filter(!file.exists(path))
+    if (nrow(missing) > 0) {
+      warning(
+        sprintf(
+          "Omitting missing configured refinement results for %s: %s",
+          method,
+          paste(sprintf("%s.json", missing$source), collapse = ", ")
+        ),
+        call. = FALSE
+      )
+    }
+
+    return(candidates %>%
+      dplyr::filter(file.exists(path)) %>%
+      dplyr::select(source, l2seg) %>%
+      dplyr::arrange(l2seg))
   }
+
+  files <- list.files(method_dir, pattern = "^refinement(_\\d+)?\\.json$", full.names = FALSE)
+  if (length(files) == 0) return(tibble::tibble(source = character(0), l2seg = integer(0)))
+
   stems <- gsub("\\.json$", "", files)
   # Plain "refinement" yields NA (uncapped); "refinement_60" yields 60L
   l2seg <- suppressWarnings(
@@ -242,6 +309,9 @@ refinement_row <- function(method, source = "refinement") {
 # ---------------------------------------------------------------------------
 all_runs <- lapply(seq_len(nrow(notation_rows)), function(i) {
   method <- notation_rows$method[i]
+  if (!(method %in% configured_methods())) {
+    return(NULL)
+  }
   srcs <- find_refinement_sources(method)
   if (nrow(srcs) == 0) {
     warning(sprintf("No refinement JSON files found for method: %s", method))
@@ -274,7 +344,6 @@ refinement_tbl <- dplyr::bind_rows(rows) %>%
   select(
     Notation,
     `$L_{2\\text{seg}}$ (s)`,
-    Variant,
     Sweeps,
     `Final transit (nm)`,
     `Transit improvement (nm)`,
@@ -301,13 +370,9 @@ trajectory_tbl$Label <- factor(
 )
 
 # ---------------------------------------------------------------------------
-# Whether to annotate the right end of each line with improvement values
-show_end_labels <- TRUE
-
-# ---------------------------------------------------------------------------
 # Function: build and save one per-l2seg line plot
 # ---------------------------------------------------------------------------
-make_sweep_lineplot <- function(plot_l2seg, traj_tbl, show_end_labels = TRUE) {
+make_sweep_lineplot <- function(plot_l2seg, traj_tbl) {
   tbl <- traj_tbl %>%
     dplyr::filter(
       if (is.na(plot_l2seg)) is.na(l2seg) else (!is.na(l2seg) & l2seg == plot_l2seg)
@@ -355,14 +420,14 @@ make_sweep_lineplot <- function(plot_l2seg, traj_tbl, show_end_labels = TRUE) {
       nudge_y = 95, size = 2.5, lineheight = 0.9,
       color = "black", show.legend = FALSE, na.rm = TRUE
     ) +
-    { if (show_end_labels) geom_text(
-        data = end_tbl,
-        aes(x = sweep, y = transit_nm, label = end_label_a, color = Label),
-        hjust = -0.15, size = 2.8, fontface = "bold", show.legend = FALSE
-      ) } +
+    geom_text(
+      data = end_tbl,
+      aes(x = sweep, y = transit_nm, label = end_label_a, color = Label),
+      hjust = -0.15, size = 2.8, fontface = "bold", show.legend = FALSE
+    ) +
     expand_limits(
       y = max(tbl$transit_nm, na.rm = TRUE) + 250,
-      x = x_max + if (show_end_labels) 0.6 else 0
+      x = x_max + 0.6
     ) +
     scale_x_continuous(breaks = sort(unique(tbl$sweep))) +
     labs(
@@ -381,12 +446,12 @@ make_sweep_lineplot <- function(plot_l2seg, traj_tbl, show_end_labels = TRUE) {
     geom_hline(yintercept = 0, color = "grey65", linewidth = 0.4) +
     geom_line(linewidth = 0.8) +
     geom_point(size = 2) +
-    { if (show_end_labels) geom_text(
-        data = end_tbl,
-        aes(x = sweep, y = relative_improvement_percent, label = end_label_b, color = Label),
-        hjust = -0.15, size = 2.8, fontface = "bold", show.legend = FALSE
-      ) } +
-    expand_limits(x = x_max + if (show_end_labels) 0.6 else 0) +
+    geom_text(
+      data = end_tbl,
+      aes(x = sweep, y = relative_improvement_percent, label = end_label_b, color = Label),
+      hjust = -0.15, size = 2.8, fontface = "bold", show.legend = FALSE
+    ) +
+    expand_limits(x = x_max + 0.6) +
     scale_x_continuous(breaks = sort(unique(tbl$sweep))) +
     labs(
       title = "B: Relative Improvement", subtitle = subtitle,
@@ -435,7 +500,7 @@ all_l2seg_plot_vals <- c(
 
 for (lv in all_l2seg_plot_vals) {
   lv_str <- if (is.na(lv)) "inf" else as.character(lv)
-  plt    <- make_sweep_lineplot(lv, trajectory_tbl, show_end_labels)
+  plt    <- make_sweep_lineplot(lv, trajectory_tbl)
   if (!is.null(plt)) {
     out <- file.path(sol_dir, sprintf("refinement_transit_sweeps_%s.png", lv_str))
     ggsave(out, plot = plt, width = 11, height = 5.5, dpi = 150)
@@ -445,10 +510,9 @@ for (lv in all_l2seg_plot_vals) {
 cat("\n")
 
 # ---------------------------------------------------------------------------
-# Summary boxplot across ALL l2seg values
-# Per sweep: one box per method coloured by Notation; the distribution within
-# each box spans the available l2seg runs for that method.
-# A line connects per-method means across sweeps.
+# Summary trajectories across ALL l2seg values
+# Per sweep: one trajectory per method and l2seg value.
+# Point size shows the number of stations moved in that sweep.
 # ---------------------------------------------------------------------------
 all_l2seg_vals <- sort(unique(trajectory_tbl$l2seg[!is.na(trajectory_tbl$l2seg)]))
 has_uncapped   <- any(is.na(trajectory_tbl$l2seg))
@@ -545,29 +609,23 @@ bplot_a <- ggplot(
   # Background: one thin line per (method × l2seg), linetype by l2seg
   geom_line(
     aes(group = interaction(Notation, source), linetype = l2seg_fct),
-    linewidth = 0.4, alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE
+    linewidth = 0.4, alpha = 0.35, inherit.aes = TRUE,
+    show.legend = c(color = TRUE, linetype = TRUE)
   ) +
   geom_point(
     aes(group = interaction(Notation, source), size = stations_moved),
-    alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE, na.rm = TRUE
+    alpha = 0.35, inherit.aes = TRUE,
+    show.legend = c(color = FALSE, size = TRUE),
+    na.rm = TRUE
   ) +
-  # Foreground: boxplot distribution across l2seg values per method
-  geom_boxplot(
-    aes(group = interaction(sweep, Notation)),
-    position = box_dodge,
-    width = 0.5,
-    outlier.size = 1.2,
-    alpha = 0.55,
-    linewidth = 0.5
-  ) +
-  { if (show_end_labels) geom_text(
+  geom_text(
       data = end_mean_a,
       aes(x = Inf, y = mean_val, label = end_label_a, color = Notation),
       hjust = 0, vjust = 0.5,
       size = 2.4, lineheight = 0.85,
       inherit.aes = FALSE,
       show.legend = FALSE
-    ) } +
+    )  +
   coord_cartesian(clip = "off") +
   scale_x_continuous(breaks = box_sweeps) +
   scale_linetype_manual(
@@ -575,7 +633,7 @@ bplot_a <- ggplot(
     name   = bquote(L[2*seg] ~ "(s)")
   ) +
   scale_size_continuous(
-    name   = "Stations moved",
+    name   = "Stations moved (count)",
     range  = c(0.5, 4),
     breaks = scales::breaks_pretty(n = 4)
   ) +
@@ -585,6 +643,18 @@ bplot_a <- ggplot(
     x = "Sweep",
     y = "Transit distance (nm)",
     fill = "Variant", color = "Variant"
+  ) +
+  guides(
+    fill = "none",
+    color = guide_legend(
+      order = 1,
+      override.aes = list(linetype = "solid", linewidth = 0.8, alpha = 1)
+    ),
+    linetype = guide_legend(
+      order = 3,
+      override.aes = list(shape = NA, linewidth = 0.8, alpha = 1, color = "grey30")
+    ),
+    size = guide_legend(order = 2)
   ) +
   theme_bw(base_size = 12) +
   theme(
@@ -603,29 +673,23 @@ bplot_b <- ggplot(
   # Background: one thin line per (method × l2seg), linetype by l2seg
   geom_line(
     aes(group = interaction(Notation, source), linetype = l2seg_fct),
-    linewidth = 0.4, alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE
+    linewidth = 0.4, alpha = 0.35, inherit.aes = TRUE,
+    show.legend = c(color = TRUE, linetype = TRUE)
   ) +
   geom_point(
     aes(group = interaction(Notation, source), size = stations_moved),
-    alpha = 0.35, inherit.aes = TRUE, show.legend = TRUE, na.rm = TRUE
+    alpha = 0.35, inherit.aes = TRUE,
+    show.legend = c(color = FALSE, size = TRUE),
+    na.rm = TRUE
   ) +
-  # Foreground: boxplot distribution across l2seg values per method
-  geom_boxplot(
-    aes(group = interaction(sweep, Notation)),
-    position = box_dodge,
-    width = 0.5,
-    outlier.size = 1.2,
-    alpha = 0.55,
-    linewidth = 0.5
-  ) +
-  { if (show_end_labels) geom_text(
+  geom_text(
       data = end_mean_b,
       aes(x = Inf, y = mean_val, label = end_label, color = Notation),
       hjust = 0, vjust = 0.5,
       size = 2.4, lineheight = 0.85,
       inherit.aes = FALSE,
       show.legend = FALSE
-    ) } +
+    ) +
   coord_cartesian(clip = "off") +
   scale_x_continuous(breaks = box_sweeps) +
   scale_linetype_manual(
@@ -633,7 +697,7 @@ bplot_b <- ggplot(
     name   = bquote(L[2*seg] ~ "(s)")
   ) +
   scale_size_continuous(
-    name   = "Stations moved",
+    name   = "Stations moved (count)",
     range  = c(0.5, 4),
     breaks = scales::breaks_pretty(n = 4)
   ) +
@@ -644,6 +708,18 @@ bplot_b <- ggplot(
     y = "Improvement from initial transit (%)",
     fill = "Variant", color = "Variant"
   ) +
+  guides(
+    fill = "none",
+    color = guide_legend(
+      order = 1,
+      override.aes = list(linetype = "solid", linewidth = 0.8, alpha = 1)
+    ),
+    linetype = guide_legend(
+      order = 3,
+      override.aes = list(shape = NA, linewidth = 0.8, alpha = 1, color = "grey30")
+    ),
+    size = guide_legend(order = 2)
+  ) +
   theme_bw(base_size = 12) +
   theme(
     legend.position = "bottom",
@@ -653,24 +729,33 @@ bplot_b <- ggplot(
     plot.margin = margin(t = 5, r = 90, b = 5, l = 5, unit = "pt")
   )
 
-box_legend <- cowplot::get_legend(bplot_a)
-
-box_footnote_text <- paste0(
-  "Faint lines show individual trajectories per L\u2082seg value; point size \u221d stations moved that sweep (sweep\u00a00 points omitted). ",
-  "Line type encodes L\u2082seg. ",
-  "Boxes summarise distribution across L\u2082seg values; whiskers 1.5\u00d7IQR. ",
-  if (show_end_labels) paste0(
-    "Right-margin labels: mean \u00b1 SD improvement across L\u2082seg runs ",
-    "(A: nm and %; B: %)."
-  )
+variant_legend <- cowplot::get_legend(
+  bplot_a +
+    guides(linetype = "none", size = "none") +
+    theme(legend.position = "bottom", legend.direction = "horizontal")
 )
+
+diagnostic_legend <- cowplot::get_legend(
+  bplot_a +
+    guides(color = "none", fill = "none") +
+    theme(legend.position = "bottom", legend.direction = "horizontal")
+)
+
 box_footnote_grob <- cowplot::ggdraw() +
-  cowplot::draw_label(
-    box_footnote_text,
-    x = 0.02, y = 0.5,
-    hjust = 0, vjust = 0.5,
-    size = 7.5,
-    color = "grey30"
+  cowplot::draw_grob(
+    grid::textGrob(
+      expression(paste(
+        "Faint lines show individual trajectories for each ", L[2*seg], " value; ",
+        "point size is proportional to the number of stations moved in that sweep. ",
+        "Line type encodes ", L[2*seg], ". ",
+        "Right-margin labels show mean \u00b1 SD improvement across ", L[2*seg], " runs."
+      )),
+      x = grid::unit(0.02, "npc"),
+      y = grid::unit(0.5, "npc"),
+      hjust = 0,
+      vjust = 0.5,
+      gp = grid::gpar(fontsize = 7.5, col = "grey30")
+    )
   )
 
 box_plot <- cowplot::plot_grid(
@@ -679,15 +764,16 @@ box_plot <- cowplot::plot_grid(
     bplot_b + theme(legend.position = "none"),
     ncol = 2, rel_widths = c(1, 1)
   ),
-  box_legend,
+  variant_legend,
+  diagnostic_legend,
   box_footnote_grob,
   ncol = 1,
-  rel_heights = c(1, 0.10, 0.08)
+  rel_heights = c(1, 0.09, 0.12, 0.08)
 )
 
 box_plot_file <- file.path(sol_dir, "refinement_transit_sweeps.png")
-ggsave(box_plot_file, plot = box_plot, width = 11, height = 5.5, dpi = 150)
-cat(sprintf("Boxplot saved to: %s\n\n", box_plot_file))
+ggsave(box_plot_file, plot = box_plot, width = 11, height = 5.5, dpi = 150, bg = "white")
+cat(sprintf("Plot saved to: %s\n\n", box_plot_file))
 
 # ---------------------------------------------------------------------------
 # Metadata summary
