@@ -45,13 +45,15 @@ typedef struct {
 } sweep_snapshot_t;
 
 typedef struct {
-    int mip_time_limit_seconds;
+    int l1seg_time_limit_seconds;
+    int l2seg_time_limit_seconds;
     int global_time_limit_seconds;
     int max_iterations;
 } sweep_config_t;
 
 typedef struct {
-    int mip_time_limit_seconds;
+    int l1seg_time_limit_seconds;
+    int l2seg_time_limit_seconds;
     int global_time_limit_seconds;
     int max_iterations;
 } sweep_metadata_extra_t;
@@ -63,7 +65,9 @@ static void write_sweep_metadata_extra(FILE *fp, const char *indent, const void 
     const sweep_metadata_extra_t *extra = (const sweep_metadata_extra_t*)ctx;
     const char *base = indent ? indent : "";
     if (!fp || !extra) return;
-    fprintf(fp, "%s  \"mip_time_limit_seconds\": %d,\n", base, extra->mip_time_limit_seconds);
+    fprintf(fp, "%s  \"mip_time_limit_seconds\": %d,\n", base, extra->l2seg_time_limit_seconds);
+    fprintf(fp, "%s  \"l1seg_time_limit_seconds\": %d,\n", base, extra->l1seg_time_limit_seconds);
+    fprintf(fp, "%s  \"l2seg_time_limit_seconds\": %d,\n", base, extra->l2seg_time_limit_seconds);
     fprintf(fp, "%s  \"global_time_limit_seconds\": %d,\n", base, extra->global_time_limit_seconds);
     fprintf(fp, "%s  \"max_iterations\": %d", base, extra->max_iterations);
 }
@@ -273,7 +277,8 @@ static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *c
     int section = 0;
 
     if (!cfg) return;
-    cfg->mip_time_limit_seconds = 0;
+    cfg->l1seg_time_limit_seconds = 0;
+    cfg->l2seg_time_limit_seconds = 0;
     cfg->global_time_limit_seconds = 0;
     cfg->max_iterations = 0;
 
@@ -304,7 +309,8 @@ static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *c
     }
 
     fclose(fp);
-    cfg->mip_time_limit_seconds = (int)read_sweep_mip_time_limit_from_yaml(yaml_path);
+    cfg->l1seg_time_limit_seconds = (int)read_segment_mip_time_limit_from_yaml(yaml_path);
+    cfg->l2seg_time_limit_seconds = (int)read_sweep_mip_time_limit_from_yaml(yaml_path);
 }
 
 static char *read_text_file(const char *path) {
@@ -1368,37 +1374,169 @@ quit:
     return error == 0;
 }
 
-static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_boat_t *boat,
-                             gsp_route_segment_t *left, gsp_route_segment_t *right,
-                             int *solve_count,
-                             gsp_mip_solve_detail_t **solve_details,
-                             int *solve_detail_count,
-                             int *solve_detail_capacity,
-                             int boundary_index,
-                             int left_segment_index,
-                             int right_segment_index,
-                             int boundary_loc_id,
-                             double time_limit_seconds) {
-    double current_total = left->distance_nm + right->distance_nm;
-    int *best_left_ids = NULL;
-    int *best_right_ids = NULL;
-    int best_left_catch = 0, best_right_catch = 0;
-    double best_left_dist = 0.0, best_right_dist = 0.0;
-    int left_count = 0;
-    int right_count = 0;
-    double capacity_gap_percent = -1.0;
-    double capacity_runtime_seconds = -1.0;
-    int capacity_num_vars = 0;
-    int capacity_num_constrs = 0;
+static int append_mip_detail_checked(gsp_mip_solve_detail_t **solve_details,
+                                     int *solve_detail_count,
+                                     int *solve_detail_capacity,
+                                     const gsp_mip_solve_detail_t *detail) {
+    if (!solve_details || !solve_detail_count || !solve_detail_capacity) return 1;
+    return gsp_append_mip_solve_detail(solve_details, solve_detail_count,
+                                       solve_detail_capacity, detail);
+}
+
+static int copy_route_segment_local(const gsp_route_segment_t *src, gsp_route_segment_t *dst) {
+    if (!src || !dst) return 0;
+    memset(dst, 0, sizeof(*dst));
+    *dst = *src;
+    dst->signed_station_ids = NULL;
+    if (src->count > 0) {
+        dst->signed_station_ids = (int*)malloc((size_t)src->count * sizeof(int));
+        if (!dst->signed_station_ids) return 0;
+        memcpy(dst->signed_station_ids, src->signed_station_ids, (size_t)src->count * sizeof(int));
+    }
+    return 1;
+}
+
+static int copy_segment_with_extra_station(const gsp_route_segment_t *src,
+                                           int signed_station_id,
+                                           gsp_route_segment_t *dst) {
+    if (!copy_route_segment_local(src, dst)) return 0;
+    if (signed_station_id != 0) {
+        int *tmp = (int*)realloc(dst->signed_station_ids,
+                                (size_t)(dst->count + 1) * sizeof(int));
+        if (!tmp) {
+            free(dst->signed_station_ids);
+            memset(dst, 0, sizeof(*dst));
+            return 0;
+        }
+        dst->signed_station_ids = tmp;
+        dst->signed_station_ids[dst->count++] = signed_station_id;
+        dst->capacity = dst->count;
+    }
+    return 1;
+}
+
+static int copy_segment_without_station(const gsp_route_segment_t *src,
+                                        int remove_pos,
+                                        gsp_route_segment_t *dst) {
+    int k = 0;
+    if (!src || !dst || remove_pos < 0 || remove_pos >= src->count || src->count <= 1) return 0;
+    memset(dst, 0, sizeof(*dst));
+    *dst = *src;
+    dst->count = src->count - 1;
+    dst->capacity = dst->count;
+    dst->signed_station_ids = (int*)malloc((size_t)dst->count * sizeof(int));
+    if (!dst->signed_station_ids) return 0;
+    for (int i = 0; i < src->count; i++) {
+        if (i == remove_pos) continue;
+        dst->signed_station_ids[k++] = src->signed_station_ids[i];
+    }
+    return 1;
+}
+
+static double station_to_loc_distance(const nn_instance_t *inst, int signed_station_id, int loc_id) {
+    int station_idx = find_station_index(inst, abs(signed_station_id));
+    double d1, d2;
+    if (station_idx < 0) return 1e100;
+    if (!inst->distances || loc_id < 0 || loc_id >= inst->max_loc_id) return 1e100;
+    d1 = (inst->nodes[station_idx].start_loc_id >= 0 &&
+          inst->nodes[station_idx].start_loc_id < inst->max_loc_id &&
+          inst->distances[inst->nodes[station_idx].start_loc_id])
+        ? inst->distances[inst->nodes[station_idx].start_loc_id][loc_id] : 0.0;
+    d2 = (inst->nodes[station_idx].end_loc_id >= 0 &&
+          inst->nodes[station_idx].end_loc_id < inst->max_loc_id &&
+          inst->distances[inst->nodes[station_idx].end_loc_id])
+        ? inst->distances[inst->nodes[station_idx].end_loc_id][loc_id] : 0.0;
+    if (d1 <= 0.0) return d2;
+    if (d2 <= 0.0) return d1;
+    return (d1 < d2) ? d1 : d2;
+}
+
+static int select_fallback_donor(const nn_instance_t *inst,
+                                 const gsp_boat_t *boat,
+                                 const gsp_route_segment_t *segments,
+                                 int segment_count,
+                                 int left_idx,
+                                 int right_idx,
+                                 int boundary_loc_id,
+                                 int *out_donor_idx,
+                                 int *out_station_pos,
+                                 int *out_nearer_left) {
+    double best_score = 1e100;
+    int best_donor = -1;
+    int best_pos = -1;
+    int best_left = 1;
+
+    if (!inst || !boat || !segments || segment_count <= 2) return 0;
+    for (int s = 0; s < segment_count; s++) {
+        if (s == left_idx || s == right_idx) continue;
+        if (segments[s].count <= 1) continue;
+        for (int i = 0; i < segments[s].count; i++) {
+            int signed_id = segments[s].signed_station_ids[i];
+            int amount = station_amount(inst, abs(signed_id));
+            double to_left = station_to_loc_distance(inst, signed_id, segments[left_idx].end_loc_id);
+            double to_right = station_to_loc_distance(inst, signed_id, segments[right_idx].start_loc_id);
+            double to_boundary = station_to_loc_distance(inst, signed_id, boundary_loc_id);
+            int nearer_left = (to_left <= to_right);
+            int nearer_catch = nearer_left ? segments[left_idx].catch_amount : segments[right_idx].catch_amount;
+            double score = to_boundary;
+            if ((double)(nearer_catch + amount) > boat->boat_capacity) continue;
+            if (score < best_score) {
+                best_score = score;
+                best_donor = s;
+                best_pos = i;
+                best_left = nearer_left;
+            }
+        }
+    }
+
+    if (best_donor < 0) return 0;
+    if (out_donor_idx) *out_donor_idx = best_donor;
+    if (out_station_pos) *out_station_pos = best_pos;
+    if (out_nearer_left) *out_nearer_left = best_left;
+    return 1;
+}
+
+static int optimize_boundary_candidate(GRBenv *env,
+                                       const nn_instance_t *inst,
+                                       const gsp_boat_t *boat,
+                                       const gsp_route_segment_t *left,
+                                       const gsp_route_segment_t *right,
+                                       int boundary_index,
+                                       int left_segment_index,
+                                       int right_segment_index,
+                                       int boundary_loc_id,
+                                       int fallback_used,
+                                       int pass_index,
+                                       double l1seg_time_limit_seconds,
+                                       double l2seg_time_limit_seconds,
+                                       int *solve_count,
+                                       gsp_mip_solve_detail_t **solve_details,
+                                       int *solve_detail_count,
+                                       int *solve_detail_capacity,
+                                       int **best_left_ids,
+                                       int *best_left_count,
+                                       int *best_left_catch,
+                                       double *best_left_dist,
+                                       int **best_right_ids,
+                                       int *best_right_count,
+                                       int *best_right_catch,
+                                       double *best_right_dist) {
     int *left_station_ids = NULL;
     int *right_station_ids = NULL;
     int *left_abs_ids = NULL;
     int *right_abs_ids = NULL;
+    int left_count = 0, right_count = 0;
+    double capacity_gap_percent = -1.0, capacity_runtime_seconds = -1.0;
+    int capacity_num_vars = 0, capacity_num_constrs = 0;
     int total = left->count + right->count;
+    int ok = 0;
+
+    if (best_left_ids) *best_left_ids = NULL;
+    if (best_right_ids) *best_right_ids = NULL;
 
     if (!solve_boundary_capacity_mip(env, inst, boat, left, right,
                                      boundary_loc_id,
-                                     time_limit_seconds,
+                                     l2seg_time_limit_seconds,
                                      &left_station_ids, &left_count,
                                      &right_station_ids, &right_count,
                                      &capacity_gap_percent,
@@ -1409,11 +1547,12 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_b
     }
     if (solve_count) (*solve_count)++;
 
-    if (solve_details && solve_detail_count && solve_detail_capacity) {
+    {
         gsp_mip_solve_detail_t detail;
         gsp_mip_solve_detail_init(&detail);
+        detail.pass_index = pass_index;
         detail.boundary_index = boundary_index;
-        detail.candidate_split_index = 0;
+        detail.candidate_split_index = fallback_used ? 1 : 0;
         detail.segment_index = 0;
         detail.segment_role = 2;
         detail.station_count = total;
@@ -1425,70 +1564,284 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_b
         detail.model_num_constrs = capacity_num_constrs;
         detail.runtime_seconds = capacity_runtime_seconds;
         detail.gap_percent = capacity_gap_percent;
-        if (!gsp_append_mip_solve_detail(solve_details, solve_detail_count, solve_detail_capacity, &detail)) {
-            free(left_station_ids);
-            free(right_station_ids);
-            return 0;
-        }
+        if (!append_mip_detail_checked(solve_details, solve_detail_count, solve_detail_capacity, &detail)) goto cleanup;
     }
 
     left_abs_ids = (int*)malloc((size_t)left_count * sizeof(int));
     right_abs_ids = (int*)malloc((size_t)right_count * sizeof(int));
-    if (!left_abs_ids || !right_abs_ids) {
-        free(left_station_ids);
-        free(right_station_ids);
-        free(left_abs_ids);
-        free(right_abs_ids);
-        return 0;
-    }
+    if (!left_abs_ids || !right_abs_ids) goto cleanup;
     for (int i = 0; i < left_count; i++) left_abs_ids[i] = abs(left_station_ids[i]);
     for (int i = 0; i < right_count; i++) right_abs_ids[i] = abs(right_station_ids[i]);
 
-    if (!solve_segment_tsp(env, inst, left->start_loc_id, boundary_loc_id,
-                           left_abs_ids, left_count,
-                           &best_left_catch, &best_left_dist, &best_left_ids,
-                           NULL, NULL, NULL, NULL, NULL,
-                           time_limit_seconds)) {
-        free(left_station_ids);
-        free(right_station_ids);
-        free(left_abs_ids);
-        free(right_abs_ids);
-        return 0;
-    }
-    if (!solve_segment_tsp(env, inst, boundary_loc_id, right->end_loc_id,
-                           right_abs_ids, right_count,
-                           &best_right_catch, &best_right_dist, &best_right_ids,
-                           NULL, NULL, NULL, NULL, NULL,
-                           time_limit_seconds)) {
-        free(left_station_ids);
-        free(right_station_ids);
-        free(left_abs_ids);
-        free(right_abs_ids);
-        free(best_left_ids);
-        return 0;
+    {
+        double runtime = -1.0, gap = -1.0;
+        int vars = 0, constrs = 0;
+        if (!solve_segment_tsp(env, inst, left->start_loc_id, boundary_loc_id,
+                               left_abs_ids, left_count,
+                               best_left_catch, best_left_dist, best_left_ids,
+                               NULL, &gap, &runtime, &vars, &constrs,
+                               l1seg_time_limit_seconds)) goto cleanup;
+        if (solve_count) (*solve_count)++;
+        {
+            gsp_mip_solve_detail_t detail;
+            gsp_mip_solve_detail_init(&detail);
+            detail.pass_index = pass_index;
+            detail.boundary_index = boundary_index;
+            detail.candidate_split_index = fallback_used ? 1 : 0;
+            detail.segment_index = left_segment_index;
+            detail.segment_role = 1;
+            detail.station_count = left_count;
+            detail.node_count = left_count + 2;
+            detail.moved_stations =
+                count_segment_station_changes(left, &(gsp_route_segment_t){.signed_station_ids = *best_left_ids, .count = left_count});
+            detail.model_num_vars = vars;
+            detail.model_num_constrs = constrs;
+            detail.runtime_seconds = runtime;
+            detail.gap_percent = gap;
+            if (!append_mip_detail_checked(solve_details, solve_detail_count, solve_detail_capacity, &detail)) goto cleanup;
+        }
     }
 
+    {
+        double runtime = -1.0, gap = -1.0;
+        int vars = 0, constrs = 0;
+        if (!solve_segment_tsp(env, inst, boundary_loc_id, right->end_loc_id,
+                               right_abs_ids, right_count,
+                               best_right_catch, best_right_dist, best_right_ids,
+                               NULL, &gap, &runtime, &vars, &constrs,
+                               l1seg_time_limit_seconds)) goto cleanup;
+        if (solve_count) (*solve_count)++;
+        {
+            gsp_mip_solve_detail_t detail;
+            gsp_mip_solve_detail_init(&detail);
+            detail.pass_index = pass_index;
+            detail.boundary_index = boundary_index;
+            detail.candidate_split_index = fallback_used ? 1 : 0;
+            detail.segment_index = right_segment_index;
+            detail.segment_role = 1;
+            detail.station_count = right_count;
+            detail.node_count = right_count + 2;
+            detail.moved_stations =
+                count_segment_station_changes(right, &(gsp_route_segment_t){.signed_station_ids = *best_right_ids, .count = right_count});
+            detail.model_num_vars = vars;
+            detail.model_num_constrs = constrs;
+            detail.runtime_seconds = runtime;
+            detail.gap_percent = gap;
+            if (!append_mip_detail_checked(solve_details, solve_detail_count, solve_detail_capacity, &detail)) goto cleanup;
+        }
+    }
+
+    *best_left_count = left_count;
+    *best_right_count = right_count;
+    ok = 1;
+
+cleanup:
     free(left_station_ids);
     free(right_station_ids);
     free(left_abs_ids);
     free(right_abs_ids);
-    if (best_left_dist + best_right_dist + SWEEP_EPS >= current_total) {
-        free(best_left_ids);
-        free(best_right_ids);
+    if (!ok) {
+        free(*best_left_ids);
+        free(*best_right_ids);
+        if (best_left_ids) *best_left_ids = NULL;
+        if (best_right_ids) *best_right_ids = NULL;
+    }
+    return ok;
+}
+
+static int reoptimize_candidate_segment(GRBenv *env,
+                                        const nn_instance_t *inst,
+                                        const gsp_route_segment_t *baseline,
+                                        gsp_route_segment_t *candidate,
+                                        int pass_index,
+                                        int boundary_index,
+                                        int segment_index,
+                                        double l1seg_time_limit_seconds,
+                                        int *solve_count,
+                                        gsp_mip_solve_detail_t **solve_details,
+                                        int *solve_detail_count,
+                                        int *solve_detail_capacity) {
+    int *station_ids = NULL;
+    int *signed_ids = NULL;
+    int catch_amount = 0;
+    double distance_nm = 0.0;
+    double runtime = -1.0, gap = -1.0;
+    int vars = 0, constrs = 0;
+
+    if (!candidate || candidate->count <= 0) return 0;
+    station_ids = (int*)malloc((size_t)candidate->count * sizeof(int));
+    if (!station_ids) return 0;
+    for (int i = 0; i < candidate->count; i++) station_ids[i] = abs(candidate->signed_station_ids[i]);
+
+    if (!solve_segment_tsp(env, inst, candidate->start_loc_id, candidate->end_loc_id,
+                           station_ids, candidate->count,
+                           &catch_amount, &distance_nm, &signed_ids,
+                           NULL, &gap, &runtime, &vars, &constrs,
+                           l1seg_time_limit_seconds)) {
+        free(station_ids);
         return 0;
     }
+    free(station_ids);
+    if (solve_count) (*solve_count)++;
 
-    free(left->signed_station_ids);
-    free(right->signed_station_ids);
-    left->signed_station_ids = best_left_ids;
-    right->signed_station_ids = best_right_ids;
-    left->count = left_count;
-    right->count = right_count;
-    left->catch_amount = best_left_catch;
-    right->catch_amount = best_right_catch;
-    left->distance_nm = best_left_dist;
-    right->distance_nm = best_right_dist;
+    {
+        gsp_mip_solve_detail_t detail;
+        gsp_mip_solve_detail_init(&detail);
+        detail.pass_index = pass_index;
+        detail.boundary_index = boundary_index;
+        detail.candidate_split_index = 1;
+        detail.segment_index = segment_index;
+        detail.segment_role = 1;
+        detail.station_count = candidate->count;
+        detail.node_count = candidate->count + 2;
+        detail.moved_stations = baseline ? count_segment_station_changes(baseline, &(gsp_route_segment_t){.signed_station_ids = signed_ids, .count = candidate->count}) : 0;
+        detail.model_num_vars = vars;
+        detail.model_num_constrs = constrs;
+        detail.runtime_seconds = runtime;
+        detail.gap_percent = gap;
+        if (!append_mip_detail_checked(solve_details, solve_detail_count, solve_detail_capacity, &detail)) {
+            free(signed_ids);
+            return 0;
+        }
+    }
+
+    free(candidate->signed_station_ids);
+    candidate->signed_station_ids = signed_ids;
+    candidate->catch_amount = catch_amount;
+    candidate->distance_nm = distance_nm;
     return 1;
+}
+
+static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_boat_t *boat,
+                             gsp_route_segment_t *segments, int segment_count,
+                             int left_idx, int right_idx,
+                             int *solve_count,
+                             gsp_mip_solve_detail_t **solve_details,
+                             int *solve_detail_count,
+                             int *solve_detail_capacity,
+                             int boundary_index,
+                             int boundary_loc_id,
+                             int pass_index,
+                             double l1seg_time_limit_seconds,
+                             double l2seg_time_limit_seconds,
+                             int *changed_donor_index,
+                             double *changed_donor_before_distance) {
+    gsp_route_segment_t *left = &segments[left_idx];
+    gsp_route_segment_t *right = &segments[right_idx];
+    double current_total = left->distance_nm + right->distance_nm;
+    int *best_left_ids = NULL, *best_right_ids = NULL;
+    int best_left_count = 0, best_right_count = 0;
+    int best_left_catch = 0, best_right_catch = 0;
+    double best_left_dist = 0.0, best_right_dist = 0.0;
+
+    if (changed_donor_index) *changed_donor_index = -1;
+    if (changed_donor_before_distance) *changed_donor_before_distance = 0.0;
+    if (optimize_boundary_candidate(env, inst, boat, left, right,
+                                    boundary_index, left_idx + 1, right_idx + 1,
+                                    boundary_loc_id, 0, pass_index,
+                                    l1seg_time_limit_seconds, l2seg_time_limit_seconds,
+                                    solve_count, solve_details, solve_detail_count,
+                                    solve_detail_capacity,
+                                    &best_left_ids, &best_left_count, &best_left_catch, &best_left_dist,
+                                    &best_right_ids, &best_right_count, &best_right_catch, &best_right_dist)) {
+        if (best_left_dist + best_right_dist + SWEEP_EPS < current_total) {
+            free(left->signed_station_ids);
+            free(right->signed_station_ids);
+            left->signed_station_ids = best_left_ids;
+            right->signed_station_ids = best_right_ids;
+            left->count = best_left_count;
+            right->count = best_right_count;
+            left->capacity = best_left_count;
+            right->capacity = best_right_count;
+            left->catch_amount = best_left_catch;
+            right->catch_amount = best_right_catch;
+            left->distance_nm = best_left_dist;
+            right->distance_nm = best_right_dist;
+            return 1;
+        }
+        free(best_left_ids);
+        free(best_right_ids);
+    }
+
+    {
+        int donor_idx = -1, donor_pos = -1, nearer_left = 1;
+        int donor_signed_id = 0;
+        gsp_route_segment_t fallback_left = {0};
+        gsp_route_segment_t fallback_right = {0};
+        gsp_route_segment_t fallback_donor = {0};
+        int *fallback_left_ids = NULL, *fallback_right_ids = NULL;
+        int fallback_left_count = 0, fallback_right_count = 0;
+        int fallback_left_catch = 0, fallback_right_catch = 0;
+        double fallback_left_dist = 0.0, fallback_right_dist = 0.0;
+        double fallback_current_total;
+        int accepted = 0;
+
+        if (!select_fallback_donor(inst, boat, segments, segment_count, left_idx, right_idx,
+                                   boundary_loc_id, &donor_idx, &donor_pos, &nearer_left)) {
+            return 0;
+        }
+        donor_signed_id = segments[donor_idx].signed_station_ids[donor_pos];
+        if (!copy_segment_with_extra_station(left, nearer_left ? donor_signed_id : 0, &fallback_left)) goto fallback_cleanup;
+        if (!copy_segment_with_extra_station(right, nearer_left ? 0 : donor_signed_id, &fallback_right)) goto fallback_cleanup;
+        if (!copy_segment_without_station(&segments[donor_idx], donor_pos, &fallback_donor)) goto fallback_cleanup;
+
+        if (!optimize_boundary_candidate(env, inst, boat, &fallback_left, &fallback_right,
+                                         boundary_index, left_idx + 1, right_idx + 1,
+                                         boundary_loc_id, 1, pass_index,
+                                         l1seg_time_limit_seconds, l2seg_time_limit_seconds,
+                                         solve_count, solve_details, solve_detail_count,
+                                         solve_detail_capacity,
+                                         &fallback_left_ids, &fallback_left_count,
+                                         &fallback_left_catch, &fallback_left_dist,
+                                         &fallback_right_ids, &fallback_right_count,
+                                         &fallback_right_catch, &fallback_right_dist)) {
+            goto fallback_cleanup;
+        }
+        if (!reoptimize_candidate_segment(env, inst, &segments[donor_idx], &fallback_donor,
+                                          pass_index, boundary_index, donor_idx + 1,
+                                          l1seg_time_limit_seconds, solve_count,
+                                          solve_details, solve_detail_count,
+                                          solve_detail_capacity)) {
+            goto fallback_cleanup;
+        }
+
+        fallback_current_total = current_total + segments[donor_idx].distance_nm;
+        if (fallback_left_dist + fallback_right_dist + fallback_donor.distance_nm + SWEEP_EPS < fallback_current_total) {
+            double donor_before_distance = segments[donor_idx].distance_nm;
+            free(left->signed_station_ids);
+            free(right->signed_station_ids);
+            free(segments[donor_idx].signed_station_ids);
+            left->signed_station_ids = fallback_left_ids;
+            right->signed_station_ids = fallback_right_ids;
+            segments[donor_idx].signed_station_ids = fallback_donor.signed_station_ids;
+            fallback_left_ids = NULL;
+            fallback_right_ids = NULL;
+            fallback_donor.signed_station_ids = NULL;
+            left->count = fallback_left_count;
+            right->count = fallback_right_count;
+            left->capacity = fallback_left_count;
+            right->capacity = fallback_right_count;
+            segments[donor_idx].count = fallback_donor.count;
+            segments[donor_idx].capacity = fallback_donor.count;
+            left->catch_amount = fallback_left_catch;
+            right->catch_amount = fallback_right_catch;
+            segments[donor_idx].catch_amount = fallback_donor.catch_amount;
+            left->distance_nm = fallback_left_dist;
+            right->distance_nm = fallback_right_dist;
+            segments[donor_idx].distance_nm = fallback_donor.distance_nm;
+            if (changed_donor_index) *changed_donor_index = donor_idx;
+            if (changed_donor_before_distance) *changed_donor_before_distance = donor_before_distance;
+            accepted = 1;
+        }
+
+fallback_cleanup:
+        free(fallback_left.signed_station_ids);
+        free(fallback_right.signed_station_ids);
+        free(fallback_donor.signed_station_ids);
+        free(fallback_left_ids);
+        free(fallback_right_ids);
+        return accepted;
+    }
 }
 #endif
 
@@ -1843,6 +2196,62 @@ static gsp_mip_solve_detail_t *flatten_sweep_mip_details(const sweep_snapshot_t 
     return details;
 }
 
+static void write_mip_role_entry(FILE *fp,
+                                 const char *key,
+                                 const char *model_name,
+                                 double limit_seconds,
+                                 const gsp_mip_solve_detail_t *details,
+                                 int detail_count,
+                                 int segment_role,
+                                 int trailing_comma) {
+    int count = 0;
+    if (!fp) return;
+    for (int i = 0; i < detail_count; i++) {
+        if (details[i].segment_role == segment_role) count++;
+    }
+    fprintf(fp, "    \"%s\": {\n", key);
+    fprintf(fp, "      \"L\": %.6f,\n", limit_seconds);
+    fprintf(fp, "      \"model\": \"%s\",\n", model_name ? model_name : "unknown");
+    fprintf(fp, "      \"count\": %d,\n", count);
+    fprintf(fp, "      \"solve_detail_tuple\": [\"pass_index\", \"boundary_index\", \"candidate_split_index\", \"segment_index\", \"station_count\", \"node_count\", \"moved_stations\", \"mip_size\", \"runtime_seconds\", \"gap_percent\"],\n");
+    fprintf(fp, "      \"values\": [");
+    count = 0;
+    for (int i = 0; i < detail_count; i++) {
+        const gsp_mip_solve_detail_t *detail = &details[i];
+        if (detail->segment_role != segment_role) continue;
+        if (count) fprintf(fp, ", ");
+        fprintf(fp, "[%d, %d, %d, %d, %d, %d, %d, [%d, %d], %.6f, %.6f]",
+                detail->pass_index,
+                detail->boundary_index,
+                detail->candidate_split_index,
+                detail->segment_index,
+                detail->station_count,
+                detail->node_count,
+                detail->moved_stations,
+                detail->model_num_vars,
+                detail->model_num_constrs,
+                detail->runtime_seconds,
+                detail->gap_percent);
+        count++;
+    }
+    fprintf(fp, "]\n");
+    fprintf(fp, "    }%s\n", trailing_comma ? "," : "");
+}
+
+static void write_refinement_mip_json(FILE *fp,
+                                      const sweep_config_t *cfg,
+                                      const gsp_mip_solve_detail_t *details,
+                                      int detail_count) {
+    fprintf(fp, "  \"mip\": {\n");
+    write_mip_role_entry(fp, "1seg", "endpaired_tsp",
+                         cfg ? (double)cfg->l1seg_time_limit_seconds : 0.0,
+                         details, detail_count, 1, 1);
+    write_mip_role_entry(fp, "2seg", "fixedport_capacity",
+                         cfg ? (double)cfg->l2seg_time_limit_seconds : 0.0,
+                         details, detail_count, 2, 0);
+    fprintf(fp, "  },\n");
+}
+
 static int write_sweep_json(const char *output_path,
                             sqlite3 *db,
                             const gsp_boat_t *boat,
@@ -1893,7 +2302,8 @@ static int write_sweep_json(const char *output_path,
         gsp_metadata_json_t metadata = {0};
         gsp_problem_json_t problem = {0};
         sweep_metadata_extra_t metadata_extra = {
-            cfg ? cfg->mip_time_limit_seconds : 0,
+            cfg ? cfg->l1seg_time_limit_seconds : 0,
+            cfg ? cfg->l2seg_time_limit_seconds : 0,
             cfg ? cfg->global_time_limit_seconds : 0,
             cfg ? cfg->max_iterations : 0
         };
@@ -1926,9 +2336,7 @@ static int write_sweep_json(const char *output_path,
         fprintf(fp, "%s\n", (i + 1 < snapshot_count) ? "," : "");
     }
     fprintf(fp, "  },\n");
-    gsp_write_boundary_mip_section(fp, "l2seg", "fixedport_capacity",
-                                   cfg ? (double)cfg->mip_time_limit_seconds : 0.0,
-                                   mip_details, mip_detail_count);
+    write_refinement_mip_json(fp, cfg, mip_details, mip_detail_count);
 
     if (snapshots[snapshot_count - 1].pass_index == 0) snprintf(final_pass_name, sizeof(final_pass_name), "init");
     else snprintf(final_pass_name, sizeof(final_pass_name), "pass%d", snapshots[snapshot_count - 1].pass_index);
@@ -2002,6 +2410,7 @@ static void parse_sweep_args(int argc, char **argv,
                              const char **strategy, const char **database,
                              const char **config, const char **input,
                              const char **output, int *time_limit,
+                             int *l1seg_time_limit,
                              int *l2seg_time_limit, int *debug_mode) {
     *strategy = NULL;
     *database = NULL;
@@ -2009,6 +2418,7 @@ static void parse_sweep_args(int argc, char **argv,
     *input = NULL;
     *output = NULL;
     *time_limit = 0;
+    *l1seg_time_limit = -1;
     *l2seg_time_limit = -1;
     *debug_mode = 0;
 
@@ -2024,13 +2434,14 @@ static void parse_sweep_args(int argc, char **argv,
         else if (strcmp(argv[i], "--input") == 0) *input = argv[i + 1];
         else if (strcmp(argv[i], "--output") == 0) *output = argv[i + 1];
         else if (strcmp(argv[i], "--time-limit") == 0) *time_limit = atoi(argv[i + 1]);
+        else if (strcmp(argv[i], "--l1seg-limit") == 0) *l1seg_time_limit = atoi(argv[i + 1]);
         else if (strcmp(argv[i], "--l2seg-limit") == 0) *l2seg_time_limit = atoi(argv[i + 1]);
     }
 }
 
 int mode_refinement(int argc, char **argv) {
     const char *strategy = NULL, *database = NULL, *config = NULL, *input = NULL, *output = NULL;
-    int time_limit = 0, l2seg_time_limit = -1, debug_mode = 0;
+    int time_limit = 0, l1seg_time_limit = -1, l2seg_time_limit = -1, debug_mode = 0;
     sqlite3 *db = NULL;
     nn_instance_t inst = {0};
     gsp_boat_t boat;
@@ -2052,14 +2463,17 @@ int mode_refinement(int argc, char **argv) {
     printf("GSP Solver - Refinement\n");
     printf("============================================================\n\n");
     parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output,
-                     &time_limit, &l2seg_time_limit, &debug_mode);
+                     &time_limit, &l1seg_time_limit, &l2seg_time_limit, &debug_mode);
     if (!strategy || !database || !config || !input || !output) {
         fprintf(stderr, "ERROR: sweep requires --strategy, --database, --config, --input, and --output\n");
         goto cleanup;
     }
     read_sweep_config_from_yaml(config, &sweep_cfg);
+    if (l1seg_time_limit >= 0) {
+        sweep_cfg.l1seg_time_limit_seconds = l1seg_time_limit;
+    }
     if (l2seg_time_limit >= 0) {
-        sweep_cfg.mip_time_limit_seconds = l2seg_time_limit;
+        sweep_cfg.l2seg_time_limit_seconds = l2seg_time_limit;
     }
 #ifndef HAVE_GUROBI
     fprintf(stderr, "ERROR: sweep mode requires Gurobi support at build time\n");
@@ -2085,8 +2499,9 @@ int mode_refinement(int argc, char **argv) {
     }
     printf("Loaded segmented input: %d segments, %.2f nm total\n",
            segment_count, input_total_distance_nm);
-    printf("Sweep parameters: mip_time_limit=%d max_iterations=%d global_time_limit=%d time_limit=%d\n",
-           sweep_cfg.mip_time_limit_seconds,
+    printf("Sweep parameters: l1seg_time_limit=%d l2seg_time_limit=%d max_iterations=%d global_time_limit=%d time_limit=%d\n",
+           sweep_cfg.l1seg_time_limit_seconds,
+           sweep_cfg.l2seg_time_limit_seconds,
            sweep_cfg.max_iterations, sweep_cfg.global_time_limit_seconds, time_limit);
     fflush(stdout);
 
@@ -2220,7 +2635,8 @@ int mode_refinement(int argc, char **argv) {
                 int boundary_loc_id;
                 int boundary_port_id = 0;
                 char boundary_port_name[128];
-                double boundary_time_limit_seconds = (double)sweep_cfg.mip_time_limit_seconds;
+                double boundary_l1_time_limit_seconds = (double)sweep_cfg.l1seg_time_limit_seconds;
+                double boundary_l2_time_limit_seconds = (double)sweep_cfg.l2seg_time_limit_seconds;
                 clock_gettime(CLOCK_MONOTONIC, &t_now);
                 if (sweep_cfg.global_time_limit_seconds > 0 &&
                     elapsed_seconds(t_start, t_now) >= (double)sweep_cfg.global_time_limit_seconds) {
@@ -2239,8 +2655,11 @@ int mode_refinement(int argc, char **argv) {
                         keep_running = 0;
                         break;
                     }
-                    if (boundary_time_limit_seconds <= 0.0 || remaining_seconds < boundary_time_limit_seconds) {
-                        boundary_time_limit_seconds = remaining_seconds;
+                    if (boundary_l1_time_limit_seconds <= 0.0 || remaining_seconds < boundary_l1_time_limit_seconds) {
+                        boundary_l1_time_limit_seconds = remaining_seconds;
+                    }
+                    if (boundary_l2_time_limit_seconds <= 0.0 || remaining_seconds < boundary_l2_time_limit_seconds) {
+                        boundary_l2_time_limit_seconds = remaining_seconds;
                     }
                 }
                 if (!active[b]) continue;
@@ -2275,20 +2694,29 @@ int mode_refinement(int argc, char **argv) {
                        pass_index, b + 1, segment_count, b + 1, segments[b].count, right_idx + 1, segments[right_idx].count,
                        boundary_port_id, boundary_port_name, boundary_loc_id);
                 fflush(stdout);
-                if (optimize_boundary(env, &inst, &boat, &segments[b], &segments[right_idx],
+                {
+                    int changed_donor_idx = -1;
+                    double changed_donor_before_distance = 0.0;
+                    if (optimize_boundary(env, &inst, &boat, segments, segment_count,
+                                      b, right_idx,
                                       &pass_mip_solve_count,
                                       &pass_mip_solve_details,
                                       &pass_mip_detail_count,
                                       &pass_mip_detail_capacity,
                                       b + 1,
-                                      b + 1,
-                                      right_idx + 1,
                                       boundary_loc_id,
-                                      boundary_time_limit_seconds)) {
+                                      pass_index,
+                                      boundary_l1_time_limit_seconds,
+                                      boundary_l2_time_limit_seconds,
+                                      &changed_donor_idx,
+                                      &changed_donor_before_distance)) {
                     int station_changes = count_segment_station_changes(&left_before, &segments[b]) +
                                           count_segment_station_changes(&right_before, &segments[right_idx]);
                     double after_total = segments[b].distance_nm + segments[right_idx].distance_nm;
                     double improvement_nm = before_total - after_total;
+                    if (changed_donor_idx >= 0) {
+                        improvement_nm += changed_donor_before_distance - segments[changed_donor_idx].distance_nm;
+                    }
                     boundary_gain_nm[b] = improvement_nm;
                     changed = 1;
                     boundary_changes++;
@@ -2296,10 +2724,15 @@ int mode_refinement(int argc, char **argv) {
                     if (segment_count > 1) active[(b - 1 + segment_count) % segment_count] = 1;
                     active[b] = 1;
                     if (segment_count > 1) active[right_idx] = 1;
+                    if (changed_donor_idx >= 0 && segment_count > 1) {
+                        active[(changed_donor_idx - 1 + segment_count) % segment_count] = 1;
+                        active[changed_donor_idx] = 1;
+                    }
                     printf("    improved: %.2f -> %.2f nm, gain=%.2f nm, moved_station_marks=%d\n",
                            before_total, after_total, improvement_nm, station_changes);
-                } else {
+                    } else {
                     printf("    no change\n");
+                    }
                 }
                 fflush(stdout);
                 free(left_before.signed_station_ids);
