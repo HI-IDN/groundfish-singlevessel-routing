@@ -35,6 +35,7 @@ typedef struct {
     double *boundary_improvement_gain_nm;
     int boundary_attempts;
     int boundary_changes;
+    int fallback_changes;
     int mip_solve_count;
     int mip_detail_count;
     int mip_detail_capacity;
@@ -1451,6 +1452,29 @@ static double station_to_loc_distance(const nn_instance_t *inst, int signed_stat
     return (d1 < d2) ? d1 : d2;
 }
 
+static double station_to_segment_pointset_distance(const nn_instance_t *inst,
+                                                   int signed_station_id,
+                                                   const gsp_route_segment_t *segment) {
+    double best = 1e100;
+    if (!inst || !segment) return best;
+    {
+        double d = station_to_loc_distance(inst, signed_station_id, segment->start_loc_id);
+        if (d < best) best = d;
+        d = station_to_loc_distance(inst, signed_station_id, segment->end_loc_id);
+        if (d < best) best = d;
+    }
+    for (int i = 0; i < segment->count; i++) {
+        int station_idx = find_station_index(inst, abs(segment->signed_station_ids[i]));
+        double d;
+        if (station_idx < 0) continue;
+        d = station_to_loc_distance(inst, signed_station_id, inst->nodes[station_idx].start_loc_id);
+        if (d < best) best = d;
+        d = station_to_loc_distance(inst, signed_station_id, inst->nodes[station_idx].end_loc_id);
+        if (d < best) best = d;
+    }
+    return best;
+}
+
 static int select_fallback_donor(const nn_instance_t *inst,
                                  const gsp_boat_t *boat,
                                  const gsp_route_segment_t *segments,
@@ -1468,18 +1492,30 @@ static int select_fallback_donor(const nn_instance_t *inst,
 
     if (!inst || !boat || !segments || segment_count <= 2) return 0;
     for (int s = 0; s < segment_count; s++) {
+        int left_prev = (left_idx - 1 + segment_count) % segment_count;
+        int right_next = (right_idx + 1) % segment_count;
         if (s == left_idx || s == right_idx) continue;
+        if (s == left_prev || s == right_next) continue;
         if (segments[s].count <= 1) continue;
         for (int i = 0; i < segments[s].count; i++) {
             int signed_id = segments[s].signed_station_ids[i];
             int amount = station_amount(inst, abs(signed_id));
-            double to_left = station_to_loc_distance(inst, signed_id, segments[left_idx].end_loc_id);
-            double to_right = station_to_loc_distance(inst, signed_id, segments[right_idx].start_loc_id);
-            double to_boundary = station_to_loc_distance(inst, signed_id, boundary_loc_id);
-            int nearer_left = (to_left <= to_right);
-            int nearer_catch = nearer_left ? segments[left_idx].catch_amount : segments[right_idx].catch_amount;
-            double score = to_boundary;
-            if ((double)(nearer_catch + amount) > boat->boat_capacity) continue;
+            int left_feasible = ((double)(segments[left_idx].catch_amount + amount) <= boat->boat_capacity);
+            int right_feasible = ((double)(segments[right_idx].catch_amount + amount) <= boat->boat_capacity);
+            double to_left;
+            double to_right;
+            double to_boundary;
+            int nearer_left;
+            double score;
+            if (!left_feasible && !right_feasible) continue;
+            to_left = station_to_segment_pointset_distance(inst, signed_id, &segments[left_idx]);
+            to_right = station_to_segment_pointset_distance(inst, signed_id, &segments[right_idx]);
+            if (left_feasible && right_feasible) nearer_left = (to_left <= to_right);
+            else nearer_left = left_feasible;
+            to_boundary = station_to_loc_distance(inst, signed_id, boundary_loc_id);
+            score = to_boundary;
+            if (to_left < score) score = to_left;
+            if (to_right < score) score = to_right;
             if (score < best_score) {
                 best_score = score;
                 best_donor = s;
@@ -2163,6 +2199,7 @@ static void write_pass_entry(FILE *fp,
     fprintf(fp, "],\n");
     fprintf(fp, "      \"boundary_attempts\": %d,\n", snapshot->boundary_attempts);
     fprintf(fp, "      \"boundary_changes\": %d,\n", snapshot->boundary_changes);
+    fprintf(fp, "      \"fallback_changes\": %d,\n", snapshot->fallback_changes);
     fprintf(fp, "      \"accepted_capacity_solves\": %d,\n", snapshot->boundary_changes);
     fprintf(fp, "      \"total_capacity_solves\": %d,\n", snapshot->boundary_attempts);
     fprintf(fp, "      \"mip_solves\": %d,\n", snapshot->mip_solve_count);
@@ -2261,6 +2298,7 @@ static int write_sweep_json(const char *output_path,
                             int snapshot_count,
                             int total_boundary_attempts,
                             int total_boundary_changes,
+                            int total_fallback_changes,
                             int total_mip_solves,
                             double preprocessing_seconds,
                             double total_runtime_seconds,
@@ -2390,7 +2428,8 @@ static int write_sweep_json(const char *output_path,
         fprintf(fp, "      \"accepted_capacity_solves\": %d,\n", total_boundary_changes);
         fprintf(fp, "      \"total_capacity_solves\": %d,\n", total_boundary_attempts);
         fprintf(fp, "      \"total_mip_solves\": %d,\n", total_mip_solves);
-        fprintf(fp, "      \"total_boundary_changes\": %d\n", total_boundary_changes);
+        fprintf(fp, "      \"total_boundary_changes\": %d,\n", total_boundary_changes);
+        fprintf(fp, "      \"total_fallback_changes\": %d\n", total_fallback_changes);
         fprintf(fp, "    },\n");
         gsp_write_summary_mip_json(fp, "    ", mip_detail_count,
                                    mip_runtime_mean, mip_runtime_max, mip_gap_mean, mip_gap_max, 0);
@@ -2454,6 +2493,7 @@ int mode_refinement(int argc, char **argv) {
     int snapshot_count = 0, snapshot_capacity = 0;
     int total_boundary_attempts = 0;
     int total_boundary_changes = 0;
+    int total_fallback_changes = 0;
     int total_mip_solves = 0;
     int rc = 1;
     struct timespec t_start, t_pass_start, t_pass_end, t_now, t_preproc_end;
@@ -2563,6 +2603,7 @@ int mode_refinement(int argc, char **argv) {
                                       snapshots, snapshot_count,
                                       total_boundary_attempts,
                                       total_boundary_changes,
+                                      total_fallback_changes,
                                       total_mip_solves,
                                       preprocessing_seconds,
                                       snapshot.total_runtime_seconds,
@@ -2587,6 +2628,7 @@ int mode_refinement(int argc, char **argv) {
         while (keep_running) {
             int boundary_attempts = 0;
             int boundary_changes = 0;
+            int fallback_changes = 0;
             int changed = 0;
             int pass_mip_solve_count = 0;
             sweep_snapshot_t snapshot;
@@ -2721,6 +2763,10 @@ int mode_refinement(int argc, char **argv) {
                     changed = 1;
                     boundary_changes++;
                     total_boundary_changes++;
+                    if (changed_donor_idx >= 0) {
+                        fallback_changes++;
+                        total_fallback_changes++;
+                    }
                     if (segment_count > 1) active[(b - 1 + segment_count) % segment_count] = 1;
                     active[b] = 1;
                     if (segment_count > 1) active[right_idx] = 1;
@@ -2760,6 +2806,7 @@ int mode_refinement(int argc, char **argv) {
             boundary_gain_nm = NULL;
             snapshot.boundary_attempts = boundary_attempts;
             snapshot.boundary_changes = boundary_changes;
+            snapshot.fallback_changes = fallback_changes;
             snapshot.mip_solve_count = pass_mip_solve_count;
             snapshot.mip_detail_count = pass_mip_detail_count;
             snapshot.mip_detail_capacity = pass_mip_detail_capacity;
@@ -2792,6 +2839,7 @@ int mode_refinement(int argc, char **argv) {
                                       snapshots, snapshot_count,
                                       total_boundary_attempts,
                                       total_boundary_changes,
+                                      total_fallback_changes,
                                       total_mip_solves,
                                       preprocessing_seconds,
                                       snapshot.total_runtime_seconds,
@@ -2830,6 +2878,7 @@ int mode_refinement(int argc, char **argv) {
                               snapshots, snapshot_count,
                               total_boundary_attempts,
                               total_boundary_changes,
+                              total_fallback_changes,
                               total_mip_solves,
                               preprocessing_seconds,
                               elapsed_seconds(t_start, t_now),
