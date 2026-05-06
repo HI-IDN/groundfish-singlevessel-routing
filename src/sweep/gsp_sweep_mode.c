@@ -393,7 +393,15 @@ static int extract_summary_final_total_distance(const char *summary_pos, double 
     final_value = distance_pos ? find_key_in_object(distance_pos, "final") : NULL;
     if (final_value) {
         const char *p = final_value;
-        return parse_json_double(&p, out_value);
+        if (*p == '{') {
+            const char *total_value = find_key_in_object(p, "total");
+            if (total_value) {
+                p = total_value;
+                return parse_json_double(&p, out_value);
+            }
+        } else {
+            return parse_json_double(&p, out_value);
+        }
     }
     return parse_named_double_value(summary_pos, "final_total_distance_nm", out_value);
 }
@@ -1892,6 +1900,9 @@ static int write_sweep_json(const char *output_path,
     {
         double *distance_trajectory = NULL;
         double *runtime_trajectory = NULL;
+        gsp_distance_breakdown_t *final_segment_breakdowns = NULL;
+        gsp_distance_breakdown_t final_total_breakdown;
+        memset(&final_total_breakdown, 0, sizeof(final_total_breakdown));
         distance_trajectory = (double*)calloc((size_t)snapshot_count, sizeof(double));
         runtime_trajectory = (double*)calloc((size_t)snapshot_count, sizeof(double));
         if (distance_trajectory && runtime_trajectory) {
@@ -1900,6 +1911,16 @@ static int write_sweep_json(const char *output_path,
                 runtime_trajectory[i] = snapshots[i].pass_runtime_seconds;
             }
         }
+        final_segment_breakdowns = (gsp_distance_breakdown_t*)calloc(
+            (size_t)snapshots[snapshot_count - 1].solution.segment_count,
+            sizeof(gsp_distance_breakdown_t));
+        if (final_segment_breakdowns) {
+            sweep_compute_segment_breakdowns(inst,
+                                             &snapshots[snapshot_count - 1].solution,
+                                             boat->boat_loc_id,
+                                             final_segment_breakdowns,
+                                             &final_total_breakdown);
+        }
 
         gsp_write_summary_status_json(fp, "    ", final_pass_name,
                                       is_final_write ? "refinement_complete" : "refinement_running",
@@ -1907,7 +1928,9 @@ static int write_sweep_json(const char *output_path,
                                       strategy_name ? strategy_name : "refinement", 1);
         gsp_write_summary_distance_json(fp, "    ", 0, 0.0,
                                         distance_trajectory, snapshot_count,
-                                        snapshots[snapshot_count - 1].solution.total_distance, 1);
+                                        snapshots[snapshot_count - 1].solution.total_distance,
+                                        final_segment_breakdowns ? &final_total_breakdown : NULL,
+                                        1);
         gsp_write_summary_runtime_json(fp, "    ", preprocessing_seconds,
                                        runtime_trajectory, snapshot_count,
                                        postprocessing_seconds, total_runtime_seconds, 1);
@@ -1927,6 +1950,7 @@ static int write_sweep_json(const char *output_path,
         fprintf(fp, "    },\n");
         gsp_write_summary_mip_json(fp, "    ", mip_detail_count,
                                    mip_runtime_mean, mip_runtime_max, mip_gap_mean, mip_gap_max, 0);
+        free(final_segment_breakdowns);
         free(distance_trajectory);
         free(runtime_trajectory);
     }

@@ -213,8 +213,8 @@ $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
     $(eval $(call refinement_l2seg_rule,$(m),$(l)))))
 
 # All l2seg file targets (used by experiments)
-EXPERIMENT_L2SEG_TARGETS = $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
-  $(foreach l,$(L2SEG_VARIANTS),\
+EXPERIMENT_L2SEG_TARGETS = $(foreach l,$(L2SEG_VARIANTS),\
+  $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
     ../sol/$(m)/refinement_$(l).json))
 
 # Default (uncapped) targets
@@ -264,7 +264,18 @@ plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png \
       ../sol/survey/multivessel.png \
       plot-routes plot-refinement plot-mip-runtime
 
-experiments: prepare-routing-data $(EXPERIMENT_L2SEG_TARGETS) $(EXPERIMENT_DEFAULT_TARGETS)
+experiments: prepare-routing-data
+	@bash -lc 'set -euo pipefail; \
+		for l in $(L2SEG_VARIANTS); do \
+			echo "Running all methods for L2SEG=$${l}s"; \
+			for m in $(EXPERIMENT_REFINEMENT_METHODS); do \
+				$(MAKE) -C . "../sol/$${m}/refinement_$${l}.json"; \
+			done; \
+		done; \
+		echo "Running default refinement targets"; \
+		for m in $(EXPERIMENT_REFINEMENT_METHODS); do \
+			$(MAKE) -C . "../sol/$${m}/refinement.json"; \
+		done'
 	@echo "All experiments up to date."
 
 plot-survey-routes: ../sol/survey/multivessel.png

@@ -804,6 +804,7 @@ static int write_fixedport_json(sqlite3 *db,
                                         &grand_total.total_distance_nm,
                                         1,
                                         grand_total.total_distance_nm);
+    gsp_summary_set_final_distance_breakdown(&summary, &grand_total);
     gsp_summary_set_runtime(&summary,
                             preprocessing_seconds,
                             &solution->runtime_seconds,

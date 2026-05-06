@@ -50,6 +50,8 @@ typedef struct {
     const double *distance_trajectory_nm;
     int distance_trajectory_count;
     double final_distance_nm;
+    int has_final_distance_breakdown;
+    gsp_distance_breakdown_t final_distance_breakdown;
     double preprocessing_seconds;
     const double *solution_runtime_seconds;
     int solution_runtime_count;
@@ -75,6 +77,8 @@ void gsp_summary_set_status_and_distance(gsp_summary_json_t *summary,
                                          const double *distance_trajectory_nm,
                                          int distance_trajectory_count,
                                          double final_distance_nm);
+void gsp_summary_set_final_distance_breakdown(gsp_summary_json_t *summary,
+                                              const gsp_distance_breakdown_t *final_distance_breakdown);
 void gsp_summary_set_runtime(gsp_summary_json_t *summary,
                              double preprocessing_seconds,
                              const double *solution_runtime_seconds,
@@ -187,6 +191,7 @@ void gsp_write_summary_distance_json(FILE *fp,
                                      const double *trajectory_distance_nm,
                                      int trajectory_count,
                                      double final_distance_nm,
+                                     const gsp_distance_breakdown_t *final_distance_breakdown,
                                      int trailing_comma);
 
 void gsp_write_summary_runtime_json(FILE *fp,

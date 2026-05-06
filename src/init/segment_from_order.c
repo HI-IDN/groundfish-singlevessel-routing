@@ -503,6 +503,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
             distance_trajectory,
             distance_count,
             sol->total_distance);
+        gsp_summary_set_final_distance_breakdown(&summary, &final_total_breakdown);
         gsp_summary_set_runtime(
             &summary,
             preprocessing_seconds,

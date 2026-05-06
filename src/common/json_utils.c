@@ -86,6 +86,13 @@ void gsp_summary_set_status_and_distance(gsp_summary_json_t *summary,
     summary->final_distance_nm = final_distance_nm;
 }
 
+void gsp_summary_set_final_distance_breakdown(gsp_summary_json_t *summary,
+                                              const gsp_distance_breakdown_t *final_distance_breakdown) {
+    if (!summary || !final_distance_breakdown) return;
+    summary->has_final_distance_breakdown = 1;
+    summary->final_distance_breakdown = *final_distance_breakdown;
+}
+
 void gsp_summary_set_runtime(gsp_summary_json_t *summary,
                              double preprocessing_seconds,
                              const double *solution_runtime_seconds,
@@ -489,6 +496,7 @@ void gsp_write_summary_distance_json(FILE *fp,
                                      const double *trajectory_distance_nm,
                                      int trajectory_count,
                                      double final_distance_nm,
+                                     const gsp_distance_breakdown_t *final_distance_breakdown,
                                      int trailing_comma) {
     const char *base = indent ? indent : "";
     if (!fp) return;
@@ -502,7 +510,15 @@ void gsp_write_summary_distance_json(FILE *fp,
         fprintf(fp, "%.2f", trajectory_distance_nm ? trajectory_distance_nm[i] : 0.0);
     }
     fprintf(fp, "],\n");
-    fprintf(fp, "%s  \"final\": %.2f\n", base, final_distance_nm);
+    if (final_distance_breakdown) {
+        fprintf(fp, "%s  \"final\": {\n", base);
+        fprintf(fp, "%s    \"transit\": %.2f,\n", base, final_distance_breakdown->transit_distance_nm);
+        fprintf(fp, "%s    \"haul\": %.2f,\n", base, final_distance_breakdown->haul_distance_nm);
+        fprintf(fp, "%s    \"total\": %.2f\n", base, final_distance_breakdown->total_distance_nm);
+        fprintf(fp, "%s  }\n", base);
+    } else {
+        fprintf(fp, "%s  \"final\": %.2f\n", base, final_distance_nm);
+    }
     fprintf(fp, "%s}%s\n", base, trailing_comma ? "," : "");
 }
 
@@ -580,6 +596,8 @@ void gsp_write_summary_json(FILE *fp,
                                         summary->distance_trajectory_nm,
                                         summary->distance_trajectory_count,
                                         summary->final_distance_nm,
+                                        summary->has_final_distance_breakdown ?
+                                            &summary->final_distance_breakdown : NULL,
                                         summary->include_runtime || summary->include_mip);
     }
     if (summary->include_runtime) {

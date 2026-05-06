@@ -1047,6 +1047,7 @@ static int export_boat_json_fp(sqlite3 *db, const SurveyEntryVec *entries, int b
         summary.distance_trajectory_nm = distance_trajectory;
         summary.distance_trajectory_count = 1;
         summary.final_distance_nm = total_breakdown.total_distance_nm;
+        gsp_summary_set_final_distance_breakdown(&summary, &total_breakdown);
         summary.preprocessing_seconds = 0.0;
         summary.solution_runtime_seconds = runtime_trajectory;
         summary.solution_runtime_count = 1;
@@ -1383,5 +1384,3 @@ int main(int argc, char **argv) {
     survey_entry_vec_free(&entries);
     return result;
 }
-
-

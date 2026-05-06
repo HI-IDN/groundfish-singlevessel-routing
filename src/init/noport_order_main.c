@@ -611,6 +611,7 @@ static int write_noport_json(sqlite3 *db,
                                             distance_trajectory,
                                             1,
                                             distance_breakdown->total_distance_nm);
+        gsp_summary_set_final_distance_breakdown(&summary, distance_breakdown);
         gsp_summary_set_runtime(&summary,
                                 preprocessing_seconds,
                                 runtime_trajectory,
