@@ -1316,7 +1316,6 @@ int main(int argc, char **argv) {
     int is_feasible = 1;
     nn_solution_t pre_local_postopt_sol = {0};
     double mip_time_limit_seconds = 0.0;
-    double segment_haul_distance_scale = 0.0;
     double local_postopt_runtime_seconds = 0.0;
     int local_postopt_segment_solve_count = 0;
     gsp_mip_solve_detail_t *local_postopt_details = NULL;
@@ -1336,7 +1335,6 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (!strategy) strategy = infer_strategy_from_path(input);
-    segment_haul_distance_scale = read_segment_haul_distance_scale_from_yaml(config);
 
     clock_gettime(CLOCK_MONOTONIC, &t0);
     boat_id = read_boat_id_from_yaml(config);
@@ -1466,7 +1464,6 @@ int main(int argc, char **argv) {
     if (!segment_apply_local_postopt(&inst, &pre_local_postopt_sol,
                                      boat_start_loc_id, boat_end_loc_id,
                                      mip_time_limit_seconds,
-                                     segment_haul_distance_scale,
                                      &sol,
                                      &local_postopt_runtime_seconds,
                                      &local_postopt_segment_solve_count,

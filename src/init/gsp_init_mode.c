@@ -1142,7 +1142,6 @@ static int run_segment_postopt(const char *config,
                                gsp_mip_solve_detail_t **out_local_postopt_details,
                                int *out_local_postopt_detail_count) {
     double mip_time_limit_seconds = read_segment_mip_time_limit_from_yaml(config);
-    double segment_haul_distance_scale = read_segment_haul_distance_scale_from_yaml(config);
 
     if (!segment_copy_solution(sol, pre_local_postopt_sol)) {
         return 0;
@@ -1150,7 +1149,6 @@ static int run_segment_postopt(const char *config,
     if (!segment_apply_local_postopt(inst, pre_local_postopt_sol,
                                      boat_start_loc_id, boat_end_loc_id,
                                      mip_time_limit_seconds,
-                                     segment_haul_distance_scale,
                                      sol,
                                      out_local_postopt_runtime_seconds,
                                      out_local_postopt_segment_solve_count,

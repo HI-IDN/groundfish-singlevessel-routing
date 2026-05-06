@@ -56,19 +56,8 @@ This phase is reported as:
 Configuration comes from:
 
 - `gurobi.time_limit_seconds.1seg`
-- `gurobi.haul_distance_scale.1seg`
 
-`haul_distance_scale.1seg` controls how strongly haul distance enters the local
-segment MIP objective:
-
-- `0.0`
-  removes haul distance entirely
-- `1e-5`
-  keeps haul as a weak tie-breaker
-- `1.0`
-  uses full haul distance
-
-The current recommended setting for local post-optimization is `1e-5`.
+The MIP objective uses transit distance only; haul arcs are excluded.
 
 Outputs
 -------

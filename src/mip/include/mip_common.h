@@ -14,9 +14,7 @@ typedef struct {
     int heuristic_only;
     const int *warm_start_station_ids;
     int warm_start_order_length;
-    int exclude_haul_distance;
-    int use_scaled_haul_distance;
-    double haul_distance_scale;
+    /* haul arcs are always excluded from the MIP objective (transit-only) */
     GRBenv *shared_env;
     int wait_for_first_incumbent;
 } mip_params_t;

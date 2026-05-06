@@ -274,11 +274,6 @@ Current Gurobi phase parameters are organized by segment model:
 
 ```yaml
 gurobi:
-  haul_distance_scale:
-    0seg: 0.00001
-    1seg: 0.00001
-    2seg: 1.0
-    Xseg: 0.00001
 
   time_limit_seconds:
     0seg: 0

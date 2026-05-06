@@ -40,12 +40,6 @@ gurobi:
     2seg: 0                              # Default boundary-sweep segment MIP time limit; 0 = no limit
     Xseg: 86400                          # Fixed-port MIP time limit after incumbent exists
 
-  haul_distance_scale:
-    0seg: 0.0                            # No-port MIP uses near-zero haul in the objective
-    1seg: 0.0                            # Init local postopt uses near-zero haul in the objective
-    2seg: 0.0                            # Sweep boundary MIPs exclude station-haul arcs
-    Xseg: 0.0                            # Reserved for fixed-port/full MIP objective scaling
-
   env_log_file: log/gurobi.log           # null=no log file, or path like "log/gurobi.log"
   threads: 0                             # 0=auto-detect, >0=fixed thread count
   mip_focus: 0                           # 0=balanced, 1=feasible, 2=optimal, 3=best_bound

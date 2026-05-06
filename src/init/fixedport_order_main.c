@@ -200,8 +200,7 @@ static int read_fixedport_config(const char *yaml_path,
                                  int *boat_id_out,
                                  double *xseg_out,
                                  double *global_time_limit_out,
-                                 int *thread_count_out,
-                                 double *haul_distance_scale_out) {
+                                 int *thread_count_out) {
     FILE *fp = NULL;
     char line[1024];
     int section = 0;
@@ -210,7 +209,6 @@ static int read_fixedport_config(const char *yaml_path,
     if (xseg_out) *xseg_out = 0.0;
     if (global_time_limit_out) *global_time_limit_out = 0.0;
     if (thread_count_out) *thread_count_out = 0;
-    if (haul_distance_scale_out) *haul_distance_scale_out = 0.0;
 
     fp = fopen(yaml_path, "r");
     if (!fp) return 0;
@@ -245,7 +243,6 @@ static int read_fixedport_config(const char *yaml_path,
 
     fclose(fp);
     if (xseg_out) *xseg_out = read_fixedport_mip_time_limit_from_yaml(yaml_path);
-    if (haul_distance_scale_out) *haul_distance_scale_out = read_fixedport_haul_distance_scale_from_yaml(yaml_path);
     return 0;
 }
 
@@ -886,7 +883,6 @@ int main(int argc, char **argv) {
     double time_limit_seconds = 0.0;
     double global_time_limit_seconds = 0.0;
     int thread_count = 0;
-    double haul_distance_scale = 0.0;
     clock_t t_start;
     clock_t t_after_load;
     clock_t t_done;
@@ -910,7 +906,7 @@ int main(int argc, char **argv) {
 
     t_start = clock();
     read_fixedport_config(yaml_path, &boat_id, &time_limit_seconds, &global_time_limit_seconds,
-                          &thread_count, &haul_distance_scale);
+                          &thread_count);
     (void)global_time_limit_seconds;
 
     if (sqlite3_open(db_path, &db) != SQLITE_OK) {
@@ -942,9 +938,6 @@ int main(int argc, char **argv) {
     mip_params.time_limit_seconds = time_limit_seconds;
     mip_params.thread_count = thread_count;
     mip_params.verbose = 1;
-    mip_params.exclude_haul_distance = !(haul_distance_scale > 0.0);
-    mip_params.use_scaled_haul_distance = (haul_distance_scale > 0.0);
-    mip_params.haul_distance_scale = (haul_distance_scale > 0.0) ? haul_distance_scale : 0.0;
     mip_params.wait_for_first_incumbent = 1;
 
     printf("Fixedport MIP instance\n");
@@ -955,9 +948,7 @@ int main(int argc, char **argv) {
            (time_limit_seconds > 0.0) ? "" : "none ",
            (time_limit_seconds > 0.0) ? time_limit_seconds : 0.0);
     printf("  threads: %d\n", thread_count);
-    printf("  objective: %s\n", (haul_distance_scale > 0.0) ? "scaled_haul" : "transit");
-    if (haul_distance_scale > 0.0)
-        printf("  haul distance scale: %.8f\n", haul_distance_scale);
+    printf("  objective: transit (haul excluded)\n");
     printf("Solving...\n");
 
     if (solve_mip_fixedport(&mip_instance, &mip_params, &mip_solution) != 0) {

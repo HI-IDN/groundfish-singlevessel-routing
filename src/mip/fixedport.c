@@ -94,15 +94,9 @@ int solve_mip_fixedport(const mip_fixedport_instance_t *instance,
     dist[0 * n + 1] = 0.0;
     dist[1 * n + 0] = 0.0;
 
-    if (local_params.use_scaled_haul_distance) {
-        haul_distance_multiplier = local_params.haul_distance_scale;
-        if (haul_distance_multiplier < 0.0) haul_distance_multiplier = 0.0;
-    } else if (local_params.exclude_haul_distance) {
-        haul_distance_multiplier = 0.0;
-    }
     for (int city = 1; city <= instance->n_stations; city++) {
-        dist[(2 * city + 0) * n + (2 * city + 1)] *= haul_distance_multiplier;
-        dist[(2 * city + 1) * n + (2 * city + 0)] *= haul_distance_multiplier;
+        dist[(2 * city + 0) * n + (2 * city + 1)] = 0.0;
+        dist[(2 * city + 1) * n + (2 * city + 0)] = 0.0;
     }
 
     if (local_params.shared_env) {

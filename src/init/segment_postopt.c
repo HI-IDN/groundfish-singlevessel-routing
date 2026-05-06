@@ -153,30 +153,6 @@ double read_fixedport_mip_time_limit_from_yaml(const char *yaml_path) {
 }
 
 
-static double read_phase_haul_distance_scale_from_yaml(const char *yaml_path, const char *phase_name) {
-    const char *nested_phase_key = phase_name;
-    if (strcmp(phase_name, "noport") == 0) nested_phase_key = "0seg";
-    else if (strcmp(phase_name, "segment") == 0) nested_phase_key = "1seg";
-    else if (strcmp(phase_name, "sweep") == 0) nested_phase_key = "2seg";
-    else if (strcmp(phase_name, "fixedport") == 0) nested_phase_key = "Xseg";
-    return read_gurobi_phase_scalar_from_yaml(yaml_path, "haul_distance_scale", nested_phase_key);
-}
-
-double read_noport_haul_distance_scale_from_yaml(const char *yaml_path) {
-    return read_phase_haul_distance_scale_from_yaml(yaml_path, "noport");
-}
-
-double read_segment_haul_distance_scale_from_yaml(const char *yaml_path) {
-    return read_phase_haul_distance_scale_from_yaml(yaml_path, "segment");
-}
-
-double read_sweep_haul_distance_scale_from_yaml(const char *yaml_path) {
-    return read_phase_haul_distance_scale_from_yaml(yaml_path, "sweep");
-}
-
-double read_fixedport_haul_distance_scale_from_yaml(const char *yaml_path) {
-    return read_phase_haul_distance_scale_from_yaml(yaml_path, "fixedport");
-}
 
 static int find_station_index_local(const nn_instance_t *inst, int station_id) {
     for (int i = 0; i < inst->num_stations; i++) {
@@ -223,7 +199,6 @@ static int solve_segment_order(const nn_instance_t *inst,
                                int start_loc_id,
                                int end_loc_id,
                                double time_limit_seconds,
-                               double haul_distance_scale,
                                GRBenv *env,
                                int **signed_station_ids_out,
                                double *runtime_seconds_out,
@@ -268,9 +243,7 @@ static int solve_segment_order(const nn_instance_t *inst,
     mip_params.shared_env = env;
     mip_params.verbose = 0;
     mip_params.time_limit_seconds = (time_limit_seconds > 0.0) ? time_limit_seconds : 0.0;
-    mip_params.exclude_haul_distance = !(haul_distance_scale > 0.0);
-    mip_params.use_scaled_haul_distance = (haul_distance_scale > 0.0);
-    mip_params.haul_distance_scale = (haul_distance_scale > 0.0) ? haul_distance_scale : 0.0;
+    /* haul arcs always excluded — transit-only objective */
 
     if (solve_mip_endpaired_tsp(&mip_instance, &mip_params,
                                 start_loc_id, end_loc_id, &mip_solution) != 0) {
@@ -306,7 +279,6 @@ int segment_apply_local_postopt(const nn_instance_t *inst,
                                 int boat_start_loc_id,
                                 int boat_end_loc_id,
                                 double time_limit_seconds,
-                                double haul_distance_scale,
                                 nn_solution_t *output,
                                 double *runtime_seconds_out,
                                 int *segment_solve_count_out,
@@ -396,7 +368,7 @@ int segment_apply_local_postopt(const nn_instance_t *inst,
         fflush(stdout);
 
         if (!solve_segment_order(inst, station_ids, station_count, start_loc_id, end_loc_id,
-                                 time_limit_seconds, haul_distance_scale,
+                                 time_limit_seconds,
                                  env, &signed_station_ids, &segment_runtime,
                                  &segment_gap_percent, &segment_model_num_vars,
                                  &segment_model_num_constrs)) {

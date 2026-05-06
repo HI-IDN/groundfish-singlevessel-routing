@@ -87,33 +87,13 @@ Configuration Notes
 
 The main solver configuration lives in `config/gsp_solver.yaml`.
 
-Two Gurobi settings matter across multiple phases:
+One Gurobi setting matters across all phases:
 
 - `gurobi.time_limit_seconds.{0seg,1seg,2seg,Xseg}`
   per-phase MIP time limits
-- `gurobi.haul_distance_scale.{0seg,1seg,2seg,Xseg}`
-  objective scaling for haul distance inside the MIP
 
-`haul_distance_scale` controls whether haul distance is effectively removed from
-the objective or retained as a tie-breaker:
-
-- `0.0`
-  removes haul distance from the MIP objective
-- a very small positive value such as `1e-5`
-  keeps haul distance only as a weak tie-breaker
-- `1.0`
-  uses full haul distance in the objective
-
-Recommended settings in the current workflow:
-
-- `0seg = 1e-5`
-  for `noport`, so haul distance is almost ignored but still breaks ties
-- `1seg = 1e-5`
-  for local post-optimization during segmentation
-- `2seg = 1.0`
-  for refinement, where the improvement phase should use real haul distance
-- `Xseg = 1e-5`
-  for the fixed-port full MIP path
+All MIP phases minimise transit distance only; haul arcs are excluded from the
+objective in every phase.
 
 Module Boundaries
 -----------------
