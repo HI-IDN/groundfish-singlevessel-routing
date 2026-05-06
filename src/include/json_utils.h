@@ -28,8 +28,8 @@ typedef struct {
     int unique_waypoint_location_count;
     const gsp_int_list_view_t *tour_segments_station_ids;
     int tour_segments_station_count;
-    const int *tour_length;
-    int tour_length_count;
+    const int *station_count;
+    int station_count_count;
     int segment_count;
     const int *segment_catch_amount;
     int segment_catch_count;

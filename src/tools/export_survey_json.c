@@ -1014,6 +1014,7 @@ static int export_boat_json_fp(sqlite3 *db, const SurveyEntryVec *entries, int b
             free(base);
             location_segments[s].values = expanded;
             location_segments[s].count = expanded_n;
+            segment_length[s] = station_n;
             station_segments[s].values = station_ids;
             station_segments[s].count = station_n;
         }
@@ -1029,8 +1030,8 @@ static int export_boat_json_fp(sqlite3 *db, const SurveyEntryVec *entries, int b
         solution_view.unique_waypoint_location_count = uniq_wp_n;
         solution_view.tour_segments_station_ids = station_segments;
         solution_view.tour_segments_station_count = segment_count;
-        solution_view.tour_length = segment_length;
-        solution_view.tour_length_count = segment_count;
+        solution_view.station_count = segment_length;
+        solution_view.station_count_count = segment_count;
         solution_view.segment_count = segment_count;
         solution_view.segment_catch_amount = segment_catch;
         solution_view.segment_catch_count = segment_count;

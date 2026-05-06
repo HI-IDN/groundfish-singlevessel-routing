@@ -1602,6 +1602,7 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
     int unique_waypoint_count = 0;
     int unique_waypoint_capacity = 0;
     unsigned char *seen_waypoint_location_ids = NULL;
+    int *station_counts = NULL;
     gsp_distance_breakdown_t *segment_breakdowns = NULL;
     gsp_distance_breakdown_t total_breakdown;
 
@@ -1611,8 +1612,15 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
     if (!segment_breakdowns) return;
     sweep_compute_segment_breakdowns(inst, sol, boat->boat_loc_id, segment_breakdowns, &total_breakdown);
 
+    station_counts = (int*)calloc((size_t)sol->segment_count, sizeof(int));
+    if (!station_counts) {
+        free(segment_breakdowns);
+        return;
+    }
+
     seen_waypoint_location_ids = (unsigned char*)calloc((size_t)inst->max_loc_id, sizeof(unsigned char));
     if (!seen_waypoint_location_ids) {
+        free(station_counts);
         free(segment_breakdowns);
         return;
     }
@@ -1637,6 +1645,7 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
                 int entry_loc;
                 int exit_loc;
                 if (station_idx < 0) continue;
+                station_counts[s]++;
                 entry_loc = (direction > 0) ? inst->nodes[station_idx].start_loc_id
                                             : inst->nodes[station_idx].end_loc_id;
                 exit_loc = (direction > 0) ? inst->nodes[station_idx].end_loc_id
@@ -1749,9 +1758,9 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
     }
     fprintf(fp, "      ],\n");
 
-    fprintf(fp, "      \"tour_length\": [");
+    fprintf(fp, "      \"station_count\": [");
     for (int s = 0; s < sol->segment_count; s++) {
-        fprintf(fp, "%d", sol->segment_ends[s] - sol->segment_starts[s] + 1);
+        fprintf(fp, "%d", station_counts[s]);
         if (s + 1 < sol->segment_count) fprintf(fp, ", ");
     }
     fprintf(fp, "],\n");
@@ -1769,6 +1778,7 @@ static void write_solution_json(FILE *fp, sqlite3 *db, const nn_instance_t *inst
     fprintf(fp, "      \"feasible\": %s\n", feasible ? "true" : "false");
     free(seen_waypoint_location_ids);
     free(unique_waypoint_location_ids);
+    free(station_counts);
     free(segment_breakdowns);
 }
 

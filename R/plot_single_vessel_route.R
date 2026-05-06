@@ -94,8 +94,12 @@ if (is.null(feasible) || length(feasible) == 0) feasible <- solution$feasible
 segment_catch <- solution$segment_catch_amount
 segment_transit_distance <- distance_info$segment_transit
 segment_distance <- distance_info$segment_total
-segment_length <- solution$tour_length
 segment_station_ids <- solution$tour_segments_station_ids
+segment_station_count <- if (!is.null(solution$station_count)) {
+  as.integer(solution$station_count)
+} else {
+  vapply(segment_station_ids, length, integer(1))
+}
 variant_label <- resolved$variant_label
 
 cat(sprintf("Variant: %s\n", selected_variant))
@@ -109,10 +113,8 @@ cat(sprintf("Transit distance: %.0f nm\n", transit_distance))
 cat(sprintf("Total distance: %.0f nm\n", total_distance))
 cat(sprintf("Feasible: %s\n\n", ifelse(feasible, "YES", "NO")))
 
-segment_station_count <- vapply(segment_station_ids, length, integer(1))
 segment_summary <- tibble(
-  Segment = seq_along(segment_length),
-  Length = as.integer(segment_length),
+  Segment = seq_along(segment_station_count),
   Stations = as.integer(segment_station_count),
   Catch = as.integer(segment_catch),
   `Transit (nm)` = as.numeric(segment_transit_distance),
@@ -120,19 +122,17 @@ segment_summary <- tibble(
 )
 
 cat("## Segment Summary\n\n")
-cat("| Segment | Length | Stations | Catch | Transit (nm) | Total (nm) |\n")
-cat("|---:|---:|---:|---:|---:|---:|\n")
+cat("| Segment | Stations | Catch | Transit (nm) | Total (nm) |\n")
+cat("|---:|---:|---:|---:|---:|\n")
 for (i in seq_len(nrow(segment_summary))) {
-  cat(sprintf("| %d | %d | %d | %d | %.2f | %.2f |\n",
+  cat(sprintf("| %d | %d | %d | %.2f | %.2f |\n",
               segment_summary$Segment[i],
-              segment_summary$Length[i],
               segment_summary$Stations[i],
               segment_summary$Catch[i],
               segment_summary$`Transit (nm)`[i],
               segment_summary$`Total (nm)`[i]))
 }
-cat(sprintf("| **Total** | **%d** | **%d** | **%d** | **%.2f** | **%.2f** |\n\n",
-            sum(segment_summary$Length),
+cat(sprintf("| **Total** | **%d** | **%d** | **%.2f** | **%.2f** |\n\n",
             sum(segment_summary$Stations),
             sum(segment_summary$Catch),
             transit_distance,
@@ -366,7 +366,7 @@ p <- p +
 
 p <- apply_degree_axes(p)
 p <- p + gsp_common_theme(legend_position = "bottom", legend_direction = "horizontal")
-p <- p + guides(color = guide_legend(ncol = 3, byrow = TRUE))
+p <- p + guides(color = guide_legend(ncol = 4, byrow = TRUE))
 
 cat(sprintf("\nSaving plot to %s...\n", output_file))
 

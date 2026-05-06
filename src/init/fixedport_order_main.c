@@ -620,7 +620,7 @@ static int write_fixedport_json(sqlite3 *db,
     gsp_distance_breakdown_t *segment_breakdowns = NULL;
     int *segment_catches = NULL;
     int *segment_end_docks = NULL;
-    int *tour_lengths = NULL;
+    int *station_counts = NULL;
     int *dock_location_ids = NULL;
     int *port_visit_counts = NULL;
     int dock_location_count = 0;
@@ -644,9 +644,9 @@ static int write_fixedport_json(sqlite3 *db,
     segment_breakdowns = (gsp_distance_breakdown_t*)calloc((size_t)segment_count, sizeof(gsp_distance_breakdown_t));
     segment_catches = (int*)calloc((size_t)segment_count, sizeof(int));
     segment_end_docks = (int*)calloc((size_t)segment_count, sizeof(int));
-    tour_lengths = (int*)calloc((size_t)segment_count, sizeof(int));
+    station_counts = (int*)calloc((size_t)segment_count, sizeof(int));
     port_visit_counts = (int*)calloc((size_t)port_lookup_count, sizeof(int));
-    if (!segments || !location_views || !station_views || !segment_breakdowns || !segment_catches || !segment_end_docks || !tour_lengths || !port_visit_counts) goto fail;
+    if (!segments || !location_views || !station_views || !segment_breakdowns || !segment_catches || !segment_end_docks || !station_counts || !port_visit_counts) goto fail;
 
     for (int s = 0; s < segment_count; s++) route_segment_init(&segments[s]);
     if (!segment_int_vec_push_if_changed(&segments[0].locations, app->boat.location_id)) goto fail;
@@ -700,7 +700,7 @@ static int write_fixedport_json(sqlite3 *db,
         segment_breakdowns[s] = segments[s].distance;
         segment_catches[s] = segments[s].catch_amount;
         segment_end_docks[s] = segments[s].end_dock_location_id;
-        tour_lengths[s] = segments[s].station_ids.count + 2;
+        station_counts[s] = segments[s].station_ids.count;
         location_views[s].values = segments[s].locations.values;
         location_views[s].count = segments[s].locations.count;
         station_views[s].values = segments[s].station_ids.values;
@@ -783,8 +783,8 @@ static int write_fixedport_json(sqlite3 *db,
     solution_view.unique_waypoint_location_count = unique_waypoints.count;
     solution_view.tour_segments_station_ids = station_views;
     solution_view.tour_segments_station_count = segment_count;
-    solution_view.tour_length = tour_lengths;
-    solution_view.tour_length_count = segment_count;
+    solution_view.station_count = station_counts;
+    solution_view.station_count_count = segment_count;
     solution_view.segment_count = segment_count;
     solution_view.segment_catch_amount = segment_catches;
     solution_view.segment_catch_count = segment_count;
@@ -844,7 +844,7 @@ static int write_fixedport_json(sqlite3 *db,
     free(segment_breakdowns);
     free(segment_catches);
     free(segment_end_docks);
-    free(tour_lengths);
+    free(station_counts);
     free(dock_location_ids);
     free(port_visit_counts);
     int_vec_free(&unique_waypoints);
@@ -859,7 +859,7 @@ fail:
     free(segment_breakdowns);
     free(segment_catches);
     free(segment_end_docks);
-    free(tour_lengths);
+    free(station_counts);
     free(dock_location_ids);
     free(port_visit_counts);
     int_vec_free(&unique_waypoints);

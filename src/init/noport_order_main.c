@@ -467,7 +467,7 @@ static int write_noport_json(sqlite3 *db,
     int unique_wp_cap = 0;
     int is_feasible = 1;
     int *positive_station_ids = NULL;
-    int tour_length_value = 0;
+    int station_count_value = 0;
     int segment_catch_value = 0;
     int dock_location_ids[2];
     gsp_int_list_view_t location_view = {0};
@@ -549,7 +549,7 @@ static int write_noport_json(sqlite3 *db,
     location_view.count = route_len;
     station_view.values = positive_station_ids;
     station_view.count = solution->order_length;
-    tour_length_value = solution->order_length;
+    station_count_value = solution->order_length;
     segment_catch_value = total_catch;
     dock_location_ids[0] = app->boat.location_id;
     dock_location_ids[1] = app->boat.location_id;
@@ -573,8 +573,8 @@ static int write_noport_json(sqlite3 *db,
         view.unique_waypoint_location_count = unique_wp_count;
         view.tour_segments_station_ids = &station_view;
         view.tour_segments_station_count = 1;
-        view.tour_length = &tour_length_value;
-        view.tour_length_count = 1;
+        view.station_count = &station_count_value;
+        view.station_count_count = 1;
         view.segment_count = 1;
         view.segment_catch_amount = &segment_catch_value;
         view.segment_catch_count = 1;

@@ -1058,7 +1058,7 @@ static void write_metadata_only_json(const char *output_path,
     fprintf(fp, "    \"capacity-feasible\": {\n");
     fprintf(fp, "      \"tour_segments_location_ids\": [],\n");
     fprintf(fp, "      \"tour_segments_station_ids\": [],\n");
-    fprintf(fp, "      \"tour_length\": [],\n");
+    fprintf(fp, "      \"station_count\": [],\n");
     fprintf(fp, "      \"segment_count\": 0,\n");
     fprintf(fp, "      \"segment_catch_amount\": [],\n");
     {
