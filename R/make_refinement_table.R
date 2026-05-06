@@ -259,10 +259,11 @@ trajectory_rows <- function(method, source = "refinement") {
     accepted_capacity_solves = accepted,
     total_capacity_solves = capacity_solves,
     mip_solves = mip_solves,
-    point_label = ifelse(
+    moved_label = ifelse(is.na(moved), NA_character_, as.character(moved)),
+    accepted_label = ifelse(
       is.na(moved),
       NA_character_,
-      sprintf("moved %d\naccepted %d/%d", moved, accepted, capacity_solves)
+      sprintf("a: %d/%d", accepted, capacity_solves)
     )
   )
 }
@@ -383,18 +384,6 @@ make_sweep_lineplot <- function(plot_l2seg, traj_tbl) {
     return(invisible(NULL))
   }
 
-  subtitle <- if (is.na(plot_l2seg)) {
-    bquote(L[2*seg] == infinity ~ "(uncapped)")
-  } else {
-    bquote(L[2*seg] == .(plot_l2seg) ~ s)
-  }
-
-  subtitle_txt <- if (is.na(plot_l2seg)) {
-    "L\u2082seg = \u221e (uncapped)"
-  } else {
-    sprintf("L\u2082seg = %d s", plot_l2seg)
-  }
-
   x_max <- max(tbl$sweep)
 
   end_tbl <- tbl %>%
@@ -412,13 +401,63 @@ make_sweep_lineplot <- function(plot_l2seg, traj_tbl) {
       end_label_b = sprintf("%+.1f%%", relative_improvement_percent)
     )
 
+  segment_label_rows <- function(y_col) {
+    x_span <- max(tbl$sweep, na.rm = TRUE) - min(tbl$sweep, na.rm = TRUE)
+    y_vals <- tbl[[y_col]]
+    y_span <- max(y_vals, na.rm = TRUE) - min(y_vals, na.rm = TRUE)
+    if (!is.finite(x_span) || x_span == 0) x_span <- 1
+    if (!is.finite(y_span) || y_span == 0) y_span <- 1
+
+    tbl %>%
+      dplyr::group_by(Label) %>%
+      dplyr::arrange(sweep, .by_group = TRUE) %>%
+      dplyr::mutate(
+        prev_sweep = dplyr::lag(sweep),
+        prev_y = dplyr::lag(.data[[y_col]]),
+        current_y = .data[[y_col]],
+        label_x = (prev_sweep + sweep) / 2,
+        label_y = (prev_y + current_y) / 2 + 0.025 * y_span,
+        label_angle = atan2((current_y - prev_y) / y_span, (sweep - prev_sweep) / x_span) * 180 / pi
+      ) %>%
+      dplyr::ungroup() %>%
+      dplyr::filter(
+        sweep > 0,
+        !is.na(accepted_label),
+        !is.na(prev_y),
+        !is.na(current_y)
+      )
+  }
+
+  segment_labels_a <- segment_label_rows("transit_nm")
+  segment_labels_b <- segment_label_rows("relative_improvement_percent")
+
   pa <- ggplot(tbl, aes(x = sweep, y = transit_nm, color = Label, group = Label)) +
     geom_line(linewidth = 0.8) +
-    geom_point(size = 2) +
+    geom_point(
+      aes(size = stations_moved),
+      alpha = 0.75,
+      na.rm = TRUE
+    ) +
     geom_text(
-      aes(label = point_label),
-      nudge_y = 95, size = 2.5, lineheight = 0.9,
-      color = "black", show.legend = FALSE, na.rm = TRUE
+      aes(label = moved_label),
+      size = 2.3,
+      color = "black",
+      show.legend = FALSE,
+      na.rm = TRUE
+    ) +
+    geom_text(
+      data = segment_labels_a,
+      aes(
+        x = label_x, y = label_y, label = accepted_label,
+        angle = label_angle
+      ),
+      inherit.aes = FALSE,
+      size = 2.3,
+      lineheight = 0.9,
+      color = "black",
+      show.legend = FALSE,
+      check_overlap = TRUE,
+      na.rm = TRUE
     ) +
     geom_text(
       data = end_tbl,
@@ -430,22 +469,51 @@ make_sweep_lineplot <- function(plot_l2seg, traj_tbl) {
       x = x_max + 0.6
     ) +
     scale_x_continuous(breaks = sort(unique(tbl$sweep))) +
+    scale_size_continuous(
+      name = "Stations moved",
+      range = c(2, 7),
+      breaks = scales::breaks_pretty(n = 4)
+    ) +
     labs(
-      title = "A: Transit Distance", subtitle = subtitle,
+      title = "A: Transit Distance",
       x = "Sweep", y = "Transit distance (nm)", color = "Variant"
     ) +
     theme_bw(base_size = 12) +
     theme(
       legend.position = "bottom",
       plot.title = element_text(face = "bold"),
-      plot.subtitle = element_text(size = 9, color = "grey40"),
       panel.grid.minor = element_blank()
     )
 
   pb <- ggplot(tbl, aes(x = sweep, y = relative_improvement_percent, color = Label, group = Label)) +
     geom_hline(yintercept = 0, color = "grey65", linewidth = 0.4) +
     geom_line(linewidth = 0.8) +
-    geom_point(size = 2) +
+    geom_point(
+      aes(size = stations_moved),
+      alpha = 0.75,
+      na.rm = TRUE
+    ) +
+    geom_text(
+      aes(label = moved_label),
+      size = 2.3,
+      color = "black",
+      show.legend = FALSE,
+      na.rm = TRUE
+    ) +
+    geom_text(
+      data = segment_labels_b,
+      aes(
+        x = label_x, y = label_y, label = accepted_label,
+        angle = label_angle
+      ),
+      inherit.aes = FALSE,
+      size = 2.3,
+      lineheight = 0.9,
+      color = "black",
+      show.legend = FALSE,
+      check_overlap = TRUE,
+      na.rm = TRUE
+    ) +
     geom_text(
       data = end_tbl,
       aes(x = sweep, y = relative_improvement_percent, label = end_label_b, color = Label),
@@ -453,28 +521,51 @@ make_sweep_lineplot <- function(plot_l2seg, traj_tbl) {
     ) +
     expand_limits(x = x_max + 0.6) +
     scale_x_continuous(breaks = sort(unique(tbl$sweep))) +
+    scale_size_continuous(
+      name = "Stations moved",
+      range = c(2, 7),
+      breaks = scales::breaks_pretty(n = 4)
+    ) +
     labs(
-      title = "B: Relative Improvement", subtitle = subtitle,
+      title = "B: Relative Improvement",
       x = "Sweep", y = "Improvement from initial transit (%)", color = "Variant"
     ) +
     theme_bw(base_size = 12) +
     theme(
       legend.position = "bottom",
       plot.title = element_text(face = "bold"),
-      plot.subtitle = element_text(size = 9, color = "grey40"),
       panel.grid.minor = element_blank()
     )
 
   leg <- cowplot::get_legend(pa)
 
   footnote_grob <- cowplot::ggdraw() +
-    cowplot::draw_label(
-      paste0(
-        "All variants use ", subtitle_txt, ". ",
-        "End labels: (A) absolute transit improvement from sweep 0; ",
-        "(B) relative improvement from initial transit."
-      ),
-      x = 0.02, y = 0.5, hjust = 0, vjust = 0.5, size = 7.5, color = "grey30"
+    cowplot::draw_grob(
+      grid::textGrob(
+        bquote(
+          "All variants use " * L[2*seg] == .(if (is.na(plot_l2seg)) infinity else plot_l2seg) * " s. " *
+          "Point size and point labels show stations moved."
+        ),
+        x = grid::unit(0.02, "npc"),
+        y = grid::unit(0.70, "npc"),
+        hjust = 0,
+        vjust = 0.5,
+        gp = grid::gpar(fontsize = 7.5, col = "grey30")
+      )
+    ) +
+    cowplot::draw_grob(
+      grid::textGrob(
+        expression(paste(
+          "Slanted 'a: accepted/total' labels show accepted MIP solves over all ",
+          L[2*seg],
+          " MIP solves attempted for that pass. End labels: A, absolute transit improvement from sweep 0; B, relative improvement from initial transit."
+        )),
+        x = grid::unit(0.02, "npc"),
+        y = grid::unit(0.28, "npc"),
+        hjust = 0,
+        vjust = 0.5,
+        gp = grid::gpar(fontsize = 7.5, col = "grey30")
+      )
     )
 
   cowplot::plot_grid(
@@ -486,7 +577,7 @@ make_sweep_lineplot <- function(plot_l2seg, traj_tbl) {
     leg,
     footnote_grob,
     ncol = 1,
-    rel_heights = c(1, 0.10, 0.07)
+    rel_heights = c(1, 0.10, 0.10)
   )
 }
 
@@ -503,7 +594,7 @@ for (lv in all_l2seg_plot_vals) {
   plt    <- make_sweep_lineplot(lv, trajectory_tbl)
   if (!is.null(plt)) {
     out <- file.path(sol_dir, sprintf("refinement_transit_sweeps_%s.png", lv_str))
-    ggsave(out, plot = plt, width = 11, height = 5.5, dpi = 150)
+    ggsave(out, plot = plt, width = 11, height = 5.5, dpi = 150, bg = "white")
     cat(sprintf("Plot saved to: %s\n", out))
   }
 }
@@ -754,7 +845,7 @@ box_footnote_grob <- cowplot::ggdraw() +
       y = grid::unit(0.5, "npc"),
       hjust = 0,
       vjust = 0.5,
-      gp = grid::gpar(fontsize = 7.5, col = "grey30")
+      gp = grid::gpar(fontsize = 7.0, col = "grey30")
     )
   )
 
