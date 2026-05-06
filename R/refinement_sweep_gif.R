@@ -2,7 +2,7 @@
 # Build pass-by-pass refinement frames and an optional GIF.
 # Usage: Rscript R/refinement_sweep_gif.R sol/noport/refinement_180.json [output_dir] [output.gif] [comparison.png]
 
-required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite", "grid")
+required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite", "grid", "ggpp", "gridExtra")
 
 script_file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_dir <- if (length(script_file_arg) > 0) {

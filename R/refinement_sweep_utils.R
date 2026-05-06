@@ -209,6 +209,57 @@ save_plot <- function(plot, path, width = 9, height = 7) {
 }
 
 # ---------------------------------------------------------------------------
+# Segment stats table inset — matches plot_single_vessel_route.R style.
+# Segments = rows, metrics = columns.  Segment colours supplied by caller.
+# Returns list(data, fill_matrix) ready for render_segment_table_layer().
+# ---------------------------------------------------------------------------
+
+make_segment_table <- function(solution, distance_info, seg_colors) {
+  segment_catch         <- as.numeric(solution$segment_catch_amount)
+  n_segs                <- length(distance_info$segment_transit)
+  has_catch             <- !is.null(segment_catch) && length(segment_catch) >= n_segs
+  segment_station_ids   <- normalize_station_segments(solution$tour_segments_station_ids)
+  segment_station_count <- vapply(segment_station_ids, length, integer(1))
+
+  tbl <- data.frame(
+    ` `   = as.character(seq_len(n_segs)),
+    `|S|` = as.character(segment_station_count[seq_len(n_segs)]),
+    nm    = sprintf("%.0f", distance_info$segment_transit),
+    check.names = FALSE, stringsAsFactors = FALSE
+  )
+  if (has_catch) tbl[["t"]] <- sprintf("%.0f", segment_catch[seq_len(n_segs)] / 1e3)
+
+  fill_rows   <- scales::alpha(seg_colors[seq_len(n_segs)], 0.30)
+  fill_matrix <- matrix(fill_rows, nrow = n_segs, ncol = ncol(tbl))
+
+  list(
+    data        = tibble::tibble(lon = Inf, lat = Inf, label = list(tbl)),
+    fill_matrix = fill_matrix
+  )
+}
+
+render_segment_table_layer <- function(inset, base_size = 6) {
+  ggpp::geom_table(
+    data    = inset$data,
+    mapping = ggplot2::aes(x = lon, y = lat, label = label),
+    hjust   = 1.02,
+    vjust   = 1.04,
+    table.theme = gridExtra::ttheme_default(
+      base_size = base_size,
+      padding   = grid::unit(c(2.1, 2.4), "pt"),
+      core   = list(
+        bg_params = list(fill = inset$fill_matrix),
+        fg_params = list(fontface = "plain", col = "grey10")
+      ),
+      colhead = list(
+        bg_params = list(fill = "white"),
+        fg_params = list(fontface = "bold", col = "grey10")
+      )
+    )
+  )
+}
+
+# ---------------------------------------------------------------------------
 # ggplot frame builders  (used by refinement_sweep_gif.R)
 # ctx must contain: doc, solutions, distances, pass_names, init_transit,
 #                   final_pass_name, coastline, locations, station_endpoints,
@@ -221,17 +272,14 @@ regular_route_plot <- function(solution, distance_info, pass_name, ctx) {
   station_lines    <- build_station_line_segments(solution$tour_segments_station_ids, ctx$station_endpoints)
 
   segment_station_ids   <- normalize_station_segments(solution$tour_segments_station_ids)
-  segment_station_count <- vapply(segment_station_ids, length, integer(1))
   segment_catch         <- as.numeric(solution$segment_catch_amount)
   if (is.null(segment_catch) || !length(segment_catch)) {
-    segment_catch <- rep(NA_real_, length(segment_station_count))
+    segment_catch <- rep(NA_real_, length(segment_station_ids))
   }
-  segment_labels <- sprintf(
-    "#%d | %.0f nm | %.0f t",
-    seq_along(distance_info$segment_transit),
-    distance_info$segment_transit,
-    segment_catch / 1e3
-  )
+
+  n_segs     <- length(distance_info$segment_transit)
+  seg_colors <- scales::viridis_pal(option = "turbo")(n_segs)
+  tbl_inset  <- make_segment_table(solution, distance_info, seg_colors)
 
   display_points <- route_display_points(route_path)
 
@@ -255,7 +303,8 @@ regular_route_plot <- function(solution, distance_info, pass_name, ctx) {
       data = display_points$waypoints,
       ggplot2::aes(x = lon, y = lat), shape = 42, size = 1.25, inherit.aes = FALSE
     ) +
-    ggplot2::scale_color_viridis_d(option = "turbo", name = "Segment", labels = segment_labels) +
+    render_segment_table_layer(tbl_inset) +
+    ggplot2::scale_color_viridis_d(option = "turbo", guide = "none") +
     ctx$fixed_map_coord() +
     ggplot2::labs(
       title    = sprintf("Sweep %d", pass_sweep(pass_name)),
@@ -327,6 +376,10 @@ transition_plot <- function(prev_name, curr_name, color_stage = c("leaving", "ar
     moved_count, moving_label, affected_segment_count, pass_improvement
   )
 
+  n_segs     <- length(curr_distance$segment_transit)
+  seg_colors <- scales::viridis_pal(option = "turbo")(n_segs)
+  tbl_inset  <- make_segment_table(curr_solution, curr_distance, seg_colors)
+
   p <- base_coastline_plot(ctx$coastline) +
     ggplot2::geom_path(
       data = transition_path,
@@ -349,7 +402,8 @@ transition_plot <- function(prev_name, curr_name, color_stage = c("leaving", "ar
       data = display_points$waypoints,
       ggplot2::aes(x = lon, y = lat), shape = 42, size = 1.25, inherit.aes = FALSE
     ) +
-    ggplot2::scale_color_viridis_d(option = "turbo", name = "Segment") +
+    render_segment_table_layer(tbl_inset) +
+    ggplot2::scale_color_viridis_d(option = "turbo", guide = "none") +
     ggplot2::scale_alpha_identity() +
     ggplot2::scale_linewidth_identity() +
     ctx$fixed_map_coord() +
@@ -412,6 +466,10 @@ init_to_final_plot <- function(ctx) {
     total_moved, total_improvement, total_improvement_pct
   )
 
+  n_segs     <- length(final_distance$segment_transit)
+  seg_colors <- scales::viridis_pal(option = "turbo")(n_segs)
+  tbl_inset  <- make_segment_table(final_solution, final_distance, seg_colors)
+
   p <- base_coastline_plot(ctx$coastline) +
     ggplot2::geom_path(
       data = init_path,
@@ -444,7 +502,8 @@ init_to_final_plot <- function(ctx) {
       data = display_points$waypoints,
       ggplot2::aes(x = lon, y = lat), shape = 42, size = 1.25, inherit.aes = FALSE
     ) +
-    ggplot2::scale_color_viridis_d(option = "turbo", name = "Segment") +
+    render_segment_table_layer(tbl_inset) +
+    ggplot2::scale_color_viridis_d(option = "turbo", guide = "none") +
     ctx$fixed_map_coord() +
     ggplot2::labs(
       title    = "Initial to Final",

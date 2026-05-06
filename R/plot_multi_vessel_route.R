@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite")
+required_packages <- c("tidyverse", "DBI", "RSQLite", "jsonlite", "ggpp", "gridExtra")
 
 args <- commandArgs(trailingOnly = TRUE)
 input_file <- if (length(args) >= 1) args[1] else "sol/survey/multivessel.json"
@@ -83,11 +83,18 @@ boat_base_colors <- c("#0B5FA5", "#C84C09", "#2A7F62", "#8B2E5F", "#6A4C93", "#B
 route_path <- tibble()
 station_lines <- tibble()
 boat_summary <- tibble()
+boat_table_insets <- list()   # per-boat segment table data
 total_distance_nm <- 0
 total_transit_distance_nm <- 0
 total_stations <- 0
 total_segments <- 0
 capacities <- numeric()
+
+# Corner positions cycling for each boat: top-right, top-left, bottom-right, bottom-left
+corner_lons  <- c( Inf,  -Inf,   Inf,  -Inf,   Inf,  -Inf)
+corner_lats  <- c( Inf,   Inf,  -Inf,  -Inf,   Inf,   Inf)
+corner_hjust <- c(1.02, -0.02,  1.02, -0.02,  1.02, -0.02)
+corner_vjust <- c(1.04,  1.04, -0.04, -0.04,  1.04,  1.04)
 
 for (idx in seq_along(boats)) {
   boat <- boats[[idx]]
@@ -119,11 +126,6 @@ for (idx in seq_along(boats)) {
         segment = seg_idx,
         point_order = seq_len(n()),
         segment_key = sprintf("%s #%d", first_word(boat$boat_name), seg_idx),
-        segment_label = sprintf("%s #%d\n%.0f nm | %.1f nm | %.0f t",
-                                first_word(boat$boat_name), seg_idx,
-                                segment_transit_distance[seg_idx],
-                                segment_distance[seg_idx],
-                                segment_catch[seg_idx]/1e3),
         segment_color = segment_colors[seg_idx],
         base_color = base_color
       )
@@ -135,15 +137,38 @@ for (idx in seq_along(boats)) {
       boat_id = boat$boat_id,
       boat_name = boat$boat_name,
       segment_key = sprintf("%s #%d", first_word(boat$boat_name), segment),
-      segment_label = sprintf("%s #%d\n%.0f nm | %.0f nm | %d kg",
-                              first_word(boat$boat_name), segment,
-                              segment_transit_distance[segment],
-                              segment_distance[segment],
-                              segment_catch[segment]),
       segment_color = segment_colors[segment],
       base_color = base_color
     )
   station_lines <- bind_rows(station_lines, boat_station_lines)
+
+  # Build per-boat segment table inset (with a total row)
+  ci <- ((idx - 1L) %% length(corner_lons)) + 1L
+  n_seg_boat <- length(segment_transit_distance)
+  tbl_df <- data.frame(
+    ` `  = as.character(seq_len(n_seg_boat)),
+    nm   = sprintf("%.0f", segment_transit_distance),
+    t    = sprintf("%.0f", segment_catch[seq_len(n_seg_boat)] / 1e3),
+    check.names = FALSE, stringsAsFactors = FALSE
+  )
+  total_row <- data.frame(
+    ` ` = "\u03a3",
+    nm  = sprintf("%.0f", sum(segment_transit_distance)),
+    t   = sprintf("%.0f", sum(segment_catch[seq_len(n_seg_boat)]) / 1e3),
+    check.names = FALSE, stringsAsFactors = FALSE
+  )
+  tbl_df <- rbind(tbl_df, total_row)
+  fm <- matrix(
+    c(scales::alpha(segment_colors[seq_len(n_seg_boat)], 0.30), "grey92"),
+    nrow = n_seg_boat + 1L, ncol = ncol(tbl_df)
+  )
+  boat_table_insets[[idx]] <- list(
+    data        = tibble(lon = corner_lons[ci], lat = corner_lats[ci], label = list(tbl_df)),
+    fill_matrix = fm,
+    hjust       = corner_hjust[ci],
+    vjust       = corner_vjust[ci],
+    title       = first_word(boat$boat_name)
+  )
 
   boat_summary <- bind_rows(
     boat_summary,
@@ -178,6 +203,33 @@ boat_label_positions <- compute_interior_label_position(
 )
 
 boat_summary <- bind_cols(boat_summary, boat_label_positions)
+
+# Dodge boats that share the same dock position so their icons don't overlap.
+# Boats are spread horizontally; step is ~0.8 % of the coastline lon range.
+step_lon <- diff(range(coastline$lon, na.rm = TRUE)) * 0.008
+
+boat_summary <- boat_summary %>%
+  mutate(dock_key = paste(round(boat_lat, 3), round(boat_lon, 3))) %>%
+  group_by(dock_key) %>%
+  mutate(
+    group_n   = n(),
+    group_idx = row_number(),
+    icon_lon  = boat_lon + (group_idx - (group_n + 1) / 2) * step_lon,
+    icon_lat  = boat_lat
+  ) %>%
+  ungroup() %>%
+  select(-dock_key)
+
+# Recompute label leader lines from the (possibly dodged) icon position
+icon_label_positions <- compute_interior_label_position(
+  x     = boat_summary$icon_lon,
+  y     = boat_summary$icon_lat,
+  ref_x = coastline$lon,
+  ref_y = coastline$lat
+)
+boat_summary <- boat_summary %>%
+  mutate(label_lon = icon_label_positions$label_lon,
+         label_lat = icon_label_positions$label_lat)
 
 capacity_label <- if (length(unique(capacities)) > 1) {
   "mixed"
@@ -283,11 +335,9 @@ if (any(summary_table$Feasible == "false[^1]")) {
 }
 
 segment_legend <- route_path %>%
-  distinct(segment_key, segment_label, segment_color) %>%
+  distinct(segment_key, segment_color) %>%
   arrange(segment_key)
 
-legend_breaks <- segment_legend$segment_key
-legend_labels <- setNames(segment_legend$segment_label, segment_legend$segment_key)
 legend_colors <- setNames(segment_legend$segment_color, segment_legend$segment_key)
 
 p <- base_coastline_plot(coastline) +
@@ -304,12 +354,7 @@ p <- base_coastline_plot(coastline) +
     lineend = "round",
     inherit.aes = FALSE
   ) +
-  scale_color_manual(
-    values = legend_colors,
-    breaks = legend_breaks,
-    labels = legend_labels,
-    name = "Segment stats\n(order | transit | total | catch)"
-  ) +
+  scale_color_manual(values = legend_colors, guide = "none") +
   geom_segment(
     data = station_lines,
     aes(
@@ -336,16 +381,17 @@ p <- base_coastline_plot(coastline) +
   ) +
   geom_point(
     data = boat_summary,
-    aes(x = boat_lon, y = boat_lat, fill = boat_name),
-    shape = 21,
-    size = 3.4,
+    aes(x = icon_lon, y = icon_lat),
+    shape  = 23,          # diamond, matches single-vessel style
+    size   = 3.6,
     stroke = 0.7,
-    color = "black",
+    fill   = boat_summary$base_color,
+    color  = "grey15",
     inherit.aes = FALSE
   ) +
   geom_segment(
     data = boat_summary,
-    aes(x = boat_lon, y = boat_lat, xend = label_lon, yend = label_lat),
+    aes(x = icon_lon, y = icon_lat, xend = label_lon, yend = label_lat),
     linewidth = 0.45,
     color = "grey35",
     inherit.aes = FALSE,
@@ -353,16 +399,17 @@ p <- base_coastline_plot(coastline) +
   ) +
   geom_label(
     data = boat_summary,
-    aes(x = label_lon, y = label_lat, label = boat_name, fill = boat_name),
+    aes(x = label_lon, y = label_lat, label = first_word(boat_name), fill = boat_name),
     size = 3.1,
     label.size = 0.25,
+    color = "white",
     fontface = "bold",
     inherit.aes = FALSE,
     show.legend = FALSE
   ) +
   scale_fill_manual(
     values = setNames(boat_summary$base_color, boat_summary$boat_name),
-    guide = "none"
+    guide  = "none"
   ) +
   coord_fixed_for_lat(route_path$lat, fallback_lat = 65.0) +
   labs(
@@ -377,17 +424,33 @@ p <- base_coastline_plot(coastline) +
     ),
     x = NULL,
     y = NULL,
-    caption = paste(
-      "Each boat keeps one base color; segments fade lighter as the route progresses.",
-      sep = "\n"
+    caption = "Each boat keeps one base color; segments fade lighter as the route progresses."
+  )
+
+# Add per-boat segment stat tables
+for (inset in boat_table_insets) {
+  p <- p + ggpp::geom_table(
+    data    = inset$data,
+    mapping = aes(x = lon, y = lat, label = label),
+    hjust   = inset$hjust,
+    vjust   = inset$vjust,
+    table.theme = gridExtra::ttheme_default(
+      base_size = 6,
+      padding   = grid::unit(c(2.1, 2.4), "pt"),
+      core   = list(
+        bg_params = list(fill = inset$fill_matrix),
+        fg_params = list(fontface = "plain", col = "grey10")
+      ),
+      colhead = list(
+        bg_params = list(fill = "white"),
+        fg_params = list(fontface = "bold", col = "grey10")
+      )
     )
   )
+}
 
 p <- apply_degree_axes(p)
 p <- p + gsp_common_theme(legend_position = "bottom", legend_direction = "horizontal")
-p <- p + guides(
-  color = guide_legend(ncol = 3, byrow = TRUE, override.aes = list(linewidth = 1.4, alpha = 1))
-)
 
 cat(sprintf("Saving plot to %s...\n", output_file))
 ggsave(
