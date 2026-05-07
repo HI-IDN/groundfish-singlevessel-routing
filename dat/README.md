@@ -20,7 +20,7 @@ Input files and generated database for the GSP pipeline.
 
 <table>
 <tr>
-<td align="center"><img src="coastline_waypoints_ports.png" width="460"/><br><sub>Coastline, waypoints and ports</sub></td>
+<td align="center"><img src="waypoints.png" width="460"/><br><sub>Waypoints</sub></td>
 <td align="center"><img src="survey_overview.png" width="460"/><br><sub>Survey overview — stations, ports and boats</sub></td>
 </tr>
 </table>
@@ -123,9 +123,10 @@ The database has three main groups:
 - Generic MIP facts: `mip_solves`. This table is deliberately run-agnostic and
   is meant for runtime/gap/model-size summaries by `phase_code` and
   `segment_model`.
-- Refinement details: `refinement_passes` and `refinement_solve_context`. These
-  keep pass-level identity and boundary/candidate context tied to a unique
-  refinement run/pass.
+- Refinement details: `refinement_passes`, `refinement_solve_context`, and
+  `refinement_station_mutations`. These keep pass-level identity,
+  boundary/candidate context, and moved station IDs tied to a grouped refinement
+  run plus pass number.
 
 `mip_solves` contains `phase_code`, `segment_model`, `station_count`,
 `node_count`, `model_variable_count`, `model_constraint_count`,
@@ -135,6 +136,12 @@ exporter backfills `node_count` and model-size counts for those files. New
 construction/segment JSONs use `[station_count, node_count, mip_size,
 runtime_seconds, gap_percent]`, matching the refinement JSONs for the shared
 fields.
+
+Refinement JSON variants are grouped by refinement run in the refinement detail
+tables. A concrete solution state such as `ci:refinement:l2seg=10:pass1`
+remains in `runs.run_id`; in `refinement_passes` it is represented as
+`run_id = ci:refinement:l2seg=10`, `pass_number = 1`, and
+`solution_run_id = ci:refinement:l2seg=10:pass1`.
 
 ```mermaid
 erDiagram
@@ -190,43 +197,43 @@ erDiagram
     }
 
     REFINEMENT_PASSES {
-        TEXT run_id FK
-        TEXT variant
+        TEXT run_id
+        TEXT solution_run_id FK
         INTEGER pass_number
         INTEGER changed
         INTEGER stations_moved
         INTEGER boundary_attempts
         INTEGER boundary_changes
-        INTEGER fallback_changes
-        INTEGER accepted_capacity_solves
-        INTEGER total_capacity_solves
         INTEGER mip_solves
-        REAL pass_runtime_seconds
+        REAL runtime_seconds
     }
 
     REFINEMENT_SOLVE_CONTEXT {
         TEXT run_id FK
-        TEXT variant FK
+        INTEGER pass_number FK
         INTEGER solve_idx
         TEXT segment_model
         REAL timeout_seconds
-        INTEGER pass_number
         INTEGER boundary_index
         INTEGER candidate_split_index
         INTEGER segment
-        INTEGER station_count
-        INTEGER node_count
         INTEGER moved_stations
-        INTEGER model_variable_count
-        INTEGER model_constraint_count
-        REAL runtime_seconds
-        REAL gap_percent
+    }
+
+    REFINEMENT_STATION_MUTATIONS {
+        TEXT run_id FK
+        INTEGER pass_number FK
+        INTEGER segment
+        INTEGER sequence
+        INTEGER signed_station_id
+        INTEGER station_id
     }
 
     RUNS ||--o{ RUNS : "parent_run_id"
     RUNS ||--o{ LOCATION_SEGMENTS : "run_id"
     RUNS ||--o{ STATION_SEGMENTS : "run_id"
     RUNS ||--o{ DISTANCE : "run_id"
-    RUNS ||--o{ REFINEMENT_PASSES : "run_id"
-    REFINEMENT_PASSES ||--o{ REFINEMENT_SOLVE_CONTEXT : "run_id, variant"
+    RUNS ||--o{ REFINEMENT_PASSES : "solution_run_id"
+    REFINEMENT_PASSES ||--o{ REFINEMENT_SOLVE_CONTEXT : "run_id, pass_number"
+    REFINEMENT_PASSES ||--o{ REFINEMENT_STATION_MUTATIONS : "run_id, pass_number"
 ```

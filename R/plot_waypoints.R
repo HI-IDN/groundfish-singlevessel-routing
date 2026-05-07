@@ -7,12 +7,9 @@ parse_args <- function(args) {
   out <- list(
     gsp_db = "dat/gsp.db",
     solution_db = "dat/solution.db",
-    output = "dat/survey_overview.png",
-    run_id = NULL,
+    output = "dat/waypoints.png",
     ports = "all",
-    vessels = "all",
-    table_corner = "upper_right",
-    title = NULL
+    title = "Coastline, Waypoints, and Ports"
   )
   i <- 1L
   while (i <= length(args)) {
@@ -43,33 +40,15 @@ main <- function() {
   on.exit(DBI::dbDisconnect(con), add = TRUE)
 
   country <- read_country_layers(con)
-  route <- if (!is.null(opt$run_id) && nzchar(opt$run_id)) read_route_run(con, opt$run_id) else NULL
+  waypoints <- read_waypoints(con)
   ports <- read_ports(con, parse_id_list(opt$ports))
-  vessels <- read_vessels(con, parse_id_list(opt$vessels))
 
-  if (!is.null(route) && nrow(route$run) == 1L && identical(opt$vessels, "all")) {
-    vessels <- vessels[vessels$boat_id %in% route$run$boat_id, , drop = FALSE]
-  }
-
-  title <- opt$title
-  if (is.null(title) || !nzchar(title)) {
-    title <- if (is.null(route)) {
-      "Groundfish Survey Overview"
-    } else {
-      route$run$run_id[[1]]
-    }
-  }
-
-  plot <- plot_country_or_route(
+  plot <- plot_survey_waypoints(
     country = country,
-    route = route,
+    waypoints = waypoints,
     ports = ports,
-    vessels = vessels,
-    table_corner = opt$table_corner,
-    title = title,
-    show_degree_axes = is.null(route),
-    legend_position = "bottom",
-    legend_justification = "center"
+    title = opt$title,
+    show_degree_axes = TRUE
   )
 
   dir.create(dirname(opt$output), recursive = TRUE, showWarnings = FALSE)
