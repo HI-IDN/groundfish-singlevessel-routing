@@ -102,7 +102,7 @@ Repository Layout
 ```plaintext
 .
 ├── src/        # core implementation (C + build system)
-├── dat/        # raw inputs and generated database (gsp.db)
+├── dat/        # raw inputs and generated databases (gsp.db, solution.db)
 ├── sol/        # outputs (solutions, logs, plots)
 ├── config/     # solver parameters (YAML)
 ├── R/          # analysis and visualization scripts
@@ -232,6 +232,14 @@ This writes the observed boat routes to:
 
 6. Generate plots:
 
+    Optionally rebuild the normalized solution database first:
+    ```bash
+    make -C src solution_db
+    ```
+
+   This deletes and recreates `dat/solution.db` from the current JSON files
+   under `sol/`.
+
     ```bash
     make -C src plot
     ```
@@ -260,8 +268,58 @@ This runs:
 Then generate figures separately with:
 
 ```bash
+make -C src solution_db
 make -C src plot
 ```
+
+Normalized Solution Database
+----------------------------
+
+`make -C src build` builds the C target `solution_db_export`. After that,
+`make -C src solution_db` recreates `dat/solution.db` from the current
+`sol/**/*.json` files. The database stores solution output only; static
+geography remains in `dat/gsp.db`.
+For plotting routes, join `solution.db.location_segments.location_id` to
+`gsp.db.locations.id`.
+
+Main tables:
+
+- `runs`
+  One row per exported solution state. The lineage is construction ->
+  segmentation -> refinement. Refinement JSONs may contribute several rows
+  (`init`, `pass1`, ...), with `parent_run_id` linking the chain.
+
+- `location_segments`
+  Ordered route location IDs: `run_id`, `segment`, `sequence`, `location_id`,
+  and `point_type` (`BOAT`, `PORT`, `WAYP`, `STAT`). Latitude/longitude are
+  not duplicated here. `route_locations` is kept as a compatibility view over
+  this table.
+
+- `station_segments`
+  Ordered station membership per segment: `run_id`, `segment`, `sequence`,
+  `signed_station_id`, and absolute `station_id`.
+
+- `distance`
+  Distance by run and segment. `segment IS NULL` is the grand total row;
+  numbered segments are per-segment rows. Columns are `transit_nm` and
+  `total_nm`.
+
+- `mip_solves`
+  Generic solve-level table for runtime analysis. It intentionally has no
+  `run_id`; it stores only `phase_code` (`C`, `S`, `R`), `segment_model`
+  (`0seg`, `1seg`, `2seg`, `Xseg`), `station_count`, `node_count`,
+  `model_variable_count`, `model_constraint_count`, `runtime_seconds`, and
+  `gap_percent`.
+
+- `refinement_passes`
+  One row per refinement pass variant, keyed by `(run_id, variant)`. It stores
+  the numeric pass, stations moved, accepted/total capacity solves, MIP solve
+  count, and pass runtime.
+
+- `refinement_solve_context`
+  Refinement-only detail rows keyed back to `(run_id, variant)`. This is where
+  boundary index, candidate split index, segment, station/node counts, moved
+  stations, model size, runtime, and gap remain tied to a specific pass.
 
 Configuration
 -------------

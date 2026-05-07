@@ -60,6 +60,9 @@ Current Executables And Entry Points
   exports observed survey routes to JSON
 - `survey_fixedport_candidates`
   derives candidate fixed-port visit sequences from survey JSON
+- `solution_db_export`
+  rebuilds `dat/solution.db` from the generated JSON files under `sol/`;
+  invoked through `make -C src solution_db`
 - `gsp_country`, `gsp_stations`, `gsp_distances`, `gsp_prepare_routing_data`
   routing-data preprocessing utilities
 
@@ -81,6 +84,16 @@ The JSON emitted by the solver paths is converging on a shared structure:
 
 For `segment.json`, the local post-optimization phase is reported as `mip.phase = "1seg"`.
 For `refinement.json`, the boundary improvement phase is reported as `mip.phase = "2seg"`.
+
+`solution_db_export` is the normalization step between JSON-producing solver
+targets and plotting/reporting scripts. It recreates `dat/solution.db` from
+scratch, storing run lineage, ordered location segment IDs, ordered station
+segments, distances, generic MIP solve rows, and refinement pass details.
+`mip_solves` is intentionally run-agnostic for runtime/gap/model-size analysis;
+refinement pass identity and boundary/candidate context are stored separately
+in `refinement_passes` and `refinement_solve_context`. Static geography remains
+in `dat/gsp.db`; plotting code should join ordered location IDs from
+`solution.db.location_segments` to coordinates in `gsp.db.locations`.
 
 Configuration Notes
 -------------------

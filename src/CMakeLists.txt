@@ -15,6 +15,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_DEPENDS_USE_COMPILER FALSE)
 set(CMAKE_DEPEND_USE_MODULES FALSE)
 set(CMAKE_C_DEPENDS_USE_COMPILER FALSE)
+option(GSP_ENABLE_GUROBI "Build Gurobi-backed routing executables" ON)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -40,26 +41,58 @@ find_file(MINGW_WINPTHREAD_DLL
         "/mingw64/bin"
 )
 
-if(DEFINED ENV{GUROBI_HOME})
-    file(TO_CMAKE_PATH "$ENV{GUROBI_HOME}" GUROBI_HOME_CMAKE)
+if(GSP_ENABLE_GUROBI AND DEFINED ENV{GUROBI_HOME})
+    set(GUROBI_HOME_RAW "$ENV{GUROBI_HOME}")
+    string(REGEX REPLACE "/$" "" GUROBI_HOME_RAW "${GUROBI_HOME_RAW}")
+
+    if(GUROBI_HOME_RAW MATCHES "^[A-Za-z]:[\\\\/].*")
+        string(SUBSTRING "${GUROBI_HOME_RAW}" 0 1 GUROBI_DRIVE)
+        string(TOLOWER "${GUROBI_DRIVE}" GUROBI_DRIVE)
+        string(REGEX REPLACE "^[A-Za-z]:[\\\\/]?" "" GUROBI_PATH_TAIL "${GUROBI_HOME_RAW}")
+        string(REPLACE "\\" "/" GUROBI_PATH_TAIL "${GUROBI_PATH_TAIL}")
+        set(GUROBI_HOME_CMAKE "/${GUROBI_DRIVE}/${GUROBI_PATH_TAIL}")
+    elseif(GUROBI_HOME_RAW MATCHES "^/([A-Za-z])/(.*)")
+        set(GUROBI_HOME_CMAKE "${GUROBI_HOME_RAW}")
+    else()
+        file(TO_CMAKE_PATH "${GUROBI_HOME_RAW}" GUROBI_HOME_CMAKE)
+    endif()
+
     set(GUROBI_INCLUDE_DIR "${GUROBI_HOME_CMAKE}/include")
     set(GUROBI_LIBRARY_DIR "${GUROBI_HOME_CMAKE}/lib")
     set(GUROBI_BIN_DIR "${GUROBI_HOME_CMAKE}/bin")
-endif()
+    unset(GUROBI_RUNTIME_DLL CACHE)
+    find_file(GUROBI_RUNTIME_DLL
+        NAMES gurobi130.dll
+        PATHS
+            "${GUROBI_BIN_DIR}"
+    )
 
-find_file(GUROBI_RUNTIME_DLL
-    NAMES gurobi130.dll
-    PATHS
-        "${GUROBI_BIN_DIR}"
-)
+    unset(GUROBI_C_LIBRARY CACHE)
+    find_file(GUROBI_C_LIBRARY
+        NAMES gurobi130.lib libgurobi130.dll.a
+        PATHS "${GUROBI_LIBRARY_DIR}"
+        NO_DEFAULT_PATH
+    )
 
-if(GUROBI_INCLUDE_DIR AND EXISTS "${GUROBI_INCLUDE_DIR}/gurobi_c.h" AND
-   GUROBI_LIBRARY_DIR AND EXISTS "${GUROBI_LIBRARY_DIR}")
-    message(STATUS "Found Gurobi include: ${GUROBI_INCLUDE_DIR}")
-    message(STATUS "Found Gurobi library dir: ${GUROBI_LIBRARY_DIR}")
-    message(STATUS "Found Gurobi bin dir: ${GUROBI_BIN_DIR}")
+    if(GUROBI_INCLUDE_DIR AND EXISTS "${GUROBI_INCLUDE_DIR}/gurobi_c.h" AND
+       GUROBI_LIBRARY_DIR AND EXISTS "${GUROBI_LIBRARY_DIR}" AND
+       GUROBI_C_LIBRARY)
+        message(STATUS "Found Gurobi include: ${GUROBI_INCLUDE_DIR}")
+        message(STATUS "Found Gurobi library dir: ${GUROBI_LIBRARY_DIR}")
+        message(STATUS "Found Gurobi bin dir: ${GUROBI_BIN_DIR}")
+        message(STATUS "Found Gurobi library: ${GUROBI_C_LIBRARY}")
+    else()
+        message(STATUS "Gurobi not found. GUROBI_HOME raw='$ENV{GUROBI_HOME}', normalized='${GUROBI_HOME_CMAKE}'")
+        unset(GUROBI_INCLUDE_DIR)
+        unset(GUROBI_LIBRARY_DIR)
+        unset(GUROBI_BIN_DIR)
+        unset(GUROBI_C_LIBRARY)
+    endif()
 else()
-    message(STATUS "Gurobi not found. GUROBI_HOME='${GUROBI_HOME_CMAKE}'")
+    unset(GUROBI_INCLUDE_DIR)
+    unset(GUROBI_LIBRARY_DIR)
+    unset(GUROBI_BIN_DIR)
+    unset(GUROBI_C_LIBRARY)
 endif()
 
 include_directories(

@@ -54,7 +54,6 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     )
     target_compile_definitions(gsp_gurobi PRIVATE HAVE_GUROBI=1)
     target_link_libraries(gsp_gurobi
-        -L${GUROBI_LIBRARY_DIR}
-        gurobi130
+        ${GUROBI_C_LIBRARY}
     )
 endif()

@@ -5,11 +5,11 @@ BUILD_DIR = ../build
 CONFIG_YAML = ../config/gsp_solver.yaml
 
 # construction.json / segment.json → single-vessel route PNGs + .md summaries
-ROUTE_JSONS = $(shell find ../sol \( -name "construction.json" -o -name "segment.json" \) ! -path "*/survey/*")
+ROUTE_JSONS = $(shell bash -lc 'find "$(CURDIR)/../sol" \( -name "construction.json" -o -name "segment.json" \) ! -path "*/survey/*" | sed "s#^$(CURDIR)/##"')
 ROUTE_PNGS  = $(patsubst %.json,%.png,$(ROUTE_JSONS))
 
 # refinement*.json → route PNGs + .md summaries (separate so we can depend on them)
-REFINEMENT_ROUTE_JSONS = $(shell find ../sol -name "refinement*.json")
+REFINEMENT_ROUTE_JSONS = $(shell bash -lc 'find "$(CURDIR)/../sol" -name "refinement*.json" | sed "s#^$(CURDIR)/##"')
 REFINEMENT_ROUTE_PNGS  = $(patsubst %.json,%.png,$(REFINEMENT_ROUTE_JSONS))
 
 # Alias used for trajectory / MIP-runtime plot dependencies
@@ -21,14 +21,15 @@ COUNTRY_DAT ?= ../dat/waypoints.dat
 COUNTRY_PORT_FILE ?= ../dat/ports.dat
 COUNTRY_BOAT_FILE ?= ../dat/boats.dat
 COUNTRY_STATIONS_FILE ?= ../dat/stations.dat
+SOLUTION_DB ?= ../dat/solution.db
 
 METHOD ?=
 TABLE_FORMAT ?= tex
 TABLE_OUTPUT ?=
 L2SEG_UNIT ?= seconds
 L2SEG ?=
-L2SEG_VARIANTS ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*l2seg_variants:[[:space:]]*\\[([^]]*)\\].*/\\1/p' '$(CONFIG_YAML)' | tr ',' ' '")
-L2SEG_DEFAULT_VALUE ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*2seg:[[:space:]]*([0-9]+).*/\\1/p' '$(CONFIG_YAML)' | head -n 1")
+L2SEG_VARIANTS ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*l2seg_variants:[[:space:]]*\\[([^]]*)\\].*/\\1/p' '$(abspath $(CONFIG_YAML))' | tr ',' ' '")
+L2SEG_DEFAULT_VALUE ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*2seg:[[:space:]]*([0-9]+).*/\\1/p' '$(abspath $(CONFIG_YAML))' | head -n 1")
 METHOD_RAW := $(or $(METHOD),nn)
 METHOD_NAME := $(if $(filter gi,$(METHOD_RAW)),ge,$(METHOD_RAW))
 VALID_METHODS := nn ge ci noport fixedport
@@ -39,7 +40,7 @@ SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
 SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport sweep_table plot plot-routes plot-refinement plot-mip-runtime plot-survey-routes plot-sweep-summary experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db sweep_table plot plot-routes plot-refinement plot-mip-runtime plot-survey-routes plot-sweep-summary experiments help
 
 all: build
 
@@ -231,6 +232,14 @@ sweep_table:
 
 plot-routes: $(ROUTE_PNGS) $(REFINEMENT_ROUTE_PNGS)
 
+solution_db:
+	@test -x "$(BUILD_DIR)/solution_db_export" || { \
+		echo "Missing $(BUILD_DIR)/solution_db_export."; \
+		echo "Run: make -C src build"; \
+		exit 1; \
+	}
+	@cd $(BUILD_DIR) && ./solution_db_export ../sol $(SOLUTION_DB)
+
 ../sol/%.png: ../sol/%.json
 	@cd .. && Rscript R/plot_single_vessel_route.R "$(patsubst ../%,%,$<)" "$(patsubst ../%,%,$@)"
 
@@ -255,7 +264,7 @@ plot-refinement: ../sol/refinement_transit_sweeps.png
 
 # MIP runtime plot
 ../sol/mip_runtime_vs_size.png: $(REFINEMENT_JSONS) \
-    $(shell find ../sol \( -name "construction.json" -o -name "segment.json" \) ! -path "*/survey/*")
+    $(shell bash -lc 'find "$(CURDIR)/../sol" \( -name "construction.json" -o -name "segment.json" \) ! -path "*/survey/*" | sed "s#^$(CURDIR)/##"')
 	@bash -lc 'cd .. && Rscript R/plot_mip_runtime.R'
 
 plot-mip-runtime: ../sol/mip_runtime_vs_size.png
@@ -327,6 +336,7 @@ help:
 	@echo "  make -C src fixedport_candidates"
 	@echo "  make -C src fixedport"
 	@echo "  make -C src experiments          # runs L2SEG values from config/gsp_solver.yaml in order"
+	@echo "  make -C src solution_db          # rebuild dat/solution.db from sol/**/*.json"
 	@echo "  make -C src plot                  # all plots"
 	@echo "  make -C src plot-routes           # construction/segment/refinement route PNGs"
 	@echo "  make -C src plot-refinement       # sweep trajectory PNGs (make_refinement_table.R)"

@@ -92,13 +92,16 @@ void gsp_write_segment_mip_section(FILE *fp,
                                    int detail_count) {
     if (!fp) return;
     gsp_write_mip_header(fp, phase, model_name, timeout_seconds);
-    fprintf(fp, "    \"solve_detail_tuple\": [\"size\", \"runtime_seconds\", \"gap_percent\"],\n");
+    fprintf(fp, "    \"solve_detail_tuple\": [\"station_count\", \"node_count\", \"mip_size\", \"runtime_seconds\", \"gap_percent\"],\n");
     fprintf(fp, "    \"solves\": [");
     for (int i = 0; i < detail_count; i++) {
         const gsp_mip_solve_detail_t *detail = &details[i];
         if (i) fprintf(fp, ", ");
-        fprintf(fp, "[%d, %.6f, %.6f]",
+        fprintf(fp, "[%d, %d, [%d, %d], %.6f, %.6f]",
                 detail->station_count,
+                detail->node_count,
+                detail->model_num_vars,
+                detail->model_num_constrs,
                 detail->runtime_seconds,
                 detail->gap_percent);
     }
