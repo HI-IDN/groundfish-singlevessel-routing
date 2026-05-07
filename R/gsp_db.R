@@ -235,6 +235,28 @@ read_route_run <- function(con, run_id) {
   )
 }
 
+read_final_run_id <- function(con, method, phase) {
+  rows <- db_read(con, "
+    SELECT run_id
+    FROM solution.runs
+    WHERE method = ?
+      AND phase = ?
+      AND is_final = 1
+    ORDER BY run_id
+  ", list(method, phase))
+
+  if (nrow(rows) != 1L) {
+    stop(
+      sprintf(
+        "Expected one final run for method='%s', phase='%s', found %d",
+        method, phase, nrow(rows)
+      ),
+      call. = FALSE
+    )
+  }
+  rows$run_id[[1]]
+}
+
 read_refinement_passes <- function(con, refinement_run_id = NULL) {
   sql <- "
     SELECT

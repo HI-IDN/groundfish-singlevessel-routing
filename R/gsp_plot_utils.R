@@ -235,7 +235,8 @@ plot_country_or_route <- function(country, route = NULL, ports = NULL, vessels =
                                   table_corner = "upper_right", palette = NULL,
                                   title = NULL, show_degree_axes = FALSE,
                                   legend_position = NULL,
-                                  legend_justification = NULL) {
+                                  legend_justification = NULL,
+                                  bounds_override = NULL) {
   has_route <- !is.null(route) && nrow(route$route_path) > 0L
   if (is.null(legend_position)) legend_position <- if (has_route) "right" else "bottom"
   if (is.null(legend_justification)) legend_justification <- "center"
@@ -251,7 +252,11 @@ plot_country_or_route <- function(country, route = NULL, ports = NULL, vessels =
     )
     extra_points <- rbind(station_points, marker_points)
   }
-  bounds <- plot_bounds(country$coastline, if (has_route) route$route_path else NULL, extra_points)
+  bounds <- if (is.null(bounds_override)) {
+    plot_bounds(country$coastline, if (has_route) route$route_path else NULL, extra_points)
+  } else {
+    bounds_override
+  }
   pos <- table_position(bounds, table_corner)
 
   p <- ggplot2::ggplot() +
