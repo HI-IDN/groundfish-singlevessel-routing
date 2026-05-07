@@ -41,7 +41,7 @@ gurobi:
     Xseg: 86400                          # Fixed-port MIP time limit after incumbent exists
 
   env_log_file: log/gurobi.log           # null=no log file, or path like "log/gurobi.log"
-  threads: 0                             # 0=auto-detect, >0=fixed thread count
+  threads: 6                             # 0=auto-detect, >0=fixed thread count
   mip_focus: 0                           # 0=balanced, 1=feasible, 2=optimal, 3=best_bound
   seed: -1                               # -1=random, >=0=fixed seed for reproducibility
 
