@@ -186,14 +186,14 @@ plot_bounds <- function(coastline, route_path = NULL, extra_points = NULL, pad =
   list(xmin = xr[1] - xp, xmax = xr[2] + xp, ymin = yr[1] - yp, ymax = yr[2] + yp)
 }
 
-fixed_map_coord <- function(bounds) {
+fixed_map_coord <- function(bounds, clip = "on") {
   ratio <- 1 / cos(mean(c(bounds$ymin, bounds$ymax)) * pi / 180)
   ggplot2::coord_fixed(
     ratio = ratio,
     xlim = c(bounds$xmin, bounds$xmax),
     ylim = c(bounds$ymin, bounds$ymax),
     expand = FALSE,
-    clip = "on"
+    clip = clip
   )
 }
 
