@@ -9,6 +9,14 @@ load_gsp_plot_packages <- function() {
       stop(sprintf("Missing required R package: %s", pkg), call. = FALSE)
     }
   }
+  # Set a consistent global base theme so all ggplot objects share the same
+  # font sizes without each call site having to repeat them.
+  ggplot2::theme_set(
+    ggplot2::theme_minimal(base_size = 10) +
+      ggplot2::theme(
+        plot.background = ggplot2::element_rect(fill = "white", color = NA)
+      )
+  )
 }
 
 GeomGspTable <- ggplot2::ggproto(
@@ -144,6 +152,8 @@ gsp_map_theme <- function(legend_position = "right", legend_justification = "cen
     ggplot2::theme(
       panel.grid = ggplot2::element_blank(),
       plot.background = ggplot2::element_rect(fill = "white", color = NA),
+      plot.title    = ggplot2::element_text(size = ggplot2::rel(1.2), hjust = 0),
+      plot.subtitle = ggplot2::element_text(size = ggplot2::rel(1.0), hjust = 0),
       legend.position = legend_position,
       legend.justification = legend_justification,
       legend.box = "horizontal"
@@ -183,7 +193,7 @@ fixed_map_coord <- function(bounds) {
     xlim = c(bounds$xmin, bounds$xmax),
     ylim = c(bounds$ymin, bounds$ymax),
     expand = FALSE,
-    clip = "off"
+    clip = "on"
   )
 }
 
@@ -215,7 +225,8 @@ table_position <- function(bounds, corner = "upper_right") {
   )
 }
 
-table_theme <- function(fill_matrix, border_matrix = NULL, border_lwd_matrix = NULL, base_size = 9) {
+table_theme <- function(fill_matrix, border_matrix = NULL, border_lwd_matrix = NULL,
+                        base_size = 9, colhead_fill = "white") {
   if (is.null(border_matrix)) {
     border_matrix <- matrix(NA, nrow = nrow(fill_matrix), ncol = ncol(fill_matrix))
   }
@@ -231,7 +242,7 @@ table_theme <- function(fill_matrix, border_matrix = NULL, border_lwd_matrix = N
       fg_params = list(col = "grey10")
     ),
     colhead = list(
-      bg_params = list(fill = "white", col = NA),
+      bg_params = list(fill = colhead_fill, col = NA),
       fg_params = list(fontface = "bold", col = "grey10")
     )
   )
@@ -246,7 +257,8 @@ station_summary_table <- function(stations) {
   list(data = out, fills = matrix("grey95", nrow = nrow(out), ncol = ncol(out)))
 }
 
-segment_summary_table <- function(route, palette, moved_by_segment = NULL) {
+segment_summary_table <- function(route, palette, moved_by_segment = NULL,
+                                  station_col_label = "|S|") {
   seg_d <- route$distances[!is.na(route$distances$segment), , drop = FALSE]
   total_d <- route$distances[is.na(route$distances$segment), , drop = FALSE]
   counts <- stats::aggregate(station_id ~ segment, route$station_lines, length)
@@ -261,29 +273,42 @@ segment_summary_table <- function(route, palette, moved_by_segment = NULL) {
   tbl$stations[is.na(tbl$stations)] <- 0L
   tbl$catch_amount[is.na(tbl$catch_amount)] <- 0
   if ("moved" %in% names(tbl)) tbl$moved[is.na(tbl$moved)] <- 0L
+  if ("moved_out" %in% names(tbl)) tbl$moved_out[is.na(tbl$moved_out)] <- 0L
+  if ("moved_in" %in% names(tbl)) tbl$moved_in[is.na(tbl$moved_in)] <- 0L
 
   out <- data.frame(
     `#` = as.character(tbl$segment),
-    `|S|` = as.integer(tbl$stations),
+    stations = as.integer(tbl$stations),
     t = sprintf("%.0f", tbl$catch_amount / 1000),
     nm = sprintf("%.0f", tbl$transit_nm),
     check.names = FALSE
   )
+  names(out)[names(out) == "stations"] <- station_col_label
   if ("moved" %in% names(tbl)) {
     out$`ΔS` <- as.integer(tbl$moved)
+  }
+  if (all(c("moved_out", "moved_in") %in% names(tbl))) {
+    out$`|S^-|` <- as.integer(tbl$moved_out)
+    out$`|S^+|` <- as.integer(tbl$moved_in)
   }
 
   if (nrow(seg_d) > 1L && nrow(total_d) > 0L) {
     total_row <- data.frame(
       `#` = "\u03a3",
-      `|S|` = sum(tbl$stations),
+      stations = sum(tbl$stations),
       t = sprintf("%.0f", sum(tbl$catch_amount) / 1000),
       nm = sprintf("%.0f", total_d$transit_nm[1]),
       check.names = FALSE
     )
+    names(total_row)[names(total_row) == "stations"] <- station_col_label
     if ("moved" %in% names(tbl)) {
       total_row$`ΔS` <- sum(tbl$moved)
     }
+    if (all(c("moved_out", "moved_in") %in% names(tbl))) {
+      total_row$`|S^-|` <- sum(tbl$moved_out)
+      total_row$`|S^+|` <- sum(tbl$moved_in)
+    }
+    names(total_row) <- names(out)
     out <- rbind(out, total_row)
   }
 
@@ -305,6 +330,12 @@ segment_summary_table <- function(route, palette, moved_by_segment = NULL) {
 
   if ("moved" %in% names(tbl)) {
     moved_rows <- seq_len(nrow(tbl))[tbl$moved != 0L]
+    if (length(moved_rows) > 0L) {
+      attr(out, "row_outlines") <- moved_rows
+    }
+  }
+  if (all(c("moved_out", "moved_in") %in% names(tbl))) {
+    moved_rows <- seq_len(nrow(tbl))[tbl$moved_out != 0L | tbl$moved_in != 0L]
     if (length(moved_rows) > 0L) {
       attr(out, "row_outlines") <- moved_rows
     }
@@ -371,7 +402,9 @@ plot_country_or_route <- function(country, route = NULL, ports = NULL, vessels =
                                   legend_position = NULL,
                                   legend_justification = NULL,
                                   bounds_override = NULL,
-                                  moved_by_segment = NULL) {
+                                  moved_by_segment = NULL,
+                                  station_col_label = "|S|",
+                                  show_table = TRUE) {
   has_route <- !is.null(route) && nrow(route$route_path) > 0L
   if (is.null(legend_position)) legend_position <- if (has_route) "right" else "bottom"
   if (is.null(legend_justification)) legend_justification <- "center"
@@ -407,7 +440,12 @@ plot_country_or_route <- function(country, route = NULL, ports = NULL, vessels =
     if (is.null(palette)) palette <- make_segment_palette(n_seg)
     route$route_path$segment_f <- factor(route$route_path$segment, levels = seq_len(n_seg))
     route$station_lines$segment_f <- factor(route$station_lines$segment, levels = seq_len(n_seg))
-    table <- segment_summary_table(route, palette, moved_by_segment = moved_by_segment)
+    table <- segment_summary_table(
+      route,
+      palette,
+      moved_by_segment = moved_by_segment,
+      station_col_label = station_col_label
+    )
 
     p <- p +
       ggplot2::geom_path(
@@ -454,19 +492,23 @@ plot_country_or_route <- function(country, route = NULL, ports = NULL, vessels =
       barheight = grid::unit(6, "pt")
     )
   }
-  p <- p +
-    geom_gsp_table(
-      data = data.frame(lon = pos$x, lat = pos$y, label = I(list(table$data))),
-      ggplot2::aes(x = lon, y = lat, label = label),
-      hjust = pos$hjust,
-      vjust = pos$vjust,
-      table.theme = table_theme(
-        table$fills,
-        border_matrix = table$borders,
-        border_lwd_matrix = table$border_lwd,
-        base_size = if (has_route) 8.5 else 11
+  if (show_table) {
+    p <- p +
+      geom_gsp_table(
+        data = data.frame(lon = pos$x, lat = pos$y, label = I(list(table$data))),
+        ggplot2::aes(x = lon, y = lat, label = label),
+        hjust = pos$hjust,
+        vjust = pos$vjust,
+        table.theme = table_theme(
+          table$fills,
+          border_matrix = table$borders,
+          border_lwd_matrix = table$border_lwd,
+          base_size = if (has_route) 8.5 else 11
+        )
       )
-    ) +
+  }
+
+  p <- p +
     fixed_map_coord(bounds) +
     ggplot2::labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
     gsp_map_theme(
