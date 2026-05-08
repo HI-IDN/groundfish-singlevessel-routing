@@ -226,12 +226,16 @@ table_position <- function(bounds, corner = "upper_right") {
 }
 
 table_theme <- function(fill_matrix, border_matrix = NULL, border_lwd_matrix = NULL,
-                        base_size = 9, colhead_fill = "white") {
+                        base_size = 9, colhead_fill = "white",
+                        fontface_matrix = NULL) {
   if (is.null(border_matrix)) {
     border_matrix <- matrix(NA, nrow = nrow(fill_matrix), ncol = ncol(fill_matrix))
   }
   if (is.null(border_lwd_matrix)) {
     border_lwd_matrix <- matrix(0, nrow = nrow(fill_matrix), ncol = ncol(fill_matrix))
+  }
+  if (is.null(fontface_matrix)) {
+    fontface_matrix <- matrix("plain", nrow = nrow(fill_matrix), ncol = ncol(fill_matrix))
   }
 
   gridExtra::ttheme_default(
@@ -239,7 +243,7 @@ table_theme <- function(fill_matrix, border_matrix = NULL, border_lwd_matrix = N
     padding = grid::unit(c(4.2, 5.0), "pt"),
     core = list(
       bg_params = list(fill = fill_matrix, col = border_matrix, lwd = border_lwd_matrix),
-      fg_params = list(col = "grey10")
+      fg_params = list(col = "grey10", fontface = fontface_matrix)
     ),
     colhead = list(
       bg_params = list(fill = colhead_fill, col = NA),
