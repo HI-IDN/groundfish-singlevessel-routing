@@ -1,11 +1,92 @@
 #!/usr/bin/env Rscript
 
 load_gsp_plot_packages <- function() {
-  for (pkg in c("ggplot2", "grid", "gridExtra", "ggpp", "scales")) {
-    if (!requireNamespace(pkg, quietly = TRUE)) {
+  for (pkg in c("ggplot2", "grid", "gridExtra", "gtable", "ggpp", "scales")) {
+    available <- suppressWarnings(suppressPackageStartupMessages(
+      requireNamespace(pkg, quietly = TRUE)
+    ))
+    if (!available) {
       stop(sprintf("Missing required R package: %s", pkg), call. = FALSE)
     }
   }
+}
+
+GeomGspTable <- ggplot2::ggproto(
+  "GeomGspTable",
+  ggplot2::Geom,
+  required_aes = c("x", "y", "label"),
+  default_aes = ggplot2::aes(angle = 0),
+  draw_key = ggplot2::draw_key_blank,
+  draw_panel = function(data, panel_params, coord, table.theme,
+                        table.rownames = FALSE, table.colnames = TRUE,
+                        hjust = 0.5, vjust = 0.5) {
+    if (nrow(data) == 0L) return(grid::nullGrob())
+    data <- coord$transform(data, panel_params)
+    grobs <- grid::gList()
+
+    for (i in seq_len(nrow(data))) {
+      table_data <- data$label[[i]]
+      row_outlines <- attr(table_data, "row_outlines", exact = TRUE)
+      user_grob <- gridExtra::tableGrob(
+        d = table_data,
+        theme = table.theme,
+        rows = if (table.rownames) rownames(table_data) else NULL,
+        cols = if (table.colnames) colnames(table_data) else NULL
+      )
+
+      if (!is.null(row_outlines) && length(row_outlines) > 0L) {
+        for (row_idx in row_outlines) {
+          table_row <- row_idx + if (table.colnames) 1L else 0L
+          user_grob <- gtable::gtable_add_grob(
+            user_grob,
+            grid::rectGrob(gp = grid::gpar(fill = NA, col = "black", lwd = 1.4)),
+            t = table_row,
+            l = 1L,
+            b = table_row,
+            r = ncol(table_data),
+            z = Inf,
+            clip = "off",
+            name = paste0("row-outline-", row_idx)
+          )
+        }
+      }
+
+      user_grob$vp <- grid::viewport(
+        x = grid::unit(data$x[[i]], "native"),
+        y = grid::unit(data$y[[i]], "native"),
+        width = sum(user_grob$widths),
+        height = sum(user_grob$heights),
+        just = c(hjust, vjust),
+        angle = data$angle[[i]]
+      )
+      grobs <- grid::gList(grobs, user_grob)
+    }
+
+    grid::grobTree(children = grobs)
+  }
+)
+
+geom_gsp_table <- function(mapping = NULL, data = NULL, ..., table.theme,
+                           hjust = 0.5, vjust = 0.5,
+                           table.rownames = FALSE, table.colnames = TRUE,
+                           inherit.aes = FALSE) {
+  ggplot2::layer(
+    geom = GeomGspTable,
+    mapping = mapping,
+    data = data,
+    stat = "identity",
+    position = "identity",
+    show.legend = FALSE,
+    inherit.aes = inherit.aes,
+    params = list(
+      table.theme = table.theme,
+      hjust = hjust,
+      vjust = vjust,
+      table.rownames = table.rownames,
+      table.colnames = table.colnames,
+      ...
+    )
+  )
 }
 
 maximize_adjacent_contrast <- function(colors) {
@@ -101,18 +182,20 @@ fixed_map_coord <- function(bounds) {
     ratio = ratio,
     xlim = c(bounds$xmin, bounds$xmax),
     ylim = c(bounds$ymin, bounds$ymax),
-    expand = FALSE
+    expand = FALSE,
+    clip = "off"
   )
 }
 
 table_position <- function(bounds, corner = "upper_right") {
+  x_pad <- diff(c(bounds$xmin, bounds$xmax)) * 0.055
   x <- switch(corner,
-    upper_left = bounds$xmin,
-    lower_left = bounds$xmin,
-    west = bounds$xmin,
-    upper_right = bounds$xmax,
-    lower_right = bounds$xmax,
-    east = bounds$xmax,
+    upper_left = bounds$xmin + x_pad,
+    lower_left = bounds$xmin + x_pad,
+    west = bounds$xmin + x_pad,
+    upper_right = bounds$xmax + x_pad,
+    lower_right = bounds$xmax + x_pad,
+    east = bounds$xmax + x_pad,
     bounds$xmax
   )
   y <- switch(corner,
@@ -132,12 +215,19 @@ table_position <- function(bounds, corner = "upper_right") {
   )
 }
 
-table_theme <- function(fill_matrix, base_size = 9) {
+table_theme <- function(fill_matrix, border_matrix = NULL, border_lwd_matrix = NULL, base_size = 9) {
+  if (is.null(border_matrix)) {
+    border_matrix <- matrix(NA, nrow = nrow(fill_matrix), ncol = ncol(fill_matrix))
+  }
+  if (is.null(border_lwd_matrix)) {
+    border_lwd_matrix <- matrix(0, nrow = nrow(fill_matrix), ncol = ncol(fill_matrix))
+  }
+
   gridExtra::ttheme_default(
     base_size = base_size,
     padding = grid::unit(c(4.2, 5.0), "pt"),
     core = list(
-      bg_params = list(fill = fill_matrix, col = NA),
+      bg_params = list(fill = fill_matrix, col = border_matrix, lwd = border_lwd_matrix),
       fg_params = list(col = "grey10")
     ),
     colhead = list(
@@ -156,33 +246,76 @@ station_summary_table <- function(stations) {
   list(data = out, fills = matrix("grey95", nrow = nrow(out), ncol = ncol(out)))
 }
 
-segment_summary_table <- function(route, palette) {
+segment_summary_table <- function(route, palette, moved_by_segment = NULL) {
   seg_d <- route$distances[!is.na(route$distances$segment), , drop = FALSE]
   total_d <- route$distances[is.na(route$distances$segment), , drop = FALSE]
   counts <- stats::aggregate(station_id ~ segment, route$station_lines, length)
   names(counts)[2] <- "stations"
+  catches <- stats::aggregate(catch_amount ~ segment, route$station_lines, sum, na.rm = TRUE)
+  names(catches)[2] <- "catch_amount"
   tbl <- merge(seg_d, counts, by = "segment", all.x = TRUE)
+  tbl <- merge(tbl, catches, by = "segment", all.x = TRUE)
+  if (!is.null(moved_by_segment)) {
+    tbl <- merge(tbl, moved_by_segment, by = "segment", all.x = TRUE)
+  }
   tbl$stations[is.na(tbl$stations)] <- 0L
+  tbl$catch_amount[is.na(tbl$catch_amount)] <- 0
+  if ("moved" %in% names(tbl)) tbl$moved[is.na(tbl$moved)] <- 0L
 
   out <- data.frame(
     `#` = as.character(tbl$segment),
     `|S|` = as.integer(tbl$stations),
+    t = sprintf("%.0f", tbl$catch_amount / 1000),
     nm = sprintf("%.0f", tbl$transit_nm),
     check.names = FALSE
   )
+  if ("moved" %in% names(tbl)) {
+    out$`ΔS` <- as.integer(tbl$moved)
+  }
 
   if (nrow(seg_d) > 1L && nrow(total_d) > 0L) {
-    out <- rbind(out, data.frame(
+    total_row <- data.frame(
       `#` = "\u03a3",
       `|S|` = sum(tbl$stations),
+      t = sprintf("%.0f", sum(tbl$catch_amount) / 1000),
       nm = sprintf("%.0f", total_d$transit_nm[1]),
       check.names = FALSE
-    ))
+    )
+    if ("moved" %in% names(tbl)) {
+      total_row$`ΔS` <- sum(tbl$moved)
+    }
+    out <- rbind(out, total_row)
   }
 
   fills <- unname(palette[as.character(tbl$segment)])
   if (nrow(seg_d) > 1L && nrow(total_d) > 0L) fills <- c(fills, "grey92")
-  list(data = out, fills = matrix(scales::alpha(fills, 0.30), nrow = nrow(out), ncol = ncol(out)))
+  fill_matrix <- matrix(scales::alpha(fills, 0.30), nrow = nrow(out), ncol = ncol(out))
+  border_matrix <- matrix(NA, nrow = nrow(out), ncol = ncol(out))
+  border_lwd_matrix <- matrix(0, nrow = nrow(out), ncol = ncol(out))
+
+  capacity <- route$run$boat_capacity[[1]]
+  if (!is.null(capacity) && length(capacity) > 0L && !is.na(capacity)) {
+    over_capacity <- tbl$catch_amount > capacity
+    if (any(over_capacity)) {
+      tonnage_col <- which(names(out) == "t")
+      border_matrix[seq_len(nrow(tbl))[over_capacity], tonnage_col] <- "#d62728"
+      border_lwd_matrix[seq_len(nrow(tbl))[over_capacity], tonnage_col] <- 2
+    }
+  }
+
+  if ("moved" %in% names(tbl)) {
+    moved_rows <- seq_len(nrow(tbl))[tbl$moved != 0L]
+    if (length(moved_rows) > 0L) {
+      attr(out, "row_outlines") <- moved_rows
+    }
+  }
+
+  list(
+    data = out,
+    fills = fill_matrix,
+    borders = border_matrix,
+    border_lwd = border_lwd_matrix
+  )
 }
 
 add_ports_and_vessels <- function(p, ports = NULL, vessels = NULL) {
@@ -224,7 +357,8 @@ add_ports_and_vessels <- function(p, ports = NULL, vessels = NULL) {
       ggplot2::scale_fill_manual(
         name = NULL,
         values = c(Ports = "#D62728", Boats = "#FFD24A"),
-        drop = FALSE
+        drop = FALSE,
+        guide = "none"
       )
   }
 
@@ -233,10 +367,11 @@ add_ports_and_vessels <- function(p, ports = NULL, vessels = NULL) {
 
 plot_country_or_route <- function(country, route = NULL, ports = NULL, vessels = NULL,
                                   table_corner = "upper_right", palette = NULL,
-                                  title = NULL, show_degree_axes = FALSE,
+                                  title = NULL, subtitle = NULL, show_degree_axes = FALSE,
                                   legend_position = NULL,
                                   legend_justification = NULL,
-                                  bounds_override = NULL) {
+                                  bounds_override = NULL,
+                                  moved_by_segment = NULL) {
   has_route <- !is.null(route) && nrow(route$route_path) > 0L
   if (is.null(legend_position)) legend_position <- if (has_route) "right" else "bottom"
   if (is.null(legend_justification)) legend_justification <- "center"
@@ -272,7 +407,7 @@ plot_country_or_route <- function(country, route = NULL, ports = NULL, vessels =
     if (is.null(palette)) palette <- make_segment_palette(n_seg)
     route$route_path$segment_f <- factor(route$route_path$segment, levels = seq_len(n_seg))
     route$station_lines$segment_f <- factor(route$station_lines$segment, levels = seq_len(n_seg))
-    table <- segment_summary_table(route, palette)
+    table <- segment_summary_table(route, palette, moved_by_segment = moved_by_segment)
 
     p <- p +
       ggplot2::geom_path(
@@ -303,31 +438,42 @@ plot_country_or_route <- function(country, route = NULL, ports = NULL, vessels =
   }
 
   p <- add_ports_and_vessels(p, ports, vessels)
+  marker_fill <- c(Ports = "#D62728", Boats = "#FFD24A")
+  guide_list <- list(
+    shape = ggplot2::guide_legend(
+      order = 1,
+      override.aes = list(size = 3.2, fill = unname(marker_fill))
+    )
+  )
+  if (!has_route) {
+    guide_list$color <- ggplot2::guide_colorbar(
+      order = 2,
+      title.position = "left",
+      title.vjust = 0.5,
+      barwidth = grid::unit(52, "pt"),
+      barheight = grid::unit(6, "pt")
+    )
+  }
   p <- p +
-    ggpp::geom_table(
+    geom_gsp_table(
       data = data.frame(lon = pos$x, lat = pos$y, label = I(list(table$data))),
       ggplot2::aes(x = lon, y = lat, label = label),
       hjust = pos$hjust,
       vjust = pos$vjust,
-      table.theme = table_theme(table$fills, base_size = if (has_route) 8.5 else 11)
+      table.theme = table_theme(
+        table$fills,
+        border_matrix = table$borders,
+        border_lwd_matrix = table$border_lwd,
+        base_size = if (has_route) 8.5 else 11
+      )
     ) +
     fixed_map_coord(bounds) +
-    ggplot2::labs(title = title, x = NULL, y = NULL) +
+    ggplot2::labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
     gsp_map_theme(
       legend_position = legend_position,
       legend_justification = legend_justification
     ) +
-    ggplot2::guides(
-      shape = ggplot2::guide_legend(order = 1, override.aes = list(size = 3.2)),
-      fill = ggplot2::guide_legend(order = 1, override.aes = list(size = 3.2)),
-      color = ggplot2::guide_colorbar(
-        order = 2,
-        title.position = "left",
-        title.vjust = 0.5,
-        barwidth = grid::unit(52, "pt"),
-        barheight = grid::unit(6, "pt")
-      )
-    )
+    do.call(ggplot2::guides, guide_list)
 
   if (show_degree_axes) {
     p + degree_map_axes()
@@ -376,7 +522,7 @@ plot_survey_waypoints <- function(country, waypoints, ports = NULL,
         inherit.aes = FALSE
       ) +
       ggplot2::scale_shape_manual(name = NULL, values = c(Ports = 22)) +
-      ggplot2::scale_fill_manual(name = NULL, values = c(Ports = "#D62728"))
+      ggplot2::scale_fill_manual(name = NULL, values = c(Ports = "#D62728"), guide = "none")
   }
 
   p <- p +
@@ -384,8 +530,7 @@ plot_survey_waypoints <- function(country, waypoints, ports = NULL,
     ggplot2::labs(title = title, x = NULL, y = NULL) +
     gsp_map_theme(legend_position = "bottom", legend_justification = "center") +
     ggplot2::guides(
-      shape = ggplot2::guide_legend(order = 1, override.aes = list(size = 3.2)),
-      fill = ggplot2::guide_legend(order = 1, override.aes = list(size = 3.2)),
+      shape = ggplot2::guide_legend(order = 1, override.aes = list(size = 3.2, fill = "#D62728")),
       color = ggplot2::guide_legend(order = 2, override.aes = list(size = 2.3, alpha = 1))
     )
 

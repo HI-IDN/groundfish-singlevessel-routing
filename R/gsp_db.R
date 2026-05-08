@@ -90,6 +90,7 @@ read_vessels <- function(con, boat_ids = NULL) {
     SELECT
       b.id AS boat_id,
       b.name,
+      b.capacity,
       b.location_id,
       l.lon,
       l.lat
@@ -133,8 +134,11 @@ read_solution_runs <- function(con) {
       parent_run_id,
       is_final,
       n_segments,
+      feasible,
       boat_id,
       boat_name,
+      NULL AS boat_capacity,
+      runtime_seconds,
       source_json
     FROM solution.runs
     ORDER BY method, phase, run_id
@@ -144,18 +148,22 @@ read_solution_runs <- function(con) {
 read_route_run <- function(con, run_id) {
   run <- db_read(con, "
     SELECT
-      run_id,
-      method,
-      phase,
-      solution_key,
-      parent_run_id,
-      is_final,
-      n_segments,
-      boat_id,
-      boat_name,
-      source_json
+      runs.run_id,
+      runs.method,
+      runs.phase,
+      runs.solution_key,
+      runs.parent_run_id,
+      runs.is_final,
+      runs.n_segments,
+      runs.feasible,
+      runs.boat_id,
+      runs.boat_name,
+      boats.capacity AS boat_capacity,
+      runs.runtime_seconds,
+      runs.source_json
     FROM solution.runs
-    WHERE run_id = ?
+    LEFT JOIN boats ON boats.id = runs.boat_id
+    WHERE runs.run_id = ?
   ", list(run_id))
 
   if (nrow(run) != 1L) {

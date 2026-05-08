@@ -211,6 +211,7 @@ static int create_schema(sqlite3 *db) {
         " l2seg_timeout_seconds INTEGER,"
         " timeout_seconds INTEGER,"
         " n_segments INTEGER,"
+        " feasible INTEGER,"
         " boat_id INTEGER,"
         " boat_name TEXT,"
         " runtime_seconds REAL,"
@@ -323,13 +324,13 @@ static int bind_text_or_null(sqlite3_stmt *stmt, int idx, const char *s) {
 
 static int insert_run(sqlite3 *db, const char *run_id, const char *method, const char *phase,
                       const char *solution_key, const char *parent_run_id, int is_final,
-                      int l1seg, int l2seg, int timeout, int n_segments,
+                      int l1seg, int l2seg, int timeout, int n_segments, int feasible,
                       int boat_id, const char *boat_name, const char *source_json,
                       double runtime_seconds, const char *created_at) {
     const char *sql =
         "INSERT INTO runs(run_id,method,phase,solution_key,parent_run_id,is_final,"
         "l1seg_timeout_seconds,l2seg_timeout_seconds,timeout_seconds,n_segments,"
-        "boat_id,boat_name,runtime_seconds,source_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+        "feasible,boat_id,boat_name,runtime_seconds,source_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     SQL_CHECK(db, rc, "prepare insert_run");
@@ -343,11 +344,12 @@ static int insert_run(sqlite3 *db, const char *run_id, const char *method, const
     l2seg >= 0 ? sqlite3_bind_int(stmt, 8, l2seg) : sqlite3_bind_null(stmt, 8);
     timeout >= 0 ? sqlite3_bind_int(stmt, 9, timeout) : sqlite3_bind_null(stmt, 9);
     sqlite3_bind_int(stmt, 10, n_segments);
-    boat_id >= 0 ? sqlite3_bind_int(stmt, 11, boat_id) : sqlite3_bind_null(stmt, 11);
-    bind_text_or_null(stmt, 12, boat_name);
-    runtime_seconds >= 0.0 ? sqlite3_bind_double(stmt, 13, runtime_seconds) : sqlite3_bind_null(stmt, 13);
-    sqlite3_bind_text(stmt, 14, source_json, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 15, created_at, -1, SQLITE_TRANSIENT);
+    feasible >= 0 ? sqlite3_bind_int(stmt, 11, feasible) : sqlite3_bind_null(stmt, 11);
+    boat_id >= 0 ? sqlite3_bind_int(stmt, 12, boat_id) : sqlite3_bind_null(stmt, 12);
+    bind_text_or_null(stmt, 13, boat_name);
+    runtime_seconds >= 0.0 ? sqlite3_bind_double(stmt, 14, runtime_seconds) : sqlite3_bind_null(stmt, 14);
+    sqlite3_bind_text(stmt, 15, source_json, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 16, created_at, -1, SQLITE_TRANSIENT);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     SQL_CHECK(db, rc, "insert_run");
@@ -613,9 +615,10 @@ static int ingest_solution_file(sqlite3 *db, const char *path, const char *creat
         make_refinement_run_id(refinement_run_id, sizeof(refinement_run_id), method, l2seg);
         make_parent_id(parent_id, sizeof(parent_id), method, phase, l2seg, solution_key, prev_run_id);
         int nseg = solution_segment_count(db, solution_json);
+        int feasible = scalar_int(db, solution_json, "$.feasible", -1);
         if (!insert_run(db, run_id, method, phase, solution_key, parent_id[0] ? parent_id : NULL,
                         final && strcmp(solution_key, final) == 0, l1seg, l2seg, timeout,
-                        nseg, boat_id, boat_name, path, runtime_seconds, created_at)) goto fail_stmt;
+                        nseg, feasible, boat_id, boat_name, path, runtime_seconds, created_at)) goto fail_stmt;
         if (!insert_distance(db, run_id, solution_json)) goto fail_stmt;
         if (!insert_location_segments(db, run_id, solution_json, boat_location_id)) goto fail_stmt;
         if (!insert_station_segments(db, run_id, solution_json)) goto fail_stmt;
@@ -670,8 +673,9 @@ static int ingest_multivessel(sqlite3 *db, const char *path, const char *created
             char *boat_name = scalar_text(db, boat_json, "$.metadata.boat_name");
             char run_id[256];
             snprintf(run_id, sizeof(run_id), "survey:boat=%d:%s", boat_id, final);
+            int feasible = scalar_int(db, solution_json, "$.feasible", -1);
             if (!insert_run(db, run_id, "survey", "survey", final, NULL, 1, -1, -1, -1,
-                            solution_segment_count(db, solution_json), boat_id, boat_name, path, -1.0, created_at) ||
+                            solution_segment_count(db, solution_json), feasible, boat_id, boat_name, path, -1.0, created_at) ||
                 !insert_distance(db, run_id, solution_json) ||
                 !insert_location_segments(db, run_id, solution_json, boat_location_id) ||
                 !insert_station_segments(db, run_id, solution_json)) {
