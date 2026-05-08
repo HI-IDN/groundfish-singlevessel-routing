@@ -123,10 +123,12 @@ The database has three main groups:
 - Generic MIP facts: `mip_solves`. This table is deliberately run-agnostic and
   is meant for runtime/gap/model-size summaries by `phase_code` and
   `segment_model`.
-- Refinement details: `refinement_passes`, `refinement_solve_context`, and
-  `refinement_station_mutations`. These keep pass-level identity,
-  boundary/candidate context, and moved station IDs tied to a grouped refinement
-  run plus pass number.
+- Refinement details: `refinement_passes`, `refinement_solve_context`,
+  `refinement_station_mutations`, `refinement_station_moves`,
+  `refinement_unique_station_moves`, and `refinement_summary`. These keep
+  pass-level identity, boundary/candidate context, moved station IDs, per-pass
+  and net-unique station moves, and a per-refinement-run summary — all tied to a
+  grouped refinement run plus pass number.
 
 `mip_solves` contains `phase_code`, `segment_model`, `station_count`,
 `node_count`, `model_variable_count`, `model_constraint_count`,
@@ -143,6 +145,12 @@ remains in `runs.run_id`; in `refinement_passes` it is represented as
 `run_id = ci:refinement:l2seg=10`, `pass_number = 1`, and
 `solution_run_id = ci:refinement:l2seg=10:pass1`.
 
+`refinement_station_moves` records every per-pass station segment change (one
+row per station that moved per pass). `refinement_unique_station_moves`
+collapses all passes: one row per station that ended in a different segment than
+it started in. `refinement_summary` aggregates totals (cumulative moves and
+unique net-moved stations) per refinement run.
+
 ```mermaid
 erDiagram
     RUNS {
@@ -156,8 +164,10 @@ erDiagram
         INTEGER l2seg_timeout_seconds
         INTEGER timeout_seconds
         INTEGER n_segments
+        INTEGER feasible
         INTEGER boat_id
         TEXT boat_name
+        REAL runtime_seconds
         TEXT source_json
         TEXT created_at
     }
@@ -197,9 +207,9 @@ erDiagram
     }
 
     REFINEMENT_PASSES {
-        TEXT run_id
+        TEXT run_id PK
+        INTEGER pass_number PK
         TEXT solution_run_id FK
-        INTEGER pass_number
         INTEGER changed
         INTEGER stations_moved
         INTEGER boundary_attempts
@@ -229,6 +239,29 @@ erDiagram
         INTEGER station_id
     }
 
+    REFINEMENT_STATION_MOVES {
+        TEXT run_id FK
+        INTEGER pass_number FK
+        INTEGER station_id
+        INTEGER from_segment
+        INTEGER to_segment
+    }
+
+    REFINEMENT_UNIQUE_STATION_MOVES {
+        TEXT run_id
+        INTEGER station_id
+        INTEGER initial_segment
+        INTEGER final_segment
+    }
+
+    REFINEMENT_SUMMARY {
+        TEXT run_id PK
+        TEXT init_run_id
+        TEXT final_run_id
+        INTEGER moved_stations
+        INTEGER unique_moved_stations
+    }
+
     RUNS ||--o{ RUNS : "parent_run_id"
     RUNS ||--o{ LOCATION_SEGMENTS : "run_id"
     RUNS ||--o{ STATION_SEGMENTS : "run_id"
@@ -236,4 +269,7 @@ erDiagram
     RUNS ||--o{ REFINEMENT_PASSES : "solution_run_id"
     REFINEMENT_PASSES ||--o{ REFINEMENT_SOLVE_CONTEXT : "run_id, pass_number"
     REFINEMENT_PASSES ||--o{ REFINEMENT_STATION_MUTATIONS : "run_id, pass_number"
+    REFINEMENT_PASSES ||--o{ REFINEMENT_STATION_MOVES : "run_id, pass_number"
+    REFINEMENT_PASSES ||--o| REFINEMENT_UNIQUE_STATION_MOVES : "run_id"
+    REFINEMENT_PASSES ||--o| REFINEMENT_SUMMARY : "run_id"
 ```

@@ -289,6 +289,29 @@ static int create_schema(sqlite3 *db) {
         " PRIMARY KEY(run_id,pass_number,segment,sequence),"
         " FOREIGN KEY(run_id,pass_number) REFERENCES refinement_passes(run_id,pass_number) ON DELETE CASCADE"
         ");"
+        "CREATE TABLE refinement_station_moves ("
+        " run_id TEXT NOT NULL,"
+        " pass_number INTEGER NOT NULL,"
+        " station_id INTEGER NOT NULL,"
+        " from_segment INTEGER NOT NULL,"
+        " to_segment INTEGER NOT NULL,"
+        " PRIMARY KEY(run_id,pass_number,station_id),"
+        " FOREIGN KEY(run_id,pass_number) REFERENCES refinement_passes(run_id,pass_number) ON DELETE CASCADE"
+        ");"
+        "CREATE TABLE refinement_unique_station_moves ("
+        " run_id TEXT NOT NULL,"
+        " station_id INTEGER NOT NULL,"
+        " initial_segment INTEGER NOT NULL,"
+        " final_segment INTEGER NOT NULL,"
+        " PRIMARY KEY(run_id,station_id)"
+        ");"
+        "CREATE TABLE refinement_summary ("
+        " run_id TEXT PRIMARY KEY,"
+        " init_run_id TEXT NOT NULL,"
+        " final_run_id TEXT NOT NULL,"
+        " moved_stations INTEGER NOT NULL,"
+        " unique_moved_stations INTEGER NOT NULL"
+        ");"
         "CREATE INDEX idx_runs_method_phase ON runs(method,phase);"
         "CREATE INDEX idx_runs_parent ON runs(parent_run_id);"
         "CREATE INDEX idx_location_segments_run ON location_segments(run_id,segment,sequence);"
@@ -297,7 +320,9 @@ static int create_schema(sqlite3 *db) {
         "CREATE INDEX idx_mip_solves_kind ON mip_solves(phase_code,segment_model);"
         "CREATE INDEX idx_refinement_passes_solution ON refinement_passes(solution_run_id);"
         "CREATE INDEX idx_refinement_solve_context_run ON refinement_solve_context(run_id,pass_number);"
-        "CREATE INDEX idx_refinement_station_mutations_run ON refinement_station_mutations(run_id,pass_number,segment);");
+        "CREATE INDEX idx_refinement_station_mutations_run ON refinement_station_mutations(run_id,pass_number,segment);"
+        "CREATE INDEX idx_refinement_station_moves_run ON refinement_station_moves(run_id,pass_number,to_segment);"
+        "CREATE INDEX idx_refinement_unique_station_moves_run ON refinement_unique_station_moves(run_id,final_segment);");
 }
 
 static int fix_lineage(sqlite3 *db) {
@@ -316,6 +341,42 @@ static int fix_lineage(sqlite3 *db) {
         "  LIMIT 1"
         ") "
         "WHERE r.phase = 'refinement' AND r.solution_key = 'init';");
+}
+
+static int populate_refinement_move_tables(sqlite3 *db) {
+    return exec_sql(db,
+        "INSERT INTO refinement_station_moves(run_id,pass_number,station_id,from_segment,to_segment) "
+        "SELECT p.run_id, p.pass_number, curr.station_id, prev.segment, curr.segment "
+        "FROM refinement_passes p "
+        "JOIN runs r ON r.run_id = p.solution_run_id "
+        "JOIN station_segments curr ON curr.run_id = p.solution_run_id "
+        "JOIN station_segments prev ON prev.run_id = r.parent_run_id AND prev.station_id = curr.station_id "
+        "WHERE p.pass_number > 0 "
+        "AND r.parent_run_id IS NOT NULL "
+        "AND curr.segment <> prev.segment;"
+        "INSERT INTO refinement_unique_station_moves(run_id,station_id,initial_segment,final_segment) "
+        "WITH final_pass AS ("
+        "  SELECT p.run_id, init.solution_run_id AS init_run_id, p.solution_run_id AS final_run_id "
+        "  FROM refinement_passes p "
+        "  JOIN refinement_passes init ON init.run_id = p.run_id AND init.pass_number = 0 "
+        "  WHERE p.pass_number = (SELECT MAX(p2.pass_number) FROM refinement_passes p2 WHERE p2.run_id = p.run_id)"
+        ") "
+        "SELECT fp.run_id, final.station_id, init.segment, final.segment "
+        "FROM final_pass fp "
+        "JOIN station_segments init ON init.run_id = fp.init_run_id "
+        "JOIN station_segments final ON final.run_id = fp.final_run_id AND final.station_id = init.station_id "
+        "WHERE final.segment <> init.segment;"
+        "INSERT INTO refinement_summary(run_id,init_run_id,final_run_id,moved_stations,unique_moved_stations) "
+        "WITH final_pass AS ("
+        "  SELECT p.run_id, init.solution_run_id AS init_run_id, p.solution_run_id AS final_run_id "
+        "  FROM refinement_passes p "
+        "  JOIN refinement_passes init ON init.run_id = p.run_id AND init.pass_number = 0 "
+        "  WHERE p.pass_number = (SELECT MAX(p2.pass_number) FROM refinement_passes p2 WHERE p2.run_id = p.run_id)"
+        ") "
+        "SELECT fp.run_id, fp.init_run_id, fp.final_run_id, "
+        "COALESCE((SELECT SUM(p.stations_moved) FROM refinement_passes p WHERE p.run_id = fp.run_id AND p.pass_number > 0), 0), "
+        "COALESCE((SELECT COUNT(*) FROM refinement_unique_station_moves u WHERE u.run_id = fp.run_id), 0) "
+        "FROM final_pass fp;");
 }
 
 static int bind_text_or_null(sqlite3_stmt *stmt, int idx, const char *s) {
@@ -768,7 +829,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (!create_schema(db) || !exec_sql(db, "BEGIN") || !walk_sol(db, sol_dir, created_at) ||
-        !fix_lineage(db) || !exec_sql(db, "COMMIT")) {
+        !fix_lineage(db) || !populate_refinement_move_tables(db) || !exec_sql(db, "COMMIT")) {
         exec_sql(db, "ROLLBACK");
         sqlite3_close(db);
         return 1;
