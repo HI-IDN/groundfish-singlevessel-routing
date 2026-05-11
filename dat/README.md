@@ -116,13 +116,13 @@ It intentionally does not duplicate geography. Route order lives in
 `solution.db.location_segments.location_id` to `gsp.db.locations.id`.
 `location_segments.point_type` uses `BOAT`, `PORT`, `WAYP`, and `STAT`.
 
-The database has three main groups:
+The database has four useful parts:
 
 - Route state tables: `runs`, `location_segments`, `station_segments`, and
   `distance`. These keep solution lineage and the ordered route/station content.
-- Generic MIP facts: `mip_solves`. This table is deliberately run-agnostic and
-  is meant for runtime/gap/model-size summaries by `phase_code` and
-  `segment_model`.
+- Compatibility view: `route_locations` is a view over `location_segments`.
+- Generic MIP facts: `mip_solves`. This table is run-agnostic and is meant for
+  runtime/gap/model-size summaries by `phase_code` and `segment_model`.
 - Refinement details: `refinement_passes`, `refinement_solve_context`,
   `refinement_station_mutations`, `refinement_station_moves`,
   `refinement_unique_station_moves`, and `refinement_summary`. These keep
@@ -153,6 +153,20 @@ unique net-moved stations) per refinement run.
 
 ```mermaid
 erDiagram
+    GSP_LOCATIONS {
+        INTEGER id PK
+        REAL lat
+        REAL lon
+        TEXT external "table in gsp.db"
+    }
+
+    GSP_STATIONS {
+        INTEGER id PK
+        INTEGER start_location_id FK
+        INTEGER end_location_id FK
+        TEXT external "table in gsp.db"
+    }
+
     RUNS {
         TEXT run_id PK
         TEXT method
@@ -173,7 +187,15 @@ erDiagram
     }
 
     LOCATION_SEGMENTS {
-        TEXT run_id FK
+        TEXT run_id PK "FK runs.run_id"
+        INTEGER segment PK
+        INTEGER sequence PK
+        INTEGER location_id "joins gsp.locations.id"
+        TEXT point_type
+    }
+
+    ROUTE_LOCATIONS_VIEW {
+        TEXT run_id
         INTEGER segment
         INTEGER sequence
         INTEGER location_id
@@ -181,11 +203,11 @@ erDiagram
     }
 
     STATION_SEGMENTS {
-        TEXT run_id FK
-        INTEGER segment
-        INTEGER sequence
+        TEXT run_id PK "FK runs.run_id"
+        INTEGER segment PK
+        INTEGER sequence PK
         INTEGER signed_station_id
-        INTEGER station_id
+        INTEGER station_id "joins gsp.stations.id"
     }
 
     DISTANCE {
@@ -207,9 +229,9 @@ erDiagram
     }
 
     REFINEMENT_PASSES {
-        TEXT run_id PK
+        TEXT run_id PK "grouped refinement id"
         INTEGER pass_number PK
-        TEXT solution_run_id FK
+        TEXT solution_run_id FK "concrete runs.run_id"
         INTEGER changed
         INTEGER stations_moved
         INTEGER boundary_attempts
@@ -219,9 +241,9 @@ erDiagram
     }
 
     REFINEMENT_SOLVE_CONTEXT {
-        TEXT run_id FK
-        INTEGER pass_number FK
-        INTEGER solve_idx
+        TEXT run_id PK "FK refinement_passes.run_id"
+        INTEGER pass_number PK "FK refinement_passes.pass_number"
+        INTEGER solve_idx PK
         TEXT segment_model
         REAL timeout_seconds
         INTEGER boundary_index
@@ -231,25 +253,25 @@ erDiagram
     }
 
     REFINEMENT_STATION_MUTATIONS {
-        TEXT run_id FK
-        INTEGER pass_number FK
-        INTEGER segment
-        INTEGER sequence
+        TEXT run_id PK "FK refinement_passes.run_id"
+        INTEGER pass_number PK "FK refinement_passes.pass_number"
+        INTEGER segment PK
+        INTEGER sequence PK
         INTEGER signed_station_id
-        INTEGER station_id
+        INTEGER station_id "joins gsp.stations.id"
     }
 
     REFINEMENT_STATION_MOVES {
-        TEXT run_id FK
-        INTEGER pass_number FK
-        INTEGER station_id
+        TEXT run_id PK "FK refinement_passes.run_id"
+        INTEGER pass_number PK "FK refinement_passes.pass_number"
+        INTEGER station_id PK
         INTEGER from_segment
         INTEGER to_segment
     }
 
     REFINEMENT_UNIQUE_STATION_MOVES {
-        TEXT run_id
-        INTEGER station_id
+        TEXT run_id PK
+        INTEGER station_id PK
         INTEGER initial_segment
         INTEGER final_segment
     }
@@ -264,12 +286,24 @@ erDiagram
 
     RUNS ||--o{ RUNS : "parent_run_id"
     RUNS ||--o{ LOCATION_SEGMENTS : "run_id"
+    LOCATION_SEGMENTS ||--|| ROUTE_LOCATIONS_VIEW : "exposed as"
     RUNS ||--o{ STATION_SEGMENTS : "run_id"
     RUNS ||--o{ DISTANCE : "run_id"
-    RUNS ||--o{ REFINEMENT_PASSES : "solution_run_id"
+    RUNS ||--o{ REFINEMENT_PASSES : "solution_run_id is concrete pass state"
+    GSP_LOCATIONS ||--o{ LOCATION_SEGMENTS : "location_id"
+    GSP_STATIONS ||--o{ STATION_SEGMENTS : "station_id"
+    GSP_STATIONS ||--o{ REFINEMENT_STATION_MUTATIONS : "station_id"
+    GSP_STATIONS ||--o{ REFINEMENT_STATION_MOVES : "station_id"
+    GSP_STATIONS ||--o{ REFINEMENT_UNIQUE_STATION_MOVES : "station_id"
     REFINEMENT_PASSES ||--o{ REFINEMENT_SOLVE_CONTEXT : "run_id, pass_number"
     REFINEMENT_PASSES ||--o{ REFINEMENT_STATION_MUTATIONS : "run_id, pass_number"
     REFINEMENT_PASSES ||--o{ REFINEMENT_STATION_MOVES : "run_id, pass_number"
-    REFINEMENT_PASSES ||--o| REFINEMENT_UNIQUE_STATION_MOVES : "run_id"
-    REFINEMENT_PASSES ||--o| REFINEMENT_SUMMARY : "run_id"
+    REFINEMENT_PASSES ||--o{ REFINEMENT_UNIQUE_STATION_MOVES : "same grouped run_id"
+    REFINEMENT_PASSES ||--o| REFINEMENT_SUMMARY : "same grouped run_id"
 ```
+
+`GSP_LOCATIONS` and `GSP_STATIONS` are shown to make the plotting joins clear;
+they live in `gsp.db`, not in `solution.db`. SQLite does not enforce foreign
+keys across the attached databases, so those edges are logical join paths. The
+`mip_solves` table is intentionally not linked to `runs`: it stores aggregate
+solve observations by phase/model family, not per-run identity.
