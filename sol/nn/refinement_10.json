@@ -1,7 +1,7 @@
 {
   "metadata": {
     "solver_version": "refinement_1.0",
-    "timestamp": "1778096519",
+    "timestamp": "1778162009",
     "mode": "refinement",
     "strategy": "nn",
     "boat_id": 2,
@@ -108,8 +108,8 @@
       "fallback_changes": 0,
       "accepted_capacity_solves": 0,
       "total_capacity_solves": 13,
-      "mip_solves": 11,
-      "pass_runtime_seconds": 290.148171,
+      "mip_solves": 14,
+      "pass_runtime_seconds": 300.166579,
       "tour_segments_station_mutation_ids": [
         [],
         [],
@@ -180,16 +180,16 @@
     "1seg": {
       "L": 0.000000,
       "model": "endpaired_tsp",
-      "count": 8,
+      "count": 10,
       "solve_detail_tuple": ["pass_index", "boundary_index", "candidate_split_index", "segment_index", "station_count", "node_count", "moved_stations", "mip_size", "runtime_seconds", "gap_percent"],
-      "values": [[1, 1, 1, 1, 35, 37, 38, [5184, 180], 0.866000, 0.000000], [1, 1, 1, 2, 45, 47, 38, [8464, 230], 4.559000, 0.000000], [1, 1, 1, 7, 55, 57, 1, [12544, 280], 4.149000, 0.000000], [1, 2, 0, 2, 19, 21, 26, [1600, 100], 0.339000, 0.000000], [1, 2, 0, 3, 34, 36, 26, [4900, 175], 1.164000, 0.000000], [1, 13, 1, 13, 9, 11, 9, [400, 50], 0.031000, 0.000000], [1, 13, 1, 1, 40, 42, 9, [6724, 205], 1.958000, 0.000000], [1, 13, 1, 7, 55, 57, 1, [12544, 280], 9.514000, 0.000000]]
+      "values": [[1, 1, 1, 1, 35, 37, 38, [5184, 180], 1.839000, 0.000000], [1, 1, 1, 2, 45, 47, 38, [8464, 230], 9.916000, 0.000000], [1, 1, 1, 7, 55, 57, 1, [12544, 280], 5.229000, 0.000000], [1, 2, 0, 2, 19, 21, 26, [1600, 100], 0.451000, 0.000000], [1, 2, 0, 3, 34, 36, 26, [4900, 175], 1.907000, 0.000000], [1, 4, 0, 4, 30, 32, 26, [3844, 155], 1.811000, 0.000000], [1, 4, 0, 5, 19, 21, 26, [1600, 100], 0.179000, 0.000000], [1, 13, 1, 13, 9, 11, 9, [400, 50], 0.054000, 0.000000], [1, 13, 1, 1, 40, 42, 9, [6724, 205], 2.733000, 0.000000], [1, 13, 1, 7, 55, 57, 1, [12544, 280], 6.779000, 0.000000]]
     },
     "2seg": {
       "L": 10.000000,
       "model": "fixedport_capacity",
-      "count": 3,
+      "count": 4,
       "solve_detail_tuple": ["pass_index", "boundary_index", "candidate_split_index", "segment_index", "station_count", "node_count", "moved_stations", "mip_size", "runtime_seconds", "gap_percent"],
-      "values": [[1, 1, 1, 0, 80, 83, 76, [80688, 410], 10.024000, 93.522651], [1, 2, 0, 0, 53, 56, 52, [36300, 275], 10.013000, 100.000000], [1, 13, 1, 0, 49, 52, 18, [31212, 255], 10.006000, 100.000000]]
+      "values": [[1, 1, 1, 0, 80, 83, 76, [80688, 410], 10.042000, 100.000000], [1, 2, 0, 0, 53, 56, 52, [36300, 275], 10.024000, 100.000000], [1, 4, 0, 0, 49, 52, 52, [31212, 255], 10.125000, 43.322057], [1, 13, 1, 0, 49, 52, 18, [31212, 255], 10.010000, 100.000000]]
     }
   },
   "summary": {
@@ -208,10 +208,10 @@
       }
     },
     "runtime_seconds": {
-      "preprocessing": 1.291663,
-      "solution": [0.000000, 290.148171],
-      "postprocessing": 0.000268,
-      "grandtotal": 291.440102
+      "preprocessing": 0.782911,
+      "solution": [0.000000, 300.166579],
+      "postprocessing": 0.000241,
+      "grandtotal": 300.949730
     },
     "sweep": {
       "pass_count": 2,
@@ -219,18 +219,18 @@
       "stations_moved_per_pass": {"count": 1, "mean": 0.000000, "median": 0.000000, "max": 0},
       "accepted_capacity_solves": 0,
       "total_capacity_solves": 13,
-      "total_mip_solves": 11,
+      "total_mip_solves": 14,
       "total_boundary_changes": 0,
       "total_fallback_changes": 0
     },
     "mip": {
-      "solves": 11,
+      "solves": 14,
       "runtime_seconds": {
-        "mean": 4.783909,
-        "max": 10.024000
+        "mean": 5.078500,
+        "max": 10.125000
       },
       "gap_percent": {
-        "mean": 26.683877,
+        "mean": 24.523004,
         "max": 100.000000
       }
     }
