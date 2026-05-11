@@ -190,9 +190,34 @@ add_derived <- function(df) {
     FUN = function(x) c(NA_real_, -diff(x))
   )
 
+  # Per-pass relative improvement: previous pass -> current pass.
+  # Used in the per-method pass table. Summary rows still use final-vs-initial.
+  df$pass_improvement_pct <- ave(
+    df$transit_nm, df$series,
+    FUN = function(x) {
+      prev <- c(NA_real_, head(x, -1L))
+      ifelse(is.na(prev) | prev == 0, NA_real_, 100 * (prev - x) / prev)
+    }
+  )
+
   df$boundary_change_rate <- ifelse(
     df$boundary_attempts > 0,
     df$boundary_changes / df$boundary_attempts,
+    NA_real_
+  )
+
+  # Used for line width in panels B/C.
+  df$accepted_mip_ratio <- ifelse(
+    df$mip_solve_count > 0,
+    df$boundary_changes / df$mip_solve_count,
+    NA_real_
+  )
+
+  # Used for line width in panels B/C.
+  # Interpret as accepted boundary moves per MIP solve in that pass.
+  df$accepted_mip_ratio <- ifelse(
+    df$mip_solve_count > 0,
+    df$boundary_changes / df$mip_solve_count,
     NA_real_
   )
 
@@ -224,22 +249,36 @@ empty_panel <- function(label, size = 10) {
 }
 
 plot_line_panel <- function(df, y, title, ylab, group_var, color_var,
-                            palette, linetype_var = NULL) {
+                            palette, linetype_var = NULL,
+                            show_shape_legends = TRUE) {
   aes_args <- list(
     x = quote(pass_number),
     y = as.name(y),
     color = as.name(color_var),
-    group = as.name(group_var)
+    group = as.name(group_var),
+    size = quote(stations_moved),
+    linewidth = quote(accepted_mip_ratio)
   )
-  if (!is.null(linetype_var)) aes_args$linetype <- as.name(linetype_var)
 
-  ggplot2::ggplot(df, do.call(ggplot2::aes, aes_args)) +
-    ggplot2::geom_line(linewidth = 0.85) +
-    ggplot2::geom_point(size = 1.5) +
+  # ggplot cannot draw non-solid linetypes when linewidth varies along a line.
+  # Therefore, when a linetype_var is requested, encode it as point shape instead.
+  if (!is.null(linetype_var)) aes_args$shape <- as.name(linetype_var)
+
+  p <- ggplot2::ggplot(df, do.call(ggplot2::aes, aes_args)) +
+    ggplot2::geom_line(na.rm = TRUE) +
+    ggplot2::geom_point(na.rm = TRUE) +
     ggplot2::scale_color_manual(values = palette) +
+    ggplot2::scale_size_continuous(name = "Stations moved", range = c(1.0, 3.2)) +
+    ggplot2::scale_linewidth_continuous(name = "Accepted / MIP", range = c(0.35, 1.25)) +
     ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
     ggplot2::labs(title = title, x = "Pass", y = ylab) +
-    no_legend_theme()
+    ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
+
+  if (!show_shape_legends) {
+    p <- p + ggplot2::guides(size = "none", linewidth = "none", shape = "none")
+  }
+
+  p
 }
 
 plot_box_panel <- function(df, x_var, y_var, fill_var, palette, title, ylab,
@@ -355,12 +394,19 @@ find_best_cells <- function(summary_df, col_names, tol_nm, tol_pct) {
   bold <- data.frame(row = integer(), col = integer(), colour = character())
 
   transit_col <- match("Transit", col_names)
-  dpct_col    <- match("\u0394%", col_names)
+  dnm_col     <- match("Δnm", col_names)
+  dpct_col    <- match("Δ%", col_names)
 
   if (!is.na(transit_col) && "final_transit" %in% names(summary_df)) {
     best_nm <- min(summary_df$final_transit, na.rm = TRUE)
     rows <- which(!is.na(summary_df$final_transit) & summary_df$final_transit <= best_nm + tol_nm)
     if (length(rows) > 0L) bold <- rbind(bold, data.frame(row = rows, col = transit_col, colour = NA_character_))
+  }
+
+  if (!is.na(dnm_col) && "delta_nm" %in% names(summary_df)) {
+    best_dnm <- max(summary_df$delta_nm, na.rm = TRUE)
+    rows <- which(!is.na(summary_df$delta_nm) & summary_df$delta_nm == best_dnm)
+    if (length(rows) > 0L) bold <- rbind(bold, data.frame(row = rows, col = dnm_col, colour = NA_character_))
   }
 
   if (!is.na(dpct_col) && "final_pct" %in% names(summary_df)) {
@@ -372,27 +418,26 @@ find_best_cells <- function(summary_df, col_names, tol_nm, tol_pct) {
   bold
 }
 
-find_table_best_cells <- function(tbl, col_names, colour = "red") {
+find_table_best_cells <- function(tbl, col_names, rows = seq_len(nrow(tbl)), colour = "red") {
   out <- data.frame(row = integer(), col = integer(), colour = character())
+  if (length(rows) == 0L) return(out)
 
-  transit_col <- match("Transit", col_names)
-  if (!is.na(transit_col)) {
-    transit <- suppressWarnings(as.numeric(tbl[[transit_col]]))
-    if (any(!is.na(transit))) {
-      rows <- which(!is.na(transit) & transit == min(transit, na.rm = TRUE))
-      out <- rbind(out, data.frame(row = rows, col = transit_col, colour = colour))
-    }
+  add_best <- function(col_label, prefer = c("min", "max")) {
+    prefer <- match.arg(prefer)
+    col <- match(col_label, col_names)
+    if (is.na(col)) return(data.frame(row = integer(), col = integer(), colour = character()))
+
+    vals <- suppressWarnings(as.numeric(sub("%", "", tbl[[col]][rows], fixed = TRUE)))
+    if (!any(!is.na(vals))) return(data.frame(row = integer(), col = integer(), colour = character()))
+
+    best <- if (prefer == "min") min(vals, na.rm = TRUE) else max(vals, na.rm = TRUE)
+    hit <- rows[which(!is.na(vals) & vals == best)]
+    data.frame(row = hit, col = col, colour = colour)
   }
 
-  dpct_col <- match("Δ%", col_names)
-  if (!is.na(dpct_col)) {
-    dpct <- suppressWarnings(as.numeric(sub("%", "", tbl[[dpct_col]], fixed = TRUE)))
-    if (any(!is.na(dpct))) {
-      rows <- which(!is.na(dpct) & dpct == max(dpct, na.rm = TRUE))
-      out <- rbind(out, data.frame(row = rows, col = dpct_col, colour = colour))
-    }
-  }
-
+  out <- rbind(out, add_best("Transit", "min"))
+  out <- rbind(out, add_best("Δnm", "max"))
+  out <- rbind(out, add_best("Δ%", "max"))
   out
 }
 
@@ -471,7 +516,7 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
         smov    = as.character(r$stations_moved),
         dnm     = if (is.na(r$pass_improvement_nm)) "—" else sprintf("%.0f", r$pass_improvement_nm),
         transit = if (is.na(r$transit_nm)) "—" else sprintf("%.1f", r$transit_nm),
-        dpct    = if (is.na(r$rel_improvement_pct)) "—" else sprintf("%.1f%%", r$rel_improvement_pct),
+        dpct    = if (is.na(r$pass_improvement_pct)) "—" else sprintf("%.1f%%", r$pass_improvement_pct),
         stringsAsFactors = FALSE
       )
       names(row_df) <- col_names
@@ -518,8 +563,8 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
     bold_cells <- rbind(bold_cells, best_cells)
   }
 
-  # Red bold = table-wide best values among all displayed rows.
-  bold_cells <- rbind(bold_cells, find_table_best_cells(tbl, col_names, colour = "red"))
+  # Red bold = best values among summary rows only.
+  bold_cells <- rbind(bold_cells, find_table_best_cells(tbl, col_names, rows = summary_rows, colour = "red"))
 
   make_table_plot(
     tbl, row_fills,
@@ -567,8 +612,8 @@ make_combined_table_panel <- function(df, keep_methods, palette, tol_nm, tol_pct
     }
   }
 
-  # Red bold = table-wide best values among all displayed rows.
-  bold_cells <- rbind(bold_cells, find_table_best_cells(tbl, col_names, colour = "red"))
+  # Red bold = best values across all summary rows.
+  bold_cells <- rbind(bold_cells, find_table_best_cells(tbl, col_names, rows = seq_len(nrow(tbl)), colour = "red"))
 
   sep_after <- integer()
   for (m in levels(summary$method_label)) {
@@ -602,11 +647,11 @@ make_common_panels <- function(df, mode, palette, tol_nm, tol_pct) {
 
     list(
       a = make_method_table_panel(df, levels_l2, palette, tol_nm, tol_pct),
-      b = plot_line_panel(df, "transit_nm", "B \u2014 Transit distance by sweep", "Transit (nm)",
-                          "series", "l2seg_label", palette),
+      b = plot_line_panel(df, "transit_nm", "B — Transit distance by sweep", "Transit (nm)",
+                          "series", "l2seg_label", palette, show_shape_legends = TRUE),
       c = plot_line_panel(df[!is.na(df$rel_improvement_pct), , drop = FALSE],
-                          "rel_improvement_pct", "C \u2014 Relative improvement by sweep", "Improvement (%)",
-                          "series", "l2seg_label", palette),
+                          "rel_improvement_pct", "C — Relative improvement by sweep", "Improvement (%)",
+                          "series", "l2seg_label", palette, show_shape_legends = FALSE),
       d = plot_box_panel(changed, "l2seg_label", "stations_moved", "l2seg_label", palette,
                          "D \u2014 Stations moved per pass", "Stations moved"),
       e = plot_box_panel(changed[changed$mip_solve_count > 0, , drop = FALSE],
@@ -625,11 +670,13 @@ make_common_panels <- function(df, mode, palette, tol_nm, tol_pct) {
 
     list(
       a = make_combined_table_panel(df, keep_methods, palette, tol_nm, tol_pct),
-      b = plot_line_panel(df, "transit_nm", "B \u2014 Transit distance by sweep", "Transit (nm)",
-                          "plot_series", "method_label", palette, linetype_var = "l2seg_label"),
+      b = plot_line_panel(df, "transit_nm", "B — Transit distance by sweep", "Transit (nm)",
+                          "plot_series", "method_label", palette,
+                          linetype_var = "l2seg_label", show_shape_legends = TRUE),
       c = plot_line_panel(df[!is.na(df$rel_improvement_pct), , drop = FALSE],
-                          "rel_improvement_pct", "C \u2014 Relative improvement by sweep", "Improvement (%)",
-                          "plot_series", "method_label", palette, linetype_var = "l2seg_label"),
+                          "rel_improvement_pct", "C — Relative improvement by sweep", "Improvement (%)",
+                          "plot_series", "method_label", palette,
+                          linetype_var = "l2seg_label", show_shape_legends = FALSE),
       d = plot_box_panel(changed, "method_label", "stations_moved", "method_label", palette,
                          "D \u2014 Stations moved per pass", "Stations moved"),
       e = plot_box_panel(changed[changed$mip_solve_count > 0, , drop = FALSE],
