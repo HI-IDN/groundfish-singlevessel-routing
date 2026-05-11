@@ -152,7 +152,6 @@ read_sweep_data <- function(con, methods = NULL, l2seg_filter = NULL) {
       rp.pass_number,
       rp.changed,
       COALESCE(rp.stations_moved, 0)   AS stations_moved,
-      COALESCE(rp.mip_solves, 0)       AS mip_solve_count,
       rp.runtime_seconds               AS pass_runtime,
       COALESCE(rp.boundary_attempts, 0) AS boundary_attempts,
       COALESCE(rp.boundary_changes,  0) AS boundary_changes,
@@ -207,17 +206,9 @@ add_derived <- function(df) {
   )
 
   # Used for line width in panels B/C.
-  df$accepted_mip_ratio <- ifelse(
-    df$mip_solve_count > 0,
-    df$boundary_changes / df$mip_solve_count,
-    NA_real_
-  )
-
-  # Used for line width in panels B/C.
-  # Interpret as accepted boundary moves per MIP solve in that pass.
-  df$accepted_mip_ratio <- ifelse(
-    df$mip_solve_count > 0,
-    df$boundary_changes / df$mip_solve_count,
+  df$boundary_ratio <- ifelse(
+    df$boundary_attempts > 0,
+    df$boundary_changes / df$boundary_attempts,
     NA_real_
   )
 
@@ -257,25 +248,29 @@ plot_line_panel <- function(df, y, title, ylab, group_var, color_var,
     color = as.name(color_var),
     group = as.name(group_var),
     size = quote(stations_moved),
-    linewidth = quote(accepted_mip_ratio)
+    linewidth = quote(boundary_ratio)
   )
 
-  # ggplot cannot draw non-solid linetypes when linewidth varies along a line.
-  # Therefore, when a linetype_var is requested, encode it as point shape instead.
-  if (!is.null(linetype_var)) aes_args$shape <- as.name(linetype_var)
-
+  # Linewidth varies along the line, so keep all lines solid.
   p <- ggplot2::ggplot(df, do.call(ggplot2::aes, aes_args)) +
     ggplot2::geom_line(na.rm = TRUE) +
     ggplot2::geom_point(na.rm = TRUE) +
     ggplot2::scale_color_manual(values = palette) +
     ggplot2::scale_size_continuous(name = "Stations moved", range = c(1.0, 3.2)) +
-    ggplot2::scale_linewidth_continuous(name = "Accepted / MIP", range = c(0.35, 1.25)) +
+    ggplot2::scale_linewidth_continuous(name = "Accepted / Attempts", range = c(0.35, 1.25)) +
     ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
     ggplot2::labs(title = title, x = "Pass", y = ylab) +
-    ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
+    ggplot2::guides(color="none")+
+    ggplot2::theme(
+      panel.grid.minor = ggplot2::element_blank(),
+      legend.position = "bottom",
+      legend.box = "horizontal"
+    )
 
   if (!show_shape_legends) {
-    p <- p + ggplot2::guides(size = "none", linewidth = "none", shape = "none")
+    p <- p + ggplot2::guides(size = "none")
+  } else {
+    p <- p + ggplot2::guides(linewidth = "none")
   }
 
   p
@@ -463,17 +458,92 @@ make_summary_rows <- function(df, group_vars) {
       data.frame(
         passes        = nrow(sub_pass),
         runtime_hr    = sum(sub_pass$pass_runtime, na.rm = TRUE) / 3600,
-        mip           = sum(sub_pass$mip_solve_count, na.rm = TRUE),
-        acc           = sum(sub_pass$boundary_changes, na.rm = TRUE),
+        b_try         = sum(sub_pass$boundary_attempts, na.rm = TRUE),
+        b_acc         = sum(sub_pass$boundary_changes, na.rm = TRUE),
         stations      = sum(sub_pass$stations_moved, na.rm = TRUE),
-        delta_nm      = sum(sub_pass$pass_improvement_nm, na.rm = TRUE),
+        stations_med  = if (nrow(sub_pass) == 0L) NA_real_ else stats::median(sub_pass$stations_moved, na.rm = TRUE),
+        stations_max  = if (nrow(sub_pass) == 0L) NA_real_ else max(sub_pass$stations_moved, na.rm = TRUE),
         final_transit = final$transit_nm,
+        delta_nm      = sum(sub_pass$pass_improvement_nm, na.rm = TRUE),
         final_pct     = final$rel_improvement_pct,
         stringsAsFactors = FALSE
       )
     )
   }
   do.call(rbind, rows)
+}
+
+# ---------------------------------------------------------------------------
+# LaTeX export helpers
+# ---------------------------------------------------------------------------
+
+latex_escape <- function(x) {
+  x <- as.character(x)
+  x <- gsub("\\\\", "\\\\textbackslash{}", x)
+  x <- gsub("&", "\\\\&", x, fixed = TRUE)
+  x <- gsub("%", "\\\\%", x, fixed = TRUE)
+  x <- gsub("_", "\\\\_", x, fixed = TRUE)
+  x <- gsub("#", "\\\\#", x, fixed = TRUE)
+  x
+}
+
+fmt_num <- function(x, digits = 1) {
+  ifelse(is.na(x), "--", sprintf(paste0("%.", digits, "f"), x))
+}
+
+make_combined_summary_table <- function(df, keep_methods, palette) {
+  summary <- make_summary_rows(df[df$method %in% keep_methods, , drop = FALSE], c("method", "l2seg_label"))
+  summary$method_label <- vapply(summary$method, label_method, character(1L))
+  summary$method_label <- factor(summary$method_label, levels = names(palette))
+  summary$l2seg_label <- factor(summary$l2seg_label, levels = l2seg_levels_in(df))
+  summary <- summary[order(summary$method_label, summary$l2seg_label), , drop = FALSE]
+
+  out <- data.frame(
+    Method      = as.character(summary$method_label),
+    L2seg       = as.character(summary$l2seg_label),
+    Passes      = summary$passes,
+    `Runtime (hr)` = fmt_num(summary$runtime_hr, 2),
+    Attempts         = summary$b_try,
+    Accepted         = summary$b_acc,
+    `S moved total`  = summary$stations,
+    `S moved median` = fmt_num(summary$stations_med, 0),
+    `S moved max`    = fmt_num(summary$stations_max, 0),
+    `Transit nm`     = fmt_num(summary$final_transit, 1),
+    `Delta nm`       = fmt_num(summary$delta_nm, 0),
+    `Delta pct`      = fmt_num(summary$final_pct, 1),
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+
+  list(tbl = out, summary = summary)
+}
+
+write_latex_table <- function(tbl, path,
+                              caption = "MH performance by initialization strategy.",
+                              label = "tab:results") {
+  align <- 'lrrr|rr|rrr|rrr'
+  header <- latex_escape(names(tbl))
+  rows <- apply(tbl, 1L, function(z) paste(latex_escape(z), collapse = " & "))
+
+  lines <- c(
+    "\\begin{table}[b]",
+    "\\centering",
+    sprintf("\\caption{%s}", caption),
+    sprintf("\\label{%s}", label),
+    sprintf("\\begin{tabular}{%s}", align),
+    "\\toprule",
+    paste(header, collapse = " & "),
+    "\\\\",
+    "\\midrule",
+    paste0(rows, " \\\\"),
+    "\\bottomrule",
+    "\\end{tabular}",
+    "\\end{table}"
+  )
+
+  dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
+  writeLines(lines, path, useBytes = TRUE)
+  invisible(path)
 }
 
 # ---------------------------------------------------------------------------
@@ -491,7 +561,7 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
   summary$l2seg_label <- factor(summary$l2seg_label, levels = level_order)
   summary <- summary[order(summary$l2seg_label), , drop = FALSE]
 
-  col_names <- c("L2seg", "#", "hr", "MIP", "Acc", "|SΔ|", "Δnm", "Transit", "Δ%")
+  col_names <- c("L2seg", "#", "hr", "Try", "Acc", "|SΔ|", "Δnm", "Transit", "Δ%")
 
   out_rows <- list()
   row_fills <- character()
@@ -511,12 +581,12 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
         l2seg   = lv,
         pass    = as.character(r$pass_number),
         rt      = if (is.na(r$pass_runtime)) "—" else sprintf("%.2f", r$pass_runtime / 3600),
-        mip     = as.character(r$mip_solve_count),
-        acc     = as.character(r$boundary_changes),
+        b_try     = as.character(r$boundary_attempts),
+        b_acc     = as.character(r$boundary_changes),
         smov    = as.character(r$stations_moved),
-        dnm     = if (is.na(r$pass_improvement_nm)) "—" else sprintf("%.0f", r$pass_improvement_nm),
         transit = if (is.na(r$transit_nm)) "—" else sprintf("%.1f", r$transit_nm),
-        dpct    = if (is.na(r$pass_improvement_pct)) "—" else sprintf("%.1f%%", r$pass_improvement_pct),
+        dnm     = if (is.na(r$pass_improvement_nm)) "—" else sprintf("%.0f", r$pass_improvement_nm),
+        dpct    = if (is.na(r$pass_improvement_pct)) "—" else sprintf("%.1f", r$pass_improvement_pct),
         stringsAsFactors = FALSE
       )
       names(row_df) <- col_names
@@ -531,11 +601,11 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
         l2seg   = lv,
         pass    = "Σ",
         rt      = sprintf("%.2f", s$runtime_hr),
-        mip     = as.character(s$mip),
-        acc     = as.character(s$acc),
+        b_try     = as.character(s$b_try),
+        b_acc     = as.character(s$b_acc),
         smov    = as.character(s$stations),
-        dnm     = sprintf("%.0f", s$delta_nm),
         transit = sprintf("%.1f", s$final_transit),
+        dnm     = sprintf("%.0f", s$delta_nm),
         dpct    = sprintf("%.1f%%", s$final_pct),
         stringsAsFactors = FALSE
       )
@@ -577,11 +647,8 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
 }
 
 make_combined_table_panel <- function(df, keep_methods, palette, tol_nm, tol_pct) {
-  summary <- make_summary_rows(df[df$method %in% keep_methods, , drop = FALSE], c("method", "l2seg_label"))
-  summary$method_label <- vapply(summary$method, label_method, character(1L))
-  summary$method_label <- factor(summary$method_label, levels = names(palette))
-  summary$l2seg_label <- factor(summary$l2seg_label, levels = l2seg_levels_in(df))
-  summary <- summary[order(summary$method_label, summary$l2seg_label), , drop = FALSE]
+  combined <- make_combined_summary_table(df, keep_methods, palette)
+  summary <- combined$summary
 
   col_names <- c("Method", "L2seg", "#", "hr", "MIP", "Acc", "|SΔ|", "Δnm", "Transit", "Δ%")
   tbl <- data.frame(
@@ -589,9 +656,9 @@ make_combined_table_panel <- function(df, keep_methods, palette, tol_nm, tol_pct
     l2seg   = as.character(summary$l2seg_label),
     pass    = as.character(summary$passes),
     rt      = sprintf("%.2f", summary$runtime_hr),
-    mip     = as.character(summary$mip),
-    acc     = as.character(summary$acc),
-    smov    = as.character(summary$stations),
+    b_try     = as.character(summary$b_try),
+    b_acc     = as.character(summary$b_acc),
+    smov    = sprintf("%d / %.0f / %.0f", summary$stations, summary$stations_med, summary$stations_max),
     dnm     = sprintf("%.0f", summary$delta_nm),
     transit = sprintf("%.1f", summary$final_transit),
     dpct    = sprintf("%.1f%%", summary$final_pct),
@@ -625,7 +692,8 @@ make_combined_table_panel <- function(df, keep_methods, palette, tol_nm, tol_pct
   make_table_plot(
     tbl, fill_vec,
     title = "A — Method / L2seg summary",
-    subtitle = "passes \u00b7 runtime (hr) \u00b7 MIP solves \u00b7 accepted moves \u00b7 stations moved \u00b7 transit improvement \u00b7 final transit",
+    subtitle = "passes \u00b7 runtime (hr) \u00b7 attempted \u00b7 accepted \u00b7
+    stations moved total/median/max \u00b7 transit improvement \u00b7 final transit",
     bold_cells = bold_cells,
     sep_after = sep_after,
     base_size = 6.9
@@ -654,9 +722,9 @@ make_common_panels <- function(df, mode, palette, tol_nm, tol_pct) {
                           "series", "l2seg_label", palette, show_shape_legends = FALSE),
       d = plot_box_panel(changed, "l2seg_label", "stations_moved", "l2seg_label", palette,
                          "D \u2014 Stations moved per pass", "Stations moved"),
-      e = plot_box_panel(changed[changed$mip_solve_count > 0, , drop = FALSE],
-                         "l2seg_label", "mip_solve_count", "l2seg_label", palette,
-                         "E \u2014 MIP solves per pass", "MIP solves"),
+      e = plot_box_panel(changed[changed$boundary_attempts > 0, , drop = FALSE],
+                         "l2seg_label", "boundary_attempts", "l2seg_label", palette,
+                         "E \u2014 Boundary attempts per pass", "Boundary attempts"),
       f = plot_box_panel(df[!is.na(df$boundary_change_rate), , drop = FALSE],
                          "l2seg_label", "boundary_change_rate", "l2seg_label", palette,
                          "F \u2014 Boundary change rate", "Changes / attempts", y_percent = TRUE)
@@ -672,16 +740,16 @@ make_common_panels <- function(df, mode, palette, tol_nm, tol_pct) {
       a = make_combined_table_panel(df, keep_methods, palette, tol_nm, tol_pct),
       b = plot_line_panel(df, "transit_nm", "B — Transit distance by sweep", "Transit (nm)",
                           "plot_series", "method_label", palette,
-                          linetype_var = "l2seg_label", show_shape_legends = TRUE),
+                          show_shape_legends = TRUE),
       c = plot_line_panel(df[!is.na(df$rel_improvement_pct), , drop = FALSE],
                           "rel_improvement_pct", "C — Relative improvement by sweep", "Improvement (%)",
                           "plot_series", "method_label", palette,
-                          linetype_var = "l2seg_label", show_shape_legends = FALSE),
+                          show_shape_legends = FALSE),
       d = plot_box_panel(changed, "method_label", "stations_moved", "method_label", palette,
                          "D \u2014 Stations moved per pass", "Stations moved"),
-      e = plot_box_panel(changed[changed$mip_solve_count > 0, , drop = FALSE],
-                         "method_label", "mip_solve_count", "method_label", palette,
-                         "E \u2014 MIP solves per pass", "MIP solves"),
+      e = plot_box_panel(changed[changed$boundary_attempts > 0, , drop = FALSE],
+                         "method_label", "boundary_attempts", "method_label", palette,
+                         "E \u2014 Boundary attempts per pass", "Boundary attempts"),
       f = plot_box_panel(df[!is.na(df$boundary_change_rate), , drop = FALSE],
                          "method_label", "boundary_change_rate", "method_label", palette,
                          "F \u2014 Boundary change rate", "Changes / attempts", y_percent = TRUE)
@@ -772,6 +840,13 @@ main <- function() {
     dir.create(dirname(opt$output), showWarnings = FALSE, recursive = TRUE)
     ggplot2::ggsave(opt$output, combined, width = 15, height = 10, dpi = 200, bg = "white")
     message("Wrote ", opt$output)
+
+    tex_path <- file.path(dirname(opt$output), "refinement_sweep.tex")
+    keep_methods <- methods_present_in(df)
+    palette <- make_method_palette(keep_methods)
+    combined_tbl <- make_combined_summary_table(df, keep_methods, palette)$tbl
+    write_latex_table(combined_tbl, tex_path)
+    message("Wrote ", tex_path)
   }
 
   if (parse_bool(opt$per_method)) {
