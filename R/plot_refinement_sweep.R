@@ -296,7 +296,7 @@ make_pass_table_panel <- function(df, level_order, palette) {
   col_l2seg <- "L\u2082seg"
   col_sd    <- "|S\u0394|"
   col_dnm   <- "\u0394nm"
-  col_names <- c(col_l2seg, "#", "s", "MIP", "Acc", col_sd, col_dnm)
+  col_names <- c(col_l2seg, "#", "hr", "MIP", "Acc", col_sd, col_dnm)
 
   out_rows      <- list()
   row_fills     <- character()
@@ -318,7 +318,7 @@ make_pass_table_panel <- function(df, level_order, palette) {
       row_df  <- data.frame(
         l2seg = sv,
         pass  = as.character(r$pass_number),
-        rt    = if (is.na(rt)) "\u2014" else sprintf("%.0f", rt),
+        rt    = if (is.na(rt)) "\u2014" else sprintf("%.2f", rt / 3600),
         mip   = as.character(r$mip_solve_count),
         acc   = as.character(r$boundary_changes),
         smov  = as.character(r$stations_moved),
@@ -338,11 +338,11 @@ make_pass_table_panel <- function(df, level_order, palette) {
     sub_df <- data.frame(
       l2seg = sv,
       pass  = "\u03a3",
-      rt    = sprintf("%.0f", total_rt),
-      mip   = as.character(sum(sub$mip_solve_count,  na.rm = TRUE)),
-      acc   = as.character(sum(sub$boundary_changes, na.rm = TRUE)),
-      smov  = as.character(sum(sub$stations_moved,   na.rm = TRUE)),
-      dnm   = sprintf("%.0f", total_impr),
+      rt     = sprintf("%.2f", sum(sub$pass_runtime,       na.rm = TRUE) / 3600),
+      mip    = as.character(sum(sub$mip_solve_count,  na.rm = TRUE)),
+      acc    = as.character(sum(sub$boundary_changes, na.rm = TRUE)),
+      smov   = as.character(sum(sub$stations_moved,   na.rm = TRUE)),
+      dnm    = sprintf("%.0f", total_impr),
       stringsAsFactors = FALSE
     )
     names(sub_df)           <- col_names
@@ -385,7 +385,7 @@ make_pass_table_panel <- function(df, level_order, palette) {
     ggplot2::coord_cartesian(clip = "off") +
     ggplot2::labs(
       title    = "A \u2014 Pass statistics",
-      subtitle = "runtime (s) \u00b7 MIP solves \u00b7 accepted boundary moves \u00b7 stations moved \u00b7 transit improvement"
+      subtitle = "runtime (hr) \u00b7 MIP solves \u00b7 accepted boundary moves \u00b7 stations moved \u00b7 transit improvement"
     ) +
     ggplot2::theme_void() +
     ggplot2::theme(
@@ -399,28 +399,198 @@ make_pass_table_panel <- function(df, level_order, palette) {
 }
 
 # ---------------------------------------------------------------------------
-# Combined (all-methods) plot
+# Combined-plot table: one total row per (method, l2seg), grouped by method
 # ---------------------------------------------------------------------------
 
-make_combined_plot <- function(df, methods_present) {
-  df_c <- do.call(rbind, lapply(methods_present, function(m) {
-    sub_m  <- df[df$method == m, , drop = FALSE]
-    l2segs <- unique(sub_m$l2seg)
-    chosen <- if (any(is.na(l2segs))) NA else max(l2segs, na.rm = TRUE)
-    sub_m[is.na(sub_m$l2seg) & is.na(chosen) |
-          (!is.na(sub_m$l2seg) & !is.na(chosen) & sub_m$l2seg == chosen), ,
-          drop = FALSE]
-  }))
-  df_c$series <- df_c$method
+make_combined_table_panel <- function(df, keep_methods, palette) {
+  passes <- df[df$pass_number > 0, , drop = FALSE]
+  if (nrow(passes) == 0L) {
+    return(cowplot::ggdraw() + cowplot::draw_label("No pass data", size = 10))
+  }
 
+  col_method <- "Method"
+  col_l2seg  <- "L\u2082seg"
+  col_sd     <- "|S\u0394|"
+  col_dnm    <- "\u0394nm"
+  col_dpct   <- "\u0394%"
+  col_names  <- c(col_method, col_l2seg, "#", "hr", "MIP", "Acc", col_sd, col_dnm, col_dpct)
+
+  out_rows  <- list()
+  row_fills <- character()
+  sep_after <- integer()
+  row_idx   <- 0L
+
+  for (m in keep_methods) {
+    sub_m <- passes[passes$method == m, , drop = FALSE]
+    if (nrow(sub_m) == 0L) next
+    lbl      <- method_labels[[m]]
+    base_col <- palette[[lbl]]
+
+    # Sort l2segs: uncapped first, then ascending
+    l2segs_m <- sort(unique(sub_m$l2seg[!is.na(sub_m$l2seg)]))
+    has_unc   <- any(is.na(sub_m$l2seg))
+    l2seg_ord <- c(if (has_unc) NA, l2segs_m)
+
+    for (lv in l2seg_ord) {
+      sub <- if (is.na(lv)) sub_m[is.na(sub_m$l2seg), , drop = FALSE]
+             else             sub_m[!is.na(sub_m$l2seg) & sub_m$l2seg == lv, , drop = FALSE]
+      if (nrow(sub) == 0L) next
+      row_idx <- row_idx + 1L
+
+      final_cum_pct <- sub$rel_improvement_pct[nrow(sub)]
+      row_df <- data.frame(
+        method = lbl,
+        l2seg  = l2seg_label(lv),
+        pass   = as.character(nrow(sub)),
+        rt     = sprintf("%.2f", sum(sub$pass_runtime,        na.rm = TRUE) / 3600),
+        mip    = as.character(sum(sub$mip_solve_count,        na.rm = TRUE)),
+        acc    = as.character(sum(sub$boundary_changes,       na.rm = TRUE)),
+        smov   = as.character(sum(sub$stations_moved,         na.rm = TRUE)),
+        dnm    = sprintf("%.0f", sum(sub$pass_improvement_nm, na.rm = TRUE)),
+        dpct   = if (is.na(final_cum_pct)) "\u2014"
+                 else sprintf("%.1f%%", final_cum_pct),
+        stringsAsFactors = FALSE
+      )
+      names(row_df)              <- col_names
+      out_rows[[row_idx]]        <- row_df
+      row_fills[[row_idx]]       <- scales::alpha(base_col, 0.25)
+    }
+    sep_after <- c(sep_after, row_idx)
+  }
+  if (length(sep_after) > 0L) sep_after <- sep_after[-length(sep_after)]
+
+  tbl      <- do.call(rbind, out_rows)
+  fill_mat <- matrix(row_fills, nrow = nrow(tbl), ncol = ncol(tbl))
+  th       <- table_theme(fill_mat, base_size = 7.5)
+  tg       <- gridExtra::tableGrob(tbl, rows = NULL, theme = th)
+
+  hline <- function() {
+    grid::segmentsGrob(
+      x0 = grid::unit(0, "npc"), x1 = grid::unit(1, "npc"),
+      y0 = grid::unit(0, "npc"), y1 = grid::unit(0, "npc"),
+      gp = grid::gpar(col = "grey50", lwd = 0.9)
+    )
+  }
+  for (r in sep_after) {
+    tg <- gtable::gtable_add_grob(tg, hline(),
+                                  t = r + 1L, b = r + 1L,
+                                  l = 1L, r = ncol(tg), z = Inf)
+  }
+
+  ggplot2::ggplot(data.frame(x = 0, y = 0), ggplot2::aes(x, y)) +
+    ggplot2::annotation_custom(tg, xmin = 0.01, xmax = 0.99,
+                                   ymin = 0.02, ymax = 0.97) +
+    ggplot2::scale_x_continuous(limits = c(0, 1), expand = c(0, 0)) +
+    ggplot2::scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
+    ggplot2::coord_cartesian(clip = "off") +
+    ggplot2::labs(
+      title    = "A \u2014 Method / L\u2082seg summary",
+      subtitle = "passes \u00b7 runtime (hr) \u00b7 MIP solves \u00b7 accepted boundary moves \u00b7 stations moved \u00b7 transit improvement \u00b7 relative improvement"
+    ) +
+    ggplot2::theme_void() +
+    ggplot2::theme(
+      plot.title    = ggplot2::element_text(size = 10, hjust = 0),
+      plot.subtitle = ggplot2::element_text(size = 7.5, hjust = 0,
+                                            color = "grey40",
+                                            margin = ggplot2::margin(b = 3)),
+      plot.title.position = "plot",
+      plot.margin = ggplot2::margin(5, 5, 5, 5)
+    )
+}
+
+# ---------------------------------------------------------------------------
+# Combined (all-methods) plot — all l2segs, color=method, linetype=l2seg
+# ---------------------------------------------------------------------------
+make_combined_plot <- function(df, methods_present) {
   keep_methods <- intersect(method_order, methods_present)
   palette      <- method_colors[keep_methods]
   names(palette) <- vapply(keep_methods, function(m) method_labels[m], character(1L))
-  df_c[["method"]] <- method_labels[df_c$method]
-  df_c$series      <- df_c$method
 
-  panels <- build_six_panels(df_c, color_var = "method", palette = palette,
-                              plot_title = "Refinement Sweep Summary \u2014 All Methods")
+  # All data for all methods (no l2seg filtering)
+  df_c <- df[df$method %in% keep_methods, , drop = FALSE]
+  df_c$method_label <- factor(method_labels[df_c$method], levels = names(palette))
+  df_c$series       <- paste0(as.character(df_c$method_label), "__", df_c$l2seg_label)
+
+  changed <- df_c[as.logical(df_c$changed) & df_c$pass_number > 0, , drop = FALSE]
+
+  no_legend <- ggplot2::theme(panel.grid.minor = ggplot2::element_blank(),
+                               legend.position  = "none")
+
+  # ---- A: combined method/l2seg table -------------------------------------
+  p_a <- make_combined_table_panel(df, keep_methods, palette)
+
+  # ---- B: transit — color by method, linetype by l2seg --------------------
+  p_b <- ggplot2::ggplot(df_c,
+    ggplot2::aes(x = pass_number, y = transit_nm,
+                 color = method_label, linetype = l2seg_label, group = series)
+  ) +
+    ggplot2::geom_line(linewidth = 0.85) +
+    ggplot2::geom_point(size = 1.5) +
+    ggplot2::scale_color_manual(values = palette) +
+    ggplot2::scale_linetype_discrete() +
+    ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
+    ggplot2::labs(title = "B \u2014 Transit distance by sweep",
+                  x = "Pass", y = "Transit (nm)") + no_legend
+
+  # ---- C: relative improvement — same aesthetics --------------------------
+  p_c <- ggplot2::ggplot(df_c[!is.na(df_c$rel_improvement_pct), , drop = FALSE],
+    ggplot2::aes(x = pass_number, y = rel_improvement_pct,
+                 color = method_label, linetype = l2seg_label, group = series)
+  ) +
+    ggplot2::geom_line(linewidth = 0.85) +
+    ggplot2::geom_point(size = 1.5) +
+    ggplot2::scale_color_manual(values = palette) +
+    ggplot2::scale_linetype_discrete() +
+    ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
+    ggplot2::labs(title = "C \u2014 Relative improvement by sweep",
+                  x = "Pass", y = "Improvement (%)") + no_legend
+
+  # ---- D: stations moved — boxplot by method (collapsed across l2segs) ---
+  p_d <- if (nrow(changed) > 0) {
+    ggplot2::ggplot(changed,
+      ggplot2::aes(x = method_label, y = stations_moved, fill = method_label)
+    ) +
+      ggplot2::geom_boxplot(width = 0.6, alpha = 0.82, outlier.shape = NA,
+                            linewidth = 0.4) +
+      ggplot2::scale_fill_manual(values = palette) +
+      ggplot2::labs(title = "D \u2014 Stations moved per pass",
+                    x = NULL, y = "Stations moved") + no_legend
+  } else {
+    cowplot::ggdraw() + cowplot::draw_label("No changed passes", size = 10)
+  }
+
+  # ---- E: MIP solves ------------------------------------------------------
+  p_e <- if (nrow(changed) > 0 && any(changed$mip_solve_count > 0)) {
+    ggplot2::ggplot(changed[changed$mip_solve_count > 0, ],
+      ggplot2::aes(x = method_label, y = mip_solve_count, fill = method_label)
+    ) +
+      ggplot2::geom_boxplot(width = 0.6, alpha = 0.82, outlier.shape = NA,
+                            linewidth = 0.4) +
+      ggplot2::scale_fill_manual(values = palette) +
+      ggplot2::labs(title = "E \u2014 MIP solves per pass",
+                    x = NULL, y = "MIP solves") + no_legend
+  } else {
+    cowplot::ggdraw() + cowplot::draw_label("No MIP solve data", size = 10)
+  }
+
+  # ---- F: boundary change rate --------------------------------------------
+  p_f <- if (any(!is.na(df_c$boundary_change_rate))) {
+    ggplot2::ggplot(df_c[!is.na(df_c$boundary_change_rate), ],
+      ggplot2::aes(x = method_label, y = boundary_change_rate, fill = method_label)
+    ) +
+      ggplot2::geom_boxplot(width = 0.6, alpha = 0.82, outlier.shape = NA,
+                            linewidth = 0.4) +
+      ggplot2::scale_fill_manual(values = palette) +
+      ggplot2::scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+      ggplot2::labs(title = "F \u2014 Boundary change rate",
+                    x = NULL, y = "Changes / attempts") + no_legend
+  } else {
+    cowplot::ggdraw() + cowplot::draw_label("No boundary data", size = 10)
+  }
+
+  panels <- list(p_a = p_a, p_b = p_b, p_c = p_c,
+                 p_d = p_d, p_e = p_e, p_f = p_f,
+                 title = "Refinement Sweep Summary \u2014 All Methods")
   assemble_six_panels(panels)
 }
 
@@ -438,9 +608,9 @@ make_method_plot <- function(df_m, method) {
   df_m$series      <- df_m$l2seg_label
 
   n_levels <- length(level_labels)
-  pal_cols <- if (n_levels == 1L) "#355070" else
-    grDevices::hcl.colors(n_levels, palette = "Zissou 1")
-  palette <- stats::setNames(pal_cols, level_labels)
+  pal_cols <- grDevices::colorRampPalette(unname(method_colors))(max(n_levels, 2L))
+  pal_cols <- pal_cols[seq_len(n_levels)]
+  palette  <- stats::setNames(pal_cols, level_labels)
 
   lbl <- if (!is.null(method_labels[[method]]) && !is.na(method_labels[[method]]))
     method_labels[[method]] else method
