@@ -17,7 +17,8 @@ parse_args <- function(args) {
     ports = "all",
     table_corner_a = "upper_right",
     table_corner_b = "upper_right",
-    skip_existing = "true"
+    skip_existing = "true",
+    camera_ready = "false"
   )
   i <- 1L
   while (i <= length(args)) {
@@ -427,6 +428,81 @@ output_path_for_variant <- function(method, l2seg, output, variant_count) {
   file.path(output, method, sprintf("mh_phase1_%d.png", l2seg))
 }
 
+save_camera_ready_panels <- function(output, p_a, p_b, p_c, table_data = NULL, palette = NULL) {
+  base <- tools::file_path_sans_ext(output)
+  dir.create(dirname(output), showWarnings = FALSE, recursive = TRUE)
+  output_a <- paste0(base, "_A_before.png")
+  output_b <- paste0(base, "_B_after.png")
+  output_c <- paste0(base, "_C_table.tex")
+
+  ggplot2::ggsave(output_a, p_a+ggplot2::ggtitle(NULL,NULL),
+                  width = 4.2, height = 2.7, dpi = 300, bg = "white")
+  ggplot2::ggsave(output_b, p_b+ggplot2::ggtitle(NULL,NULL),
+                  width = 4.2, height = 2.7, dpi = 300, bg = "white")
+
+  if (!is.null(table_data) && !is.null(palette)) {
+    write_segment_comparison_latex(
+      table_data,
+      palette,
+      output_c
+    )
+  }
+  message("Wrote ", output_a)
+  message("Wrote ", output_b)
+  message("Wrote ", output_c)
+}
+
+latex_colour_name <- function(x) {
+  paste0("seg", gsub("[^A-Za-z0-9]", "", x))
+}
+
+write_segment_comparison_latex <- function(table_data, palette, path) {
+  rows <- table_data
+
+  colour_defs <- character()
+  for (nm in names(palette)) {
+    col <- grDevices::col2rgb(palette[[nm]])[, 1]
+    colour_defs <- c(
+      colour_defs,
+      sprintf(
+        "\\definecolor{%s}{RGB}{%d,%d,%d}",
+        latex_colour_name(nm), col[[1]], col[[2]], col[[3]]
+      )
+    )
+  }
+
+  row_to_latex <- function(i) {
+    seg <- rows$`#`[[i]]
+    vals <- as.character(rows[i, , drop = TRUE])
+
+    prefix <- ""
+    if (seg %in% names(palette)) {
+      prefix <- sprintf("\\rowcolor{%s!30} ", latex_colour_name(seg))
+    } else if (seg == "Σ") {
+      prefix <- "\\rowcolor{gray!15} "
+    }
+
+    paste0(prefix, paste(vals, collapse = " & "), " \\\\")
+  }
+
+  lines <- c(
+    "% Requires: \\usepackage[table]{xcolor}, \\usepackage{booktabs}",
+    colour_defs,
+    "\\begin{tabular}{rrrrrrrrr}",
+    "\\toprule",
+    "\\multicolumn{1}{c}{} & \\multicolumn{3}{c}{Before} & \\multicolumn{3}{c}{After} & \\multicolumn{2}{c}{Change} \\\\",
+    "\\cmidrule(lr){2-4}\\cmidrule(lr){5-7}\\cmidrule(lr){8-9}",
+    paste(names(rows), collapse = " & "),
+    "\\\\",
+    "\\midrule",
+    vapply(seq_len(nrow(rows)), row_to_latex, character(1L)),
+    "\\bottomrule",
+    "\\end{tabular}"
+  )
+
+  writeLines(lines, path, useBytes = TRUE)
+}
+
 plot_variant <- function(con, opt, variant, output) {
   if (parse_bool(opt$skip_existing) && file.exists(output)) {
     message("Skipping ", variant$method, " L2SEG=", variant$l2seg, " (file exists): ", output)
@@ -505,6 +581,19 @@ plot_variant <- function(con, opt, variant, output) {
     total_stations = total_stations,
     palette = palette
   )
+
+  if (parse_bool(opt$camera_ready)) {
+    table_data <- comparison_table(init_route, final_route, segment_moves)
+
+    save_camera_ready_panels(
+      output = output,
+      p_a = p_a,
+      p_b = p_b,
+      p_c = p_c,
+      table_data = table_data,
+      palette = palette
+    )
+  }
 
   panel_row <- cowplot::plot_grid(p_a, p_b, p_c, ncol = 3, align = "v", axis = "t",
                                   rel_widths = c(.4, .4, 0.25))

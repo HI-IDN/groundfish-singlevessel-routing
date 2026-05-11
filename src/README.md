@@ -89,11 +89,14 @@ For `refinement.json`, the boundary improvement phase is reported as `mip.phase 
 targets and plotting/reporting scripts. It recreates `dat/solution.db` from
 scratch, storing run lineage, ordered location segment IDs, ordered station
 segments, distances, generic MIP solve rows, and refinement pass details.
-`mip_solves` is intentionally run-agnostic for runtime/gap/model-size analysis;
-refinement pass identity and boundary/candidate context are stored separately
-in `refinement_passes` and `refinement_solve_context`. Static geography remains
-in `dat/gsp.db`; plotting code should join ordered location IDs from
-`solution.db.location_segments` to coordinates in `gsp.db.locations`.
+`mip_solves` is intentionally run-agnostic for runtime/gap/model-size analysis.
+Refinement pass identity is stored by grouped refinement run id plus pass number
+in `refinement_passes`; boundary/candidate context is stored in
+`refinement_solve_context`; moved station IDs from
+`tour_segments_station_mutation_ids` are stored in
+`refinement_station_mutations`. Static geography remains in `dat/gsp.db`;
+plotting code should join ordered location IDs from `solution.db.location_segments`
+to coordinates in `gsp.db.locations`.
 
 Configuration Notes
 -------------------

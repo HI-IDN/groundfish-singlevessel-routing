@@ -232,20 +232,15 @@ This writes the observed boat routes to:
 
 6. Generate plots:
 
-    Optionally rebuild the normalized solution database first:
-    ```bash
-    make -C src solution_db
-    ```
-
-   This deletes and recreates `dat/solution.db` from the current JSON files
-   under `sol/`.
-
     ```bash
     make -C src plot
     ```
 
-   This generates route figures and survey overview figures from the JSON files
-   currently present under `sol/`.
+   This recreates `dat/solution.db` from the current JSON files under `sol/`,
+   then runs the static R plotting scripts. The generated figures include the
+   survey overview, waypoint check, multivessel survey routes, construction and
+   segmentation panels, refinement panels, refinement sweep summaries, and MIP
+   solve diagnostics.
 
 Batch Run
 ---------
@@ -265,20 +260,20 @@ This runs:
 - segment outputs
 - refinement outputs
 
-Then generate figures separately with:
+Then generate figures with:
 
 ```bash
-make -C src solution_db
 make -C src plot
 ```
 
 Normalized Solution Database
 ----------------------------
 
-`make -C src build` builds the C target `solution_db_export`. After that,
+`make -C src build` builds the C target `solution_db_export`.
 `make -C src solution_db` recreates `dat/solution.db` from the current
-`sol/**/*.json` files. The database stores solution output only; static
-geography remains in `dat/gsp.db`.
+`sol/**/*.json` files, and `make -C src plot` runs that normalization before
+generating figures. The database stores solution output only; static geography
+remains in `dat/gsp.db`.
 For plotting routes, join `solution.db.location_segments.location_id` to
 `gsp.db.locations.id`.
 
@@ -312,14 +307,22 @@ Main tables:
   `gap_percent`.
 
 - `refinement_passes`
-  One row per refinement pass variant, keyed by `(run_id, variant)`. It stores
-  the numeric pass, stations moved, accepted/total capacity solves, MIP solve
-  count, and pass runtime.
+  One row per refinement pass, keyed by grouped refinement `run_id` and
+  `pass_number`. For example, `ci:refinement:l2seg=10:pass1` in `runs` is stored
+  as `run_id = ci:refinement:l2seg=10`, `pass_number = 1`, with
+  `solution_run_id` pointing back to the concrete `runs.run_id`. It stores
+  stations moved, boundary attempts/changes, MIP solve count, and runtime.
 
 - `refinement_solve_context`
-  Refinement-only detail rows keyed back to `(run_id, variant)`. This is where
-  boundary index, candidate split index, segment, station/node counts, moved
-  stations, model size, runtime, and gap remain tied to a specific pass.
+  Refinement-only context rows keyed back to `(run_id, pass_number)`. This keeps
+  boundary index, candidate split index, segment, and moved-station count tied
+  to a specific pass. Generic model-size/runtime/gap fields stay in
+  `mip_solves`.
+
+- `refinement_station_mutations`
+  Station-level moved/mutated station IDs from
+  `tour_segments_station_mutation_ids`, keyed by grouped refinement `run_id`,
+  `pass_number`, segment, and sequence.
 
 Configuration
 -------------
@@ -368,4 +371,4 @@ Notes
 - `src/Makefile` is a lightweight wrapper around the CMake build in `build/`.
 - Long MIP runs can be expensive. Prefer targeted runs over rebuilding or rerunning the full
   pipeline.
-- Route JSON files under `sol/` are the current source of truth for plotting and result summaries.
+- Route JSON files under `sol/` are normalized into `dat/solution.db` before plotting and result summaries.

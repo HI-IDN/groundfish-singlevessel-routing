@@ -40,7 +40,7 @@ SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
 SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db sweep_table plot plot-routes plot-refinement plot-mip-runtime plot-survey-routes plot-sweep-summary experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db sweep_table plot-survey-overview plot-waypoints plot-survey-multivessel plot-construction-segment plot-refinement plot-refinement-sweep plot-mip-solves plot experiments help
 
 all: build
 
@@ -230,8 +230,6 @@ sweep_table:
 		fi; \
 		Rscript "$${args[@]}"'
 
-plot-routes: $(ROUTE_PNGS) $(REFINEMENT_ROUTE_PNGS)
-
 solution_db:
 	@test -x "$(BUILD_DIR)/solution_db_export" || { \
 		echo "Missing $(BUILD_DIR)/solution_db_export."; \
@@ -240,38 +238,35 @@ solution_db:
 	}
 	@cd $(BUILD_DIR) && ./solution_db_export ../sol $(SOLUTION_DB)
 
-../sol/%.png: ../sol/%.json
-	@cd .. && Rscript R/plot_single_vessel_route.R "$(patsubst ../%,%,$<)" "$(patsubst ../%,%,$@)"
+plot-survey-overview: solution_db
+	@cd .. && Rscript R/plot_survey_overview.R --output dat/survey_overview.png
 
-../dat/coastline_waypoints_ports.png:
-	@bash -lc 'cd .. && Rscript R/plot_country.R dat/gsp.db dat/coastline_waypoints_ports.png'
+plot-waypoints: solution_db
+	@cd .. && Rscript R/plot_waypoints.R --output dat/waypoints.png
 
-../dat/survey_overview.png:
-	@bash -lc 'cd .. && Rscript R/plot_survey_overview.R dat/gsp.db dat/survey_overview.png'
+plot-survey-multivessel: solution_db
+	@cd .. && Rscript R/plot_survey_multivessel.R --output sol/survey/multivessel.png --skip_existing false
 
-../sol/survey/multivessel.png:
-	@bash -lc 'cd .. && Rscript R/plot_multi_vessel_route.R "sol/survey/multivessel.json" "sol/survey/multivessel.png" "dat/gsp.db"'
+plot-construction-segment: solution_db
+	@cd .. && Rscript R/plot_construction_segment.R --method all --skip_existing false
 
-../sol/sweep_summary_panels.png:
-	@bash -lc 'cd .. && Rscript R/plot_sweep_summary_panels.R sol sol/sweep_summary_panels.png'
+plot-refinement: solution_db
+	@cd .. && Rscript R/plot_refinement.R --method all --l2seg all --skip_existing false
 
-# Refinement sweep trajectory plots (make_refinement_table.R writes multiple PNGs;
-# use refinement_transit_sweeps.png as the representative stamp target).
-../sol/refinement_transit_sweeps.png: $(REFINEMENT_JSONS) $(CONFIG_YAML)
-	@bash -lc 'cd .. && Rscript R/make_refinement_table.R'
+plot-refinement-sweep: solution_db
+	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method true --skip_existing false
 
-plot-refinement: ../sol/refinement_transit_sweeps.png
+plot-mip-solves: solution_db
+	@cd .. && Rscript R/plot_mip_solves.R --output sol/mip_solves.png --skip_existing false
 
-# MIP runtime plot
-../sol/mip_runtime_vs_size.png: $(REFINEMENT_JSONS) \
-    $(shell bash -lc 'find "$(CURDIR)/../sol" \( -name "construction.json" -o -name "segment.json" \) ! -path "*/survey/*" | sed "s#^$(CURDIR)/##"')
-	@bash -lc 'cd .. && Rscript R/plot_mip_runtime.R'
-
-plot-mip-runtime: ../sol/mip_runtime_vs_size.png
-
-plot: ../dat/coastline_waypoints_ports.png ../dat/survey_overview.png \
-      ../sol/survey/multivessel.png \
-      plot-routes plot-refinement plot-mip-runtime
+plot: solution_db
+	@cd .. && Rscript R/plot_survey_overview.R --output dat/survey_overview.png
+	@cd .. && Rscript R/plot_waypoints.R --output dat/waypoints.png
+	@cd .. && Rscript R/plot_survey_multivessel.R --output sol/survey/multivessel.png --skip_existing false
+	@cd .. && Rscript R/plot_construction_segment.R --method all --skip_existing false
+	@cd .. && Rscript R/plot_refinement.R --method all --l2seg all --skip_existing false
+	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method true --skip_existing false
+	@cd .. && Rscript R/plot_mip_solves.R --output sol/mip_solves.png --skip_existing false
 
 experiments: prepare-routing-data
 	@bash -lc 'set -euo pipefail; \
@@ -286,10 +281,6 @@ experiments: prepare-routing-data
 			$(MAKE) -C . "../sol/$${m}/refinement.json"; \
 		done'
 	@echo "All experiments up to date."
-
-plot-survey-routes: ../sol/survey/multivessel.png
-
-plot-sweep-summary: ../sol/sweep_summary_panels.png
 
 clean:
 	@echo "Cleaning build directory..."
@@ -337,11 +328,13 @@ help:
 	@echo "  make -C src fixedport"
 	@echo "  make -C src experiments          # runs L2SEG values from config/gsp_solver.yaml in order"
 	@echo "  make -C src solution_db          # rebuild dat/solution.db from sol/**/*.json"
-	@echo "  make -C src plot                  # all plots"
-	@echo "  make -C src plot-routes           # construction/segment/refinement route PNGs"
-	@echo "  make -C src plot-refinement       # sweep trajectory PNGs (make_refinement_table.R)"
-	@echo "  make -C src plot-mip-runtime      # MIP runtime plot (plot_mip_runtime.R)"
-	@echo "  make -C src plot-survey-routes"
-	@echo "  make -C src plot-sweep-summary"
+	@echo "  make -C src plot                  # rebuild solution DB, then run all static R plots"
+	@echo "  make -C src plot-survey-overview  # station catch overview"
+	@echo "  make -C src plot-waypoints        # waypoints and ports sanity check"
+	@echo "  make -C src plot-survey-multivessel"
+	@echo "  make -C src plot-construction-segment"
+	@echo "  make -C src plot-refinement"
+	@echo "  make -C src plot-refinement-sweep"
+	@echo "  make -C src plot-mip-solves"
 	@echo "  make -C src clean"
 	@echo "  make -C src reconfigure"
