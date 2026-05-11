@@ -102,7 +102,7 @@ Repository Layout
 ```plaintext
 .
 ├── src/        # core implementation (C + build system)
-├── dat/        # raw inputs and generated database (gsp.db)
+├── dat/        # raw inputs and generated databases (gsp.db, solution.db)
 ├── sol/        # outputs (solutions, logs, plots)
 ├── config/     # solver parameters (YAML)
 ├── R/          # analysis and visualization scripts
@@ -236,8 +236,11 @@ This writes the observed boat routes to:
     make -C src plot
     ```
 
-   This generates route figures and survey overview figures from the JSON files
-   currently present under `sol/`.
+   This recreates `dat/solution.db` from the current JSON files under `sol/`,
+   then runs the static R plotting scripts. The generated figures include the
+   survey overview, waypoint check, multivessel survey routes, construction and
+   segmentation panels, refinement panels, refinement sweep summaries, and MIP
+   solve diagnostics.
 
 Batch Run
 ---------
@@ -257,11 +260,69 @@ This runs:
 - segment outputs
 - refinement outputs
 
-Then generate figures separately with:
+Then generate figures with:
 
 ```bash
 make -C src plot
 ```
+
+Normalized Solution Database
+----------------------------
+
+`make -C src build` builds the C target `solution_db_export`.
+`make -C src solution_db` recreates `dat/solution.db` from the current
+`sol/**/*.json` files, and `make -C src plot` runs that normalization before
+generating figures. The database stores solution output only; static geography
+remains in `dat/gsp.db`.
+For plotting routes, join `solution.db.location_segments.location_id` to
+`gsp.db.locations.id`.
+
+Main tables:
+
+- `runs`
+  One row per exported solution state. The lineage is construction ->
+  segmentation -> refinement. Refinement JSONs may contribute several rows
+  (`init`, `pass1`, ...), with `parent_run_id` linking the chain.
+
+- `location_segments`
+  Ordered route location IDs: `run_id`, `segment`, `sequence`, `location_id`,
+  and `point_type` (`BOAT`, `PORT`, `WAYP`, `STAT`). Latitude/longitude are
+  not duplicated here. `route_locations` is kept as a compatibility view over
+  this table.
+
+- `station_segments`
+  Ordered station membership per segment: `run_id`, `segment`, `sequence`,
+  `signed_station_id`, and absolute `station_id`.
+
+- `distance`
+  Distance by run and segment. `segment IS NULL` is the grand total row;
+  numbered segments are per-segment rows. Columns are `transit_nm` and
+  `total_nm`.
+
+- `mip_solves`
+  Generic solve-level table for runtime analysis. It intentionally has no
+  `run_id`; it stores only `phase_code` (`C`, `S`, `R`), `segment_model`
+  (`0seg`, `1seg`, `2seg`, `Xseg`), `station_count`, `node_count`,
+  `model_variable_count`, `model_constraint_count`, `runtime_seconds`, and
+  `gap_percent`.
+
+- `refinement_passes`
+  One row per refinement pass, keyed by grouped refinement `run_id` and
+  `pass_number`. For example, `ci:refinement:l2seg=10:pass1` in `runs` is stored
+  as `run_id = ci:refinement:l2seg=10`, `pass_number = 1`, with
+  `solution_run_id` pointing back to the concrete `runs.run_id`. It stores
+  stations moved, boundary attempts/changes, MIP solve count, and runtime.
+
+- `refinement_solve_context`
+  Refinement-only context rows keyed back to `(run_id, pass_number)`. This keeps
+  boundary index, candidate split index, segment, and moved-station count tied
+  to a specific pass. Generic model-size/runtime/gap fields stay in
+  `mip_solves`.
+
+- `refinement_station_mutations`
+  Station-level moved/mutated station IDs from
+  `tour_segments_station_mutation_ids`, keyed by grouped refinement `run_id`,
+  `pass_number`, segment, and sequence.
 
 Configuration
 -------------
@@ -274,11 +335,6 @@ Current Gurobi phase parameters are organized by segment model:
 
 ```yaml
 gurobi:
-  haul_distance_scale:
-    0seg: 0.00001
-    1seg: 0.00001
-    2seg: 1.0
-    Xseg: 0.00001
 
   time_limit_seconds:
     0seg: 0
@@ -315,4 +371,4 @@ Notes
 - `src/Makefile` is a lightweight wrapper around the CMake build in `build/`.
 - Long MIP runs can be expensive. Prefer targeted runs over rebuilding or rerunning the full
   pipeline.
-- Route JSON files under `sol/` are the current source of truth for plotting and result summaries.
+- Route JSON files under `sol/` are normalized into `dat/solution.db` before plotting and result summaries.

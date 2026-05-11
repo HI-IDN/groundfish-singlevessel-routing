@@ -93,11 +93,15 @@ env/
 # Misc
 *.tmp
 *.bak
+*.db-journal
 
 # Derived files
 dat/gsp.db
+dat/solution.db
+
 # Generated site files from zensical build
 site/
+sol/*/*_frames/
 
 # Log files
 *.log

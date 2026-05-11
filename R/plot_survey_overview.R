@@ -1,114 +1,80 @@
 #!/usr/bin/env Rscript
 
-required_packages <- c("tidyverse", "DBI", "RSQLite")
-args <- commandArgs(trailingOnly = TRUE)
-db_path <- if (length(args) >= 1) args[1] else "dat/gsp.db"
-output_file <- if (length(args) >= 2) args[2] else "dat/survey_overview.png"
+source("R/gsp_db.R")
+source("R/gsp_plot_utils.R")
 
-script_file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
-script_dir <- if (length(script_file_arg) > 0) {
-  dirname(normalizePath(sub("^--file=", "", script_file_arg[1])))
-} else {
-  "R"
+parse_args <- function(args) {
+  out <- list(
+    gsp_db = "dat/gsp.db",
+    solution_db = "dat/solution.db",
+    output = "dat/survey_overview.png",
+    run_id = NULL,
+    ports = "all",
+    vessels = "all",
+    table_corner = "upper_right",
+    title = NULL
+  )
+  i <- 1L
+  while (i <= length(args)) {
+    key <- args[[i]]
+    val <- if (i < length(args)) args[[i + 1L]] else NULL
+    if (!startsWith(key, "--") || is.null(val)) {
+      stop(sprintf("Invalid argument near: %s", key), call. = FALSE)
+    }
+    name <- sub("^--", "", key)
+    if (!name %in% names(out)) stop(sprintf("Unknown option: %s", key), call. = FALSE)
+    out[[name]] <- val
+    i <- i + 2L
+  }
+  out
 }
-source(file.path(script_dir, "plot_utils.R"))
 
-load_required_packages(required_packages)
+parse_id_list <- function(x) {
+  if (is.null(x) || x %in% c("all", "ALL", "*")) return(NULL)
+  if (x %in% c("none", "NONE", "-")) return(integer())
+  as.integer(strsplit(x, ",", fixed = TRUE)[[1]])
+}
 
-cat("=== Survey Overview Plotter ===\n\n")
+main <- function() {
+  load_gsp_plot_packages()
+  opt <- parse_args(commandArgs(trailingOnly = TRUE))
 
-cat("Loading coastline data...\n")
-coastline <- read_db_table(db_path, "SELECT lat, lon FROM coastline")
+  con <- connect_gsp_db(opt$gsp_db, opt$solution_db)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
 
-cat("\nPlotting coastline...\n")
-p <- base_coastline_plot(coastline)
+  country <- read_country_layers(con)
+  route <- if (!is.null(opt$run_id) && nzchar(opt$run_id)) read_route_run(con, opt$run_id) else NULL
+  ports <- read_ports(con, parse_id_list(opt$ports))
+  vessels <- read_vessels(con, parse_id_list(opt$vessels))
 
-cat("\nLoading locations...\n")
-locations <- read_db_table(
-  db_path,
-  "SELECT p.name, l.lat, l.lon, 'Port' as type
-   FROM ports p
-   INNER JOIN locations l ON p.location_id = l.id
-   UNION ALL
-   SELECT b.name, l.lat, l.lon, 'Boat' as type
-   FROM boats b
-   INNER JOIN locations l ON b.location_id = l.id
-   ORDER BY type DESC"
-)
+  if (!is.null(route) && nrow(route$run) == 1L && identical(opt$vessels, "all")) {
+    vessels <- vessels[vessels$boat_id %in% route$run$boat_id, , drop = FALSE]
+  }
 
-cat("\nLoading trawl station locations...\n")
-stations <- read_db_table(
-  db_path,
-  "SELECT s.id, s.amount,
-          start.lat as start_lat, start.lon as start_lon,
-          end.lat as end_lat, end.lon as end_lon
-   FROM stations s
-   INNER JOIN locations start ON s.start_location_id = start.id
-   INNER JOIN locations end ON s.end_location_id = end.id
-   ORDER BY s.id"
-)
+  title <- opt$title
+  if (is.null(title) || !nzchar(title)) {
+    title <- if (is.null(route)) {
+      "Groundfish Survey Overview"
+    } else {
+      route$run$run_id[[1]]
+    }
+  }
 
-cat("\nCreating final overview plot...\n")
-final_plot <- p +
-  geom_segment(
-    data = stations,
-    aes(
-      x = start_lon,
-      y = start_lat,
-      xend = end_lon,
-      yend = end_lat,
-      color = log10(amount + 1)
-    ),
-    arrow = grid::arrow(length = grid::unit(0.05, "cm")),
-    lineend = "round",
-    linewidth = 0.6,
-    inherit.aes = FALSE
-  ) +
-  scale_colour_gradientn(
-    colours = rev(rainbow(7)),
-    name = "Catch amount\n(log10 scale)",
-    na.value = "grey50",
-    guide = "colourbar"
-  ) +
-  geom_point(
-    data = locations,
-    aes(x = lon, y = lat, shape = type),
-    size = 3,
-    inherit.aes = FALSE
-  ) +
-  scale_shape_manual(
-    values = c("Port" = 1, "Boat" = 16),
-    name = "Locations"
-  ) +
-  labs(
-    title = "Iceland Groundfish Survey Overview",
-    subtitle = sprintf(
-      "Coastline, Ports (%d), Boats (%d), and Trawl Stations (%d)",
-      nrow(filter(locations, type == "Port")),
-      nrow(filter(locations, type == "Boat")),
-      nrow(stations)
-    ),
-    x = NULL,
-    y = NULL
-  ) +
-  coord_fixed_for_lat(c(stations$start_lat, stations$end_lat), fallback_lat = 65.0)
+  plot <- plot_country_or_route(
+    country = country,
+    route = route,
+    ports = ports,
+    vessels = vessels,
+    table_corner = opt$table_corner,
+    title = title,
+    show_degree_axes = is.null(route),
+    legend_position = "bottom",
+    legend_justification = "center"
+  )
 
-final_plot <- apply_degree_axes(final_plot)
-final_plot <- final_plot + gsp_common_theme(
-  legend_position = "bottom",
-  legend_direction = "horizontal"
-)
+  dir.create(dirname(opt$output), recursive = TRUE, showWarnings = FALSE)
+  ggplot2::ggsave(opt$output, plot, width = 8.2, height = 6.0, dpi = 300, bg = "white")
+  message("Wrote ", opt$output)
+}
 
-cat(sprintf("\nSaving plot to %s...\n", output_file))
-
-ggsave(
-  filename = output_file,
-  plot = final_plot,
-  width = 8,
-  height = 6,
-  dpi = 300,
-  bg = "white"
-)
-
-cat(sprintf("OK Plot saved to: %s\n", normalizePath(output_file)))
-cat("OK Survey overview plot complete!\n")
+main()

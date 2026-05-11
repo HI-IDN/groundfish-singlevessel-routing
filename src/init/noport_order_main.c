@@ -31,8 +31,6 @@ typedef struct {
 typedef struct {
     const mip_noport_solution_t *solution;
     double objective_distance_nm;
-    int use_scaled_haul_distance;
-    double haul_distance_scale;
 } noport_solution_extra_t;
 
 static void write_noport_metadata_extra(FILE *fp, const char *indent, const void *ctx) {
@@ -56,9 +54,6 @@ static void write_noport_solution_extra(FILE *fp, const char *indent, const void
     }
     fprintf(fp, "],\n");
     fprintf(fp, "%s  \"objective_distance_nm\": %.2f", base, extra->objective_distance_nm);
-    if (extra->use_scaled_haul_distance) {
-        fprintf(fp, ",\n%s  \"haul_distance_scale\": %.8f", base, extra->haul_distance_scale);
-    }
 }
 
 static char *dupstr_local(const char *src) {
@@ -106,8 +101,7 @@ static int read_noport_config(const char *yaml_path,
                               int *boat_id_out,
                               double *l0seg_out,
                               double *global_time_limit_out,
-                              int *thread_count_out,
-                              double *haul_distance_scale_out) {
+                              int *thread_count_out) {
     FILE *fp = NULL;
     char line[1024];
     int section = 0;
@@ -116,7 +110,6 @@ static int read_noport_config(const char *yaml_path,
     if (l0seg_out) *l0seg_out = 0.0;
     if (global_time_limit_out) *global_time_limit_out = 0.0;
     if (thread_count_out) *thread_count_out = 0;
-    if (haul_distance_scale_out) *haul_distance_scale_out = 0.0;
 
     fp = fopen(yaml_path, "r");
     if (!fp) {
@@ -158,9 +151,6 @@ static int read_noport_config(const char *yaml_path,
 
     fclose(fp);
     if (l0seg_out) *l0seg_out = read_noport_mip_time_limit_from_yaml(yaml_path);
-    if (haul_distance_scale_out) {
-        *haul_distance_scale_out = read_noport_haul_distance_scale_from_yaml(yaml_path);
-    }
     return 0;
 }
 
@@ -454,8 +444,6 @@ static int write_noport_json(sqlite3 *db,
                              double global_time_limit_seconds,
                              double preprocessing_seconds,
                              const gsp_distance_breakdown_t *distance_breakdown,
-                             int use_scaled_haul_distance,
-                             double haul_distance_scale,
                              double total_runtime_seconds) {
     const char *final_variant_name = "capacity-infeasible";
     FILE *fp = NULL;
@@ -467,7 +455,7 @@ static int write_noport_json(sqlite3 *db,
     int unique_wp_cap = 0;
     int is_feasible = 1;
     int *positive_station_ids = NULL;
-    int tour_length_value = 0;
+    int station_count_value = 0;
     int segment_catch_value = 0;
     int dock_location_ids[2];
     gsp_int_list_view_t location_view = {0};
@@ -511,7 +499,7 @@ static int write_noport_json(sqlite3 *db,
         gsp_problem_json_t problem = {0};
         noport_metadata_extra_t metadata_extra = {
             global_time_limit_seconds,
-            use_scaled_haul_distance ? "scaled_haul" : "transit"
+            "transit"
         };
         metadata.solver_version = "construction_noport_1.0";
         metadata.mode_name = "construction";
@@ -549,7 +537,7 @@ static int write_noport_json(sqlite3 *db,
     location_view.count = route_len;
     station_view.values = positive_station_ids;
     station_view.count = solution->order_length;
-    tour_length_value = solution->order_length;
+    station_count_value = solution->order_length;
     segment_catch_value = total_catch;
     dock_location_ids[0] = app->boat.location_id;
     dock_location_ids[1] = app->boat.location_id;
@@ -559,9 +547,7 @@ static int write_noport_json(sqlite3 *db,
     {
         noport_solution_extra_t solution_extra = {
             solution,
-            objective_distance_nm,
-            use_scaled_haul_distance,
-            haul_distance_scale
+            objective_distance_nm
         };
         gsp_solution_json_view_t view = {0};
         view.variant_name = final_variant_name;
@@ -573,8 +559,8 @@ static int write_noport_json(sqlite3 *db,
         view.unique_waypoint_location_count = unique_wp_count;
         view.tour_segments_station_ids = &station_view;
         view.tour_segments_station_count = 1;
-        view.tour_length = &tour_length_value;
-        view.tour_length_count = 1;
+        view.station_count = &station_count_value;
+        view.station_count_count = 1;
         view.segment_count = 1;
         view.segment_catch_amount = &segment_catch_value;
         view.segment_catch_count = 1;
@@ -611,6 +597,7 @@ static int write_noport_json(sqlite3 *db,
                                             distance_trajectory,
                                             1,
                                             distance_breakdown->total_distance_nm);
+        gsp_summary_set_final_distance_breakdown(&summary, distance_breakdown);
         gsp_summary_set_runtime(&summary,
                                 preprocessing_seconds,
                                 runtime_trajectory,
@@ -665,8 +652,6 @@ int main(int argc, char **argv) {
     double global_time_limit_seconds = 0.0;
     double effective_time_limit_seconds = 0.0;
     int thread_count = 0;
-    int use_scaled_haul_distance = 0;
-    double haul_distance_scale = 0.0;
     gsp_distance_breakdown_t distance_breakdown;
     double preprocessing_seconds = 0.0;
     double total_runtime_seconds = 0.0;
@@ -692,8 +677,7 @@ int main(int argc, char **argv) {
 
     preprocess_start = clock();
     read_noport_config(config_path, &boat_id, &l0seg_seconds, &global_time_limit_seconds,
-                       &thread_count, &haul_distance_scale);
-    use_scaled_haul_distance = (haul_distance_scale > 0.0);
+                       &thread_count);
 
     if (sqlite3_open(db_path, &db) != SQLITE_OK) {
         fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
@@ -726,9 +710,6 @@ int main(int argc, char **argv) {
     mip_params.thread_count = thread_count;
     mip_params.verbose = 1;
     mip_params.mip_gap = 0.0;
-    mip_params.exclude_haul_distance = !use_scaled_haul_distance;
-    mip_params.use_scaled_haul_distance = use_scaled_haul_distance;
-    mip_params.haul_distance_scale = use_scaled_haul_distance ? haul_distance_scale : 0.0;
 
     preprocess_end = clock();
     preprocessing_seconds = elapsed_seconds(preprocess_start, preprocess_end);
@@ -743,11 +724,7 @@ int main(int argc, char **argv) {
            (global_time_limit_seconds > 0.0) ? "" : "none ",
            (global_time_limit_seconds > 0.0) ? global_time_limit_seconds : 0.0);
     printf("  threads: %d\n", thread_count);
-    printf("  objective distance mode: %s\n",
-           use_scaled_haul_distance ? "scaled_haul" : "transit");
-    if (use_scaled_haul_distance) {
-        printf("  haul distance scale: %.8f\n", haul_distance_scale);
-    }
+    printf("  objective distance mode: transit\n");
 
     if (solve_mip_noport(&mip_instance, &mip_params, &mip_solution) != 0) {
         fprintf(stderr, "Gurobi no-port solve failed\n");
@@ -772,8 +749,6 @@ int main(int argc, char **argv) {
                           global_time_limit_seconds,
                           preprocessing_seconds,
                           &distance_breakdown,
-                          use_scaled_haul_distance,
-                          haul_distance_scale,
                           total_runtime_seconds) != 0) {
         fprintf(stderr, "Failed to write %s\n", output_path);
         sqlite3_close(db);

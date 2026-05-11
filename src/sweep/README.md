@@ -21,8 +21,8 @@ around
 adjacent segment boundaries. The high-level orchestration lives here:
 
 - choose which boundary neighborhood to examine
-- build the two-segment subproblem
-- call the exact MIP solver in `mip/`
+- build the two-segment subproblem with the two adjacent segment station sets
+- call the fixed-port capacity MIP in `mip/`, using the current boundary port as the single fixed unload
 - accept or reject the incumbent improvement
 - emit JSON snapshots and run summaries
 
@@ -36,20 +36,10 @@ Configuration
 Refinement uses:
 
 - `gurobi.time_limit_seconds.2seg`
-- `gurobi.haul_distance_scale.2seg`
 - `sweep.max_iterations`
 
-`haul_distance_scale.2seg` controls how haul distance enters the boundary MIP objective:
-
-- `0.0`
-  removes haul distance from the refinement MIP objective
-- `1e-5`
-  keeps haul only as a weak tie-breaker
-- `1.0`
-  uses full haul distance
-
-The recommended setting for refinement is `1.0`, so accepted improvements are judged
-using the real haul-distance contribution in the local MIP objective.
+The boundary MIP minimises transit distance only; haul arcs are excluded from
+the objective.
 
 JSON Notes
 ----------

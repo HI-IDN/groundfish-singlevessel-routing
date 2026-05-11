@@ -219,7 +219,6 @@ int solve_mip_endpaired_tsp(const mip_endpaired_instance_t *instance,
     int seg_size;
     int n;
     int error = 0;
-    double haul_distance_multiplier = 1.0;
 
     if (!instance || !solution) return 1;
     memset(solution, 0, sizeof(*solution));
@@ -253,18 +252,10 @@ int solve_mip_endpaired_tsp(const mip_endpaired_instance_t *instance,
         }
     }
 
-    if (local_params.use_scaled_haul_distance) {
-        haul_distance_multiplier = local_params.haul_distance_scale;
-        if (haul_distance_multiplier < 0.0) haul_distance_multiplier = 0.0;
-    } else if (local_params.exclude_haul_distance) {
-        haul_distance_multiplier = 0.0;
-    }
-
-    if (haul_distance_multiplier != 1.0) {
-        for (int i = 1; i < seg_size; i++) {
-            dist[(2 * i + 0) * n + (2 * i + 1)] *= haul_distance_multiplier;
-            dist[(2 * i + 1) * n + (2 * i + 0)] *= haul_distance_multiplier;
-        }
+    /* Haul arcs are always excluded from the objective — transit-only. */
+    for (int i = 1; i < seg_size; i++) {
+        dist[(2 * i + 0) * n + (2 * i + 1)] = 0.0;
+        dist[(2 * i + 1) * n + (2 * i + 0)] = 0.0;
     }
 
     dist[1 * n + 0] = 0.0;

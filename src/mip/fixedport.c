@@ -59,7 +59,10 @@ int solve_mip_fixedport(const mip_fixedport_instance_t *instance,
     dist = (double*)mip_xmalloc((size_t)n * (size_t)n * sizeof(double));
 
     entry[0] = instance->boat->location_id;
-    exit[0] = instance->boat->location_id;
+    exit[0] = (instance->end_location_id > 0)
+        ? instance->end_location_id
+        : instance->boat->location_id;
+    is_port[0] = 1;
 
     for (int i = 0; i < instance->n_stations; i++) {
         int city = i + 1;
@@ -91,15 +94,9 @@ int solve_mip_fixedport(const mip_fixedport_instance_t *instance,
     dist[0 * n + 1] = 0.0;
     dist[1 * n + 0] = 0.0;
 
-    if (local_params.use_scaled_haul_distance) {
-        haul_distance_multiplier = local_params.haul_distance_scale;
-        if (haul_distance_multiplier < 0.0) haul_distance_multiplier = 0.0;
-    } else if (local_params.exclude_haul_distance) {
-        haul_distance_multiplier = 0.0;
-    }
     for (int city = 1; city <= instance->n_stations; city++) {
-        dist[(2 * city + 0) * n + (2 * city + 1)] *= haul_distance_multiplier;
-        dist[(2 * city + 1) * n + (2 * city + 0)] *= haul_distance_multiplier;
+        dist[(2 * city + 0) * n + (2 * city + 1)] = 0.0;
+        dist[(2 * city + 1) * n + (2 * city + 0)] = 0.0;
     }
 
     if (local_params.shared_env) {
@@ -303,11 +300,12 @@ int solve_mip_fixedport(const mip_fixedport_instance_t *instance,
     if (GRBgetintattr(model, GRB_INT_ATTR_SOLCOUNT, &solcount) != 0) solcount = 0;
     if (GRBgetdblattr(model, GRB_DBL_ATTR_RUNTIME, &runtime) != 0) runtime = 0.0;
 
-    /* If we hit the time limit with no incumbent yet, remove the limit and
-     * keep solving until Gurobi finds at least one feasible solution. */
-    if (status == GRB_TIME_LIMIT && solcount == 0) {
+    /* Full fixed-port construction can request a first feasible incumbent
+     * after the nominal limit. Local refinement leaves this off and rejects
+     * the boundary if no incumbent is found within its L2SEG budget. */
+    if (local_params.wait_for_first_incumbent && status == GRB_TIME_LIMIT && solcount == 0) {
         if (local_params.verbose) {
-            printf("Time limit reached with no incumbent — continuing until first solution is found...\n");
+            printf("Time limit reached with no incumbent - continuing until first solution is found...\n");
             fflush(stdout);
         }
         GRBsetdblparam(GRBgetenv(model), GRB_DBL_PAR_TIMELIMIT, GRB_INFINITY);

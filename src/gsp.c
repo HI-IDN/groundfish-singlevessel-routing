@@ -31,7 +31,8 @@ void print_usage(const char *prog_name) {
     fprintf(stderr, "              --config <path>       (required: gsp_solver.yaml)\n");
     fprintf(stderr, "              --input <path>        (required: segment.json)\n");
     fprintf(stderr, "              --output <path>       (optional: sol/<strategy>/refinement.json)\n");
-    fprintf(stderr, "              --time-limit <seconds> (optional)\n");
+    fprintf(stderr, "              --time-limit <seconds> (optional workflow wall-clock limit)\n");
+    fprintf(stderr, "              --l2seg-limit <seconds> (optional override for gurobi.time_limit_seconds.2seg; 0 = no limit)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Examples:\n");
     fprintf(stderr, "  %s --mode construction --strategy nn --database dat/gsp_data.db --config config/gsp_solver.yaml --output sol/nn/construction.json\n", prog_name);
@@ -76,4 +77,3 @@ int main(int argc, char **argv) {
         return 1;
     }
 }
-

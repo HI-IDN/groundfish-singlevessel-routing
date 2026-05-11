@@ -667,7 +667,8 @@ static void write_solution_section(FILE *fp, const char *label,
                                    int *leg_query_count,
                                    int *total_waypoint_ids,
                                    const char *variant_name,
-                                   int segment_distances_include_return)
+                                   int segment_distances_include_return,
+                                   gsp_distance_breakdown_t *out_total_breakdown)
 {
     gsp_distance_breakdown_t *segment_breakdowns = NULL;
     gsp_distance_breakdown_t total_breakdown;
@@ -684,6 +685,7 @@ static void write_solution_section(FILE *fp, const char *label,
     }
     segment_compute_segment_breakdowns(inst, sol, boat_start_loc_id, boat_end_loc_id,
                                        segment_breakdowns, &total_breakdown);
+    if (out_total_breakdown) *out_total_breakdown = total_breakdown;
     lookup_ctx.cache = cache;
     lookup_ctx.leg_query_count = leg_query_count;
     lookup_ctx.total_waypoint_ids = total_waypoint_ids;
@@ -797,6 +799,8 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
     has_pre_local_postopt = pre_local_postopt_sol &&
                             pre_local_postopt_sol->visit_station_count > 0;
     final_variant_name = "capacity-feasible";
+    gsp_distance_breakdown_t final_total_breakdown;
+    memset(&final_total_breakdown, 0, sizeof(final_total_breakdown));
 
     fprintf(fp, "  \"solution\": {\n");
     if (has_presolve) {
@@ -807,7 +811,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         write_solution_section(fp, "presolve", inst, pre_capacity_sol,
                                boat_start_loc_id, boat_end_loc_id,
                                before_feasible, &cache, &leg_query_count, &total_waypoint_ids,
-                               "presolve", 1);
+                               "presolve", 1, NULL);
         fprintf(fp, ",\n");
     }
     if (has_pre_local_postopt) {
@@ -818,12 +822,12 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
         write_solution_section(fp, pre_local_postopt_variant_name, inst, pre_local_postopt_sol,
                                boat_start_loc_id, boat_end_loc_id,
                                pre_local_postopt_feasible, &cache, &leg_query_count, &total_waypoint_ids,
-                               pre_local_postopt_variant_name, 0);
+                               pre_local_postopt_variant_name, 0, NULL);
         fprintf(fp, ",\n");
     }
     write_solution_section(fp, final_variant_name, inst, sol, boat_start_loc_id, boat_end_loc_id,
                            is_feasible, &cache, &leg_query_count, &total_waypoint_ids,
-                           final_variant_name, 0);
+                           final_variant_name, 0, &final_total_breakdown);
     fprintf(fp, "\n");
     fprintf(fp, "  },\n");
     clock_gettime(CLOCK_MONOTONIC, &t_output_expand_end);
@@ -872,6 +876,7 @@ static void write_json(sqlite3 *db, const char *output_path, const nn_instance_t
             distance_trajectory,
             distance_count,
             sol->total_distance);
+        gsp_summary_set_final_distance_breakdown(&summary, &final_total_breakdown);
         gsp_summary_set_runtime(
             &summary,
             preprocessing_seconds,
@@ -962,8 +967,11 @@ static void write_construction_json(sqlite3 *db, const char *output_path, const 
     }
 
     fprintf(fp, "  \"solution\": {\n");
+    gsp_distance_breakdown_t construction_total_breakdown;
+    memset(&construction_total_breakdown, 0, sizeof(construction_total_breakdown));
     write_solution_section(fp, "construction", inst, sol, boat_start_loc_id, boat_end_loc_id,
-                           0, &cache, &leg_query_count, &total_waypoint_ids, "construction", 0);
+                           0, &cache, &leg_query_count, &total_waypoint_ids, "construction", 0,
+                           &construction_total_breakdown);
     fprintf(fp, "\n");
     fprintf(fp, "  },\n");
     clock_gettime(CLOCK_MONOTONIC, &t_output_expand_end);
@@ -989,6 +997,7 @@ static void write_construction_json(sqlite3 *db, const char *output_path, const 
             distance_trajectory,
             1,
             sol->total_distance);
+        gsp_summary_set_final_distance_breakdown(&summary, &construction_total_breakdown);
         gsp_summary_set_runtime(
             &summary,
             preprocessing_seconds,
@@ -1049,7 +1058,7 @@ static void write_metadata_only_json(const char *output_path,
     fprintf(fp, "    \"capacity-feasible\": {\n");
     fprintf(fp, "      \"tour_segments_location_ids\": [],\n");
     fprintf(fp, "      \"tour_segments_station_ids\": [],\n");
-    fprintf(fp, "      \"tour_length\": [],\n");
+    fprintf(fp, "      \"station_count\": [],\n");
     fprintf(fp, "      \"segment_count\": 0,\n");
     fprintf(fp, "      \"segment_catch_amount\": [],\n");
     {
@@ -1133,7 +1142,6 @@ static int run_segment_postopt(const char *config,
                                gsp_mip_solve_detail_t **out_local_postopt_details,
                                int *out_local_postopt_detail_count) {
     double mip_time_limit_seconds = read_segment_mip_time_limit_from_yaml(config);
-    double segment_haul_distance_scale = read_segment_haul_distance_scale_from_yaml(config);
 
     if (!segment_copy_solution(sol, pre_local_postopt_sol)) {
         return 0;
@@ -1141,7 +1149,6 @@ static int run_segment_postopt(const char *config,
     if (!segment_apply_local_postopt(inst, pre_local_postopt_sol,
                                      boat_start_loc_id, boat_end_loc_id,
                                      mip_time_limit_seconds,
-                                     segment_haul_distance_scale,
                                      sol,
                                      out_local_postopt_runtime_seconds,
                                      out_local_postopt_segment_solve_count,
@@ -1396,4 +1403,3 @@ int mode_construction(int argc, char **argv) {
 
     return 0;
 }
-

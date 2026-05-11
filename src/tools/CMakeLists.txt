@@ -31,6 +31,22 @@ target_link_libraries(survey_fixedport_candidates)
 
 target_include_directories(survey_fixedport_candidates PRIVATE)
 
+add_executable(solution_db_export
+    solution_db_export.c
+)
+
+set_target_properties(solution_db_export PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+target_link_libraries(solution_db_export
+    ${SQLITE3_LIBRARIES}
+)
+
+target_include_directories(solution_db_export PRIVATE
+    ${SQLITE3_INCLUDE_DIRS}
+)
+
 add_custom_target(fixedport_candidates
     COMMAND survey_fixedport_candidates
             ${CMAKE_CURRENT_SOURCE_DIR}/../../sol/survey/multivessel.json

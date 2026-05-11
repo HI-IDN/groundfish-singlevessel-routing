@@ -27,8 +27,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         ${GSP_MIP_SHARED_SOURCES}
     )
     target_link_libraries(gsp_segment_from_construction
-        -L${GUROBI_LIBRARY_DIR}
-        gurobi130
+        ${GUROBI_C_LIBRARY}
     )
 endif()
 
@@ -58,8 +57,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
 
     target_link_libraries(gsp_noport
         ${SQLITE3_LIBRARIES}
-        -L${GUROBI_LIBRARY_DIR}
-        gurobi130
+        ${GUROBI_C_LIBRARY}
         m
     )
 
@@ -94,8 +92,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
 
     target_link_libraries(gsp_fixedport
         ${SQLITE3_LIBRARIES}
-        -L${GUROBI_LIBRARY_DIR}
-        gurobi130
+        ${GUROBI_C_LIBRARY}
         m
     )
 

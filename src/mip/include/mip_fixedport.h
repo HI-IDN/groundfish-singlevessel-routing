@@ -6,6 +6,7 @@
 
 typedef struct {
     const Boat *boat;
+    int end_location_id;  /* 0 means use boat->location_id */
     const Station *stations;
     int n_stations;
     const int *candidate_port_location_ids;

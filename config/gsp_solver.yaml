@@ -19,34 +19,29 @@ init:
     - ge                                 # GE: Greedy Edge (fast)
     - ci                                 # CI: Cheapest Insertion (moderate)
 
-  noport: {}                             # Reserved for method-specific init options
-  fixedport: {}                          # Reserved for method-specific init options
-  nn: {}                                 # Reserved for method-specific init options
-  ge: {}                                 # Reserved for method-specific init options
-  ci: {}                                 # Reserved for method-specific init options
+  noport: { }                             # Reserved for method-specific init options
+  fixedport: { }                          # Reserved for method-specific init options
+  nn: { }                                 # Reserved for method-specific init options
+  ge: { }                                 # Reserved for method-specific init options
+  ci: { }                                 # Reserved for method-specific init options
 
 
 # Phase 1: Matheuristic Sweep Parameters
 sweep:
   # Iteration control
   max_iterations: 100                    # Maximum iterations per L2SEG sweep
+  l2seg_variants: [ 10, 30, 60, 120, 180, 240, 300, 600 ] # Additional refinement limits, in seconds
 
 # Gurobi Solver Settings
 gurobi:
   time_limit_seconds:
     0seg: 0                              # No-port MIP time limit; 0 = no limit
     1seg: 0                              # Per-segment init local postopt time limit; 0 = no limit
-    2seg: 0                              # Boundary-sweep segment MIP time limit; 0 = no limit
+    2seg: 0                              # Default boundary-sweep segment MIP time limit; 0 = no limit
     Xseg: 86400                          # Fixed-port MIP time limit after incumbent exists
 
-  haul_distance_scale:
-    0seg: 0.0                            # No-port MIP uses near-zero haul in the objective
-    1seg: 0.0                            # Init local postopt uses near-zero haul in the objective
-    2seg: 1.0                            # Sweep boundary MIPs use full haul distance
-    Xseg: 0.0                            # Reserved for fixed-port/full MIP objective scaling
-
   env_log_file: log/gurobi.log           # null=no log file, or path like "log/gurobi.log"
-  threads: 0                             # 0=auto-detect, >0=fixed thread count
+  threads: 6                             # 0=auto-detect, >0=fixed thread count
   mip_focus: 0                           # 0=balanced, 1=feasible, 2=optimal, 3=best_bound
   seed: -1                               # -1=random, >=0=fixed seed for reproducibility
 

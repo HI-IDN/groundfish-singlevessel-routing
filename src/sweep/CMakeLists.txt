@@ -34,6 +34,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/mip_report.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/sql_utils.c
         gsp_sweep_mode.c
+        ${GSP_MIP_FIXEDPORT_SOURCE}
         ${GSP_MIP_ENDPAIRED_SOURCE}
         ${GSP_MIP_SHARED_SOURCES}
     )
@@ -53,7 +54,6 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
     )
     target_compile_definitions(gsp_gurobi PRIVATE HAVE_GUROBI=1)
     target_link_libraries(gsp_gurobi
-        -L${GUROBI_LIBRARY_DIR}
-        gurobi130
+        ${GUROBI_C_LIBRARY}
     )
 endif()

@@ -18,31 +18,12 @@ mip/
 └── include/            model-specific headers and shared MIP interfaces
 ```
 
-Objective Scaling
------------------
+Objective
+---------
 
-The models in this directory use `haul_distance_scale` to control how haul legs
-enter the MIP objective.
-
-Purpose:
-
-- `0.0`
-  removes haul distance from the objective
-- a small positive value such as `1e-5`
-  keeps haul distance only as a tie-breaker while preserving its relative scale
-- `1.0`
-  uses full haul distance
-
-Recommended phase settings in the current workflow:
-
-- `0seg = 1e-5`
-  for `noport`
-- `1seg = 1e-5`
-  for segment local post-optimization
-- `2seg = 1.0`
-  for refinement (matheuristic sweep)
-- `Xseg = 1e-5`
-  for fixed-port
+All models minimise transit distance only. Haul arcs (the intra-station
+entry/exit leg) are excluded from the MIP objective; station orientation is
+determined by the solver as a free choice with no distance penalty.
 
 Boundary
 --------

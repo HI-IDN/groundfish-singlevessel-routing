@@ -200,8 +200,7 @@ static int read_fixedport_config(const char *yaml_path,
                                  int *boat_id_out,
                                  double *xseg_out,
                                  double *global_time_limit_out,
-                                 int *thread_count_out,
-                                 double *haul_distance_scale_out) {
+                                 int *thread_count_out) {
     FILE *fp = NULL;
     char line[1024];
     int section = 0;
@@ -210,7 +209,6 @@ static int read_fixedport_config(const char *yaml_path,
     if (xseg_out) *xseg_out = 0.0;
     if (global_time_limit_out) *global_time_limit_out = 0.0;
     if (thread_count_out) *thread_count_out = 0;
-    if (haul_distance_scale_out) *haul_distance_scale_out = 0.0;
 
     fp = fopen(yaml_path, "r");
     if (!fp) return 0;
@@ -245,7 +243,6 @@ static int read_fixedport_config(const char *yaml_path,
 
     fclose(fp);
     if (xseg_out) *xseg_out = read_fixedport_mip_time_limit_from_yaml(yaml_path);
-    if (haul_distance_scale_out) *haul_distance_scale_out = read_fixedport_haul_distance_scale_from_yaml(yaml_path);
     return 0;
 }
 
@@ -620,7 +617,7 @@ static int write_fixedport_json(sqlite3 *db,
     gsp_distance_breakdown_t *segment_breakdowns = NULL;
     int *segment_catches = NULL;
     int *segment_end_docks = NULL;
-    int *tour_lengths = NULL;
+    int *station_counts = NULL;
     int *dock_location_ids = NULL;
     int *port_visit_counts = NULL;
     int dock_location_count = 0;
@@ -644,9 +641,9 @@ static int write_fixedport_json(sqlite3 *db,
     segment_breakdowns = (gsp_distance_breakdown_t*)calloc((size_t)segment_count, sizeof(gsp_distance_breakdown_t));
     segment_catches = (int*)calloc((size_t)segment_count, sizeof(int));
     segment_end_docks = (int*)calloc((size_t)segment_count, sizeof(int));
-    tour_lengths = (int*)calloc((size_t)segment_count, sizeof(int));
+    station_counts = (int*)calloc((size_t)segment_count, sizeof(int));
     port_visit_counts = (int*)calloc((size_t)port_lookup_count, sizeof(int));
-    if (!segments || !location_views || !station_views || !segment_breakdowns || !segment_catches || !segment_end_docks || !tour_lengths || !port_visit_counts) goto fail;
+    if (!segments || !location_views || !station_views || !segment_breakdowns || !segment_catches || !segment_end_docks || !station_counts || !port_visit_counts) goto fail;
 
     for (int s = 0; s < segment_count; s++) route_segment_init(&segments[s]);
     if (!segment_int_vec_push_if_changed(&segments[0].locations, app->boat.location_id)) goto fail;
@@ -700,7 +697,7 @@ static int write_fixedport_json(sqlite3 *db,
         segment_breakdowns[s] = segments[s].distance;
         segment_catches[s] = segments[s].catch_amount;
         segment_end_docks[s] = segments[s].end_dock_location_id;
-        tour_lengths[s] = segments[s].station_ids.count + 2;
+        station_counts[s] = segments[s].station_ids.count;
         location_views[s].values = segments[s].locations.values;
         location_views[s].count = segments[s].locations.count;
         station_views[s].values = segments[s].station_ids.values;
@@ -783,8 +780,8 @@ static int write_fixedport_json(sqlite3 *db,
     solution_view.unique_waypoint_location_count = unique_waypoints.count;
     solution_view.tour_segments_station_ids = station_views;
     solution_view.tour_segments_station_count = segment_count;
-    solution_view.tour_length = tour_lengths;
-    solution_view.tour_length_count = segment_count;
+    solution_view.station_count = station_counts;
+    solution_view.station_count_count = segment_count;
     solution_view.segment_count = segment_count;
     solution_view.segment_catch_amount = segment_catches;
     solution_view.segment_catch_count = segment_count;
@@ -804,6 +801,7 @@ static int write_fixedport_json(sqlite3 *db,
                                         &grand_total.total_distance_nm,
                                         1,
                                         grand_total.total_distance_nm);
+    gsp_summary_set_final_distance_breakdown(&summary, &grand_total);
     gsp_summary_set_runtime(&summary,
                             preprocessing_seconds,
                             &solution->runtime_seconds,
@@ -843,7 +841,7 @@ static int write_fixedport_json(sqlite3 *db,
     free(segment_breakdowns);
     free(segment_catches);
     free(segment_end_docks);
-    free(tour_lengths);
+    free(station_counts);
     free(dock_location_ids);
     free(port_visit_counts);
     int_vec_free(&unique_waypoints);
@@ -858,7 +856,7 @@ fail:
     free(segment_breakdowns);
     free(segment_catches);
     free(segment_end_docks);
-    free(tour_lengths);
+    free(station_counts);
     free(dock_location_ids);
     free(port_visit_counts);
     int_vec_free(&unique_waypoints);
@@ -885,7 +883,6 @@ int main(int argc, char **argv) {
     double time_limit_seconds = 0.0;
     double global_time_limit_seconds = 0.0;
     int thread_count = 0;
-    double haul_distance_scale = 0.0;
     clock_t t_start;
     clock_t t_after_load;
     clock_t t_done;
@@ -909,7 +906,7 @@ int main(int argc, char **argv) {
 
     t_start = clock();
     read_fixedport_config(yaml_path, &boat_id, &time_limit_seconds, &global_time_limit_seconds,
-                          &thread_count, &haul_distance_scale);
+                          &thread_count);
     (void)global_time_limit_seconds;
 
     if (sqlite3_open(db_path, &db) != SQLITE_OK) {
@@ -941,9 +938,7 @@ int main(int argc, char **argv) {
     mip_params.time_limit_seconds = time_limit_seconds;
     mip_params.thread_count = thread_count;
     mip_params.verbose = 1;
-    mip_params.exclude_haul_distance = !(haul_distance_scale > 0.0);
-    mip_params.use_scaled_haul_distance = (haul_distance_scale > 0.0);
-    mip_params.haul_distance_scale = (haul_distance_scale > 0.0) ? haul_distance_scale : 0.0;
+    mip_params.wait_for_first_incumbent = 1;
 
     printf("Fixedport MIP instance\n");
     printf("  boat: %s (id=%d)\n", app.boat.name ? app.boat.name : "Unknown", app.boat.boat_id);
@@ -953,9 +948,7 @@ int main(int argc, char **argv) {
            (time_limit_seconds > 0.0) ? "" : "none ",
            (time_limit_seconds > 0.0) ? time_limit_seconds : 0.0);
     printf("  threads: %d\n", thread_count);
-    printf("  objective: %s\n", (haul_distance_scale > 0.0) ? "scaled_haul" : "transit");
-    if (haul_distance_scale > 0.0)
-        printf("  haul distance scale: %.8f\n", haul_distance_scale);
+    printf("  objective: transit (haul excluded)\n");
     printf("Solving...\n");
 
     if (solve_mip_fixedport(&mip_instance, &mip_params, &mip_solution) != 0) {

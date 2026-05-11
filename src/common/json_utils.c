@@ -59,6 +59,14 @@ static int append_unique_int_local_json(int **arr, int *n, int *cap, int v) {
     return append_int_local_json(arr, n, cap, v);
 }
 
+static int find_station_node_index_local_json(const nn_instance_t *inst, int station_id) {
+    if (!inst) return -1;
+    for (int i = 0; i < inst->num_stations; i++) {
+        if (inst->nodes[i].table_id == station_id) return i;
+    }
+    return -1;
+}
+
 void gsp_summary_reset(gsp_summary_json_t *summary) {
     if (!summary) return;
     memset(summary, 0, sizeof(*summary));
@@ -84,6 +92,13 @@ void gsp_summary_set_status_and_distance(gsp_summary_json_t *summary,
     summary->distance_trajectory_nm = distance_trajectory_nm;
     summary->distance_trajectory_count = distance_trajectory_count;
     summary->final_distance_nm = final_distance_nm;
+}
+
+void gsp_summary_set_final_distance_breakdown(gsp_summary_json_t *summary,
+                                              const gsp_distance_breakdown_t *final_distance_breakdown) {
+    if (!summary || !final_distance_breakdown) return;
+    summary->has_final_distance_breakdown = 1;
+    summary->final_distance_breakdown = *final_distance_breakdown;
 }
 
 void gsp_summary_set_runtime(gsp_summary_json_t *summary,
@@ -141,8 +156,8 @@ void gsp_write_solution_json(FILE *fp,
     write_nested_int_arrays(fp, base, "tour_segments_station_ids",
                             view->tour_segments_station_ids,
                             view->tour_segments_station_count, 1);
-    fprintf(fp, "%s  \"tour_length\": [", base);
-    write_int_array(fp, view->tour_length, view->tour_length_count);
+    fprintf(fp, "%s  \"station_count\": [", base);
+    write_int_array(fp, view->station_count, view->station_count_count);
     fprintf(fp, "],\n");
     fprintf(fp, "%s  \"segment_count\": %d,\n", base, view->segment_count);
     fprintf(fp, "%s  \"segment_catch_amount\": [", base);
@@ -178,7 +193,7 @@ int gsp_write_segmented_solution_entry_json(FILE *fp,
     int uniq_wp_n = 0, uniq_wp_cap = 0;
     int *dock_location_ids = NULL;
     int dock_n = 0;
-    int *tour_length = NULL;
+    int *station_count = NULL;
     int ok = 0;
     const char *entry_base = entry_indent ? entry_indent : "";
     const char *value_base = value_indent ? value_indent : "";
@@ -187,8 +202,8 @@ int gsp_write_segmented_solution_entry_json(FILE *fp,
 
     location_segments = (gsp_int_list_view_t*)calloc((size_t)sol->segment_count, sizeof(gsp_int_list_view_t));
     station_segments = (gsp_int_list_view_t*)calloc((size_t)sol->segment_count, sizeof(gsp_int_list_view_t));
-    tour_length = (int*)calloc((size_t)sol->segment_count, sizeof(int));
-    if (!location_segments || !station_segments || !tour_length) goto cleanup;
+    station_count = (int*)calloc((size_t)sol->segment_count, sizeof(int));
+    if (!location_segments || !station_segments || !station_count) goto cleanup;
 
     {
         int *segment_end_location_ids = (int*)malloc((size_t)sol->segment_count * sizeof(int));
@@ -209,9 +224,8 @@ int gsp_write_segmented_solution_entry_json(FILE *fp,
     }
 
     for (int s = 0; s < sol->segment_count; s++) {
-        int start = sol->segment_starts[s];
-        int end = sol->segment_ends[s];
-        int base_cap = (end - start + 1) + 2;
+        int segment_end_loc = (s == sol->segment_count - 1) ? boat_end_loc_id : sol->tour[sol->segment_ends[s]];
+        int base_cap = 2 * sol->visit_station_count + 2;
         int *base = (int*)malloc((size_t)base_cap * sizeof(int));
         int *expanded = NULL;
         int expanded_n = 0, expanded_cap = 0;
@@ -220,23 +234,37 @@ int gsp_write_segmented_solution_entry_json(FILE *fp,
         int base_n = 0;
         if (!base) goto cleanup;
 
-        tour_length[s] = end - start + 1;
         base[base_n++] = (s == 0) ? boat_start_loc_id : sol->tour[sol->segment_ends[s - 1]];
-        for (int i = start; i <= end; i++) base[base_n++] = sol->tour[i];
-        if (s == sol->segment_count - 1 && (base_n == 0 || base[base_n - 1] != boat_end_loc_id)) {
-            base[base_n++] = boat_end_loc_id;
-        }
 
         for (int i = 0; i < sol->visit_station_count; i++) {
             if (sol->visit_station_segment[i] == s) {
-                if (!append_int_local_json(&station_ids, &station_n, &station_cap,
-                                           sol->visit_station_ids[i] *
-                                           ((sol->visit_station_direction &&
-                                             sol->visit_station_direction[i] < 0) ? -1 : 1))) {
+                int direction = (sol->visit_station_direction &&
+                                 sol->visit_station_direction[i] < 0) ? -1 : 1;
+                int station_idx = find_station_node_index_local_json(inst, sol->visit_station_ids[i]);
+                if (station_idx < 0) {
                     free(base);
                     free(station_ids);
                     goto cleanup;
                 }
+                if (!append_int_local_json(&station_ids, &station_n, &station_cap,
+                                           sol->visit_station_ids[i] * direction) ||
+                    !append_int_local_json(&base, &base_n, &base_cap,
+                                           direction > 0 ? inst->nodes[station_idx].start_loc_id
+                                                         : inst->nodes[station_idx].end_loc_id) ||
+                    !append_int_local_json(&base, &base_n, &base_cap,
+                                           direction > 0 ? inst->nodes[station_idx].end_loc_id
+                                                         : inst->nodes[station_idx].start_loc_id)) {
+                    free(base);
+                    free(station_ids);
+                    goto cleanup;
+                }
+            }
+        }
+        if (base_n == 0 || base[base_n - 1] != segment_end_loc) {
+            if (!append_int_local_json(&base, &base_n, &base_cap, segment_end_loc)) {
+                free(base);
+                free(station_ids);
+                goto cleanup;
             }
         }
 
@@ -279,6 +307,7 @@ int gsp_write_segmented_solution_entry_json(FILE *fp,
         location_segments[s].count = expanded_n;
         station_segments[s].values = station_ids;
         station_segments[s].count = station_n;
+        station_count[s] = station_n;
     }
 
     fprintf(fp, "%s\"%s\": ", entry_base, label ? label : "");
@@ -293,8 +322,8 @@ int gsp_write_segmented_solution_entry_json(FILE *fp,
         view.unique_waypoint_location_count = uniq_wp_n;
         view.tour_segments_station_ids = station_segments;
         view.tour_segments_station_count = sol->segment_count;
-        view.tour_length = tour_length;
-        view.tour_length_count = sol->segment_count;
+        view.station_count = station_count;
+        view.station_count_count = sol->segment_count;
         view.segment_count = sol->segment_count;
         view.segment_catch_amount = sol->segment_catches;
         view.segment_catch_count = sol->segment_count;
@@ -316,7 +345,7 @@ cleanup:
     free(station_segments);
     free(unique_waypoint_location_ids);
     free(dock_location_ids);
-    free(tour_length);
+    free(station_count);
     return ok;
 }
 
@@ -489,6 +518,7 @@ void gsp_write_summary_distance_json(FILE *fp,
                                      const double *trajectory_distance_nm,
                                      int trajectory_count,
                                      double final_distance_nm,
+                                     const gsp_distance_breakdown_t *final_distance_breakdown,
                                      int trailing_comma) {
     const char *base = indent ? indent : "";
     if (!fp) return;
@@ -502,7 +532,15 @@ void gsp_write_summary_distance_json(FILE *fp,
         fprintf(fp, "%.2f", trajectory_distance_nm ? trajectory_distance_nm[i] : 0.0);
     }
     fprintf(fp, "],\n");
-    fprintf(fp, "%s  \"final\": %.2f\n", base, final_distance_nm);
+    if (final_distance_breakdown) {
+        fprintf(fp, "%s  \"final\": {\n", base);
+        fprintf(fp, "%s    \"transit\": %.2f,\n", base, final_distance_breakdown->transit_distance_nm);
+        fprintf(fp, "%s    \"haul\": %.2f,\n", base, final_distance_breakdown->haul_distance_nm);
+        fprintf(fp, "%s    \"total\": %.2f\n", base, final_distance_breakdown->total_distance_nm);
+        fprintf(fp, "%s  }\n", base);
+    } else {
+        fprintf(fp, "%s  \"final\": %.2f\n", base, final_distance_nm);
+    }
     fprintf(fp, "%s}%s\n", base, trailing_comma ? "," : "");
 }
 
@@ -580,6 +618,8 @@ void gsp_write_summary_json(FILE *fp,
                                         summary->distance_trajectory_nm,
                                         summary->distance_trajectory_count,
                                         summary->final_distance_nm,
+                                        summary->has_final_distance_breakdown ?
+                                            &summary->final_distance_breakdown : NULL,
                                         summary->include_runtime || summary->include_mip);
     }
     if (summary->include_runtime) {
