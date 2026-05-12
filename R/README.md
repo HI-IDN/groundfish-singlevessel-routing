@@ -17,6 +17,7 @@ plotting scripts listed below.
 | `plot_refinement_sweep.R`     | `plot-refinement-sweep`     | `sol/refinement_sweep.png`, `sol/<method>/refinement_sweep.png` |
 | `plot_mip_solves.R`           | `plot-mip-solves`           | `sol/mip_solves.png`                    |
 | `make_baseline_table.R`       | `baseline_table`            | LaTeX baseline construction/segmentation table |
+| `make_refinement_table.R`     | `refinement_table`          | LaTeX refinement table and `sol/refinement_transit_sweeps.png` |
 | `gsp_db.R`                    | _(shared)_                  | Sourced automatically; not run directly |
 | `gsp_plot_utils.R`            | _(shared)_                  | Sourced automatically; not run directly |
 
