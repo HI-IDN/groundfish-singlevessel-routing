@@ -85,7 +85,7 @@ parse_l2seg_filter <- function(x) {
 # Labels / palettes
 # ---------------------------------------------------------------------------
 
-method_order  <- c("noport", "nn", "ge", "ci", "fixedport")
+method_order  <- c("nn", "ci", "ge", "noport", "fixedport")
 method_labels <- c(noport = "MH-OPT", nn = "MH-NN", ge = "MH-GE",
                    ci = "MH-CI", fixedport = "Fixed-port")
 
@@ -212,6 +212,7 @@ add_derived <- function(df) {
   df$boundary_attempt_linewidth <- df$boundary_attempts
 
   df$l2seg_label   <- vapply(df$l2seg, l2seg_label, character(1L))
+  df$l2seg_label <- factor(df$l2seg_label, levels = l2seg_levels_in(df))
   df$method_label  <- vapply(df$method, label_method, character(1L))
   df
 }
@@ -238,9 +239,21 @@ empty_panel <- function(label, size = 10) {
   cowplot::ggdraw() + cowplot::draw_label(label, size = size)
 }
 
+integer_legend_breaks <- function(x) {
+  finite_x <- x[is.finite(x)]
+  if (length(finite_x) == 0L) return(NULL)
+  b <- unique(round(scales::breaks_pretty(n = 4)(finite_x)))
+  b <- b[b >= min(finite_x) & b <= max(finite_x)]
+  if (length(b) == 0L) b <- unique(round(range(finite_x)))
+  b
+}
+
 plot_line_panel <- function(df, y, title, ylab, group_var, color_var,
                             palette, linetype_var = NULL,
-                            show_shape_legends = TRUE) {
+                            show_color_legend = FALSE,
+                            show_linetype_legend = FALSE,
+                            show_size_legend = TRUE,
+                            show_linewidth_legend = TRUE) {
   df <- df[order(df[[group_var]], df$pass_number), , drop = FALSE]
   df$prev_pass_number <- ave(df$pass_number, df[[group_var]],
                              FUN = function(x) c(NA_real_, head(x, -1L)))
@@ -255,8 +268,7 @@ plot_line_panel <- function(df, y, title, ylab, group_var, color_var,
     x = quote(pass_number),
     y = as.name(y),
     color = as.name(color_var),
-    group = as.name(group_var),
-    size = quote(stations_moved)
+    group = as.name(group_var)
   )
   segment_aes_args <- list(
     x = quote(prev_pass_number),
@@ -264,8 +276,7 @@ plot_line_panel <- function(df, y, title, ylab, group_var, color_var,
     y = quote(prev_y),
     yend = as.name(y),
     color = as.name(color_var),
-    group = as.name(group_var),
-    linewidth = quote(boundary_attempt_linewidth)
+    group = as.name(group_var)
   )
   if (!is.null(linetype_var)) {
     segment_aes_args$linetype <- as.name(linetype_var)
@@ -276,34 +287,44 @@ plot_line_panel <- function(df, y, title, ylab, group_var, color_var,
       data = segment_df,
       mapping = do.call(ggplot2::aes, segment_aes_args),
       inherit.aes = FALSE,
+      linewidth = 0.7,
       lineend = "round",
       na.rm = TRUE
     ) +
-    ggplot2::geom_point(na.rm = TRUE) +
-    ggplot2::scale_color_manual(values = palette) +
-    ggplot2::scale_size_continuous(name = "Stations moved", range = c(1.0, 3.2)) +
-    ggplot2::scale_linewidth_continuous(name = "Boundary attempts", range = c(0.35, 1.25)) +
+    ggplot2::geom_point(size = 2.0, na.rm = TRUE) +
+    ggplot2::scale_color_manual(
+      name = if (identical(color_var, "l2seg_label")) expression(L["2seg"]) else "Method",
+      values = palette
+    ) +
     ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
-    ggplot2::labs(title = title, x = "Pass", y = ylab) +
-    ggplot2::guides(color = "none", linetype = "none") +
+    ggplot2::labs(title = title, x = "Sweep", y = ylab) +
     ggplot2::theme(
       panel.grid.minor = ggplot2::element_blank(),
       legend.position = "bottom",
-      legend.box = "horizontal"
+      legend.box = "vertical",
+      legend.direction = "horizontal"
     )
 
   if (!is.null(linetype_var)) {
-    lt_levels <- unique(as.character(df[[linetype_var]]))
+    if (is.factor(df[[linetype_var]])) {
+      lt_levels <- levels(df[[linetype_var]])[levels(df[[linetype_var]]) %in% as.character(df[[linetype_var]])]
+    } else {
+      lt_levels <- unique(as.character(df[[linetype_var]]))
+    }
     lt_values <- rep(c("solid", "dashed", "dotted", "dotdash", "longdash", "twodash"),
                      length.out = length(lt_levels))
-    p <- p + ggplot2::scale_linetype_manual(values = stats::setNames(lt_values, lt_levels))
+    p <- p + ggplot2::scale_linetype_manual(
+      name = if (identical(linetype_var, "method_label")) "Method" else expression(L["2seg"]),
+      values = stats::setNames(lt_values, lt_levels)
+    )
   }
 
-  if (!show_shape_legends) {
-    p <- p + ggplot2::guides(size = "none")
-  } else {
-    p <- p + ggplot2::guides(linewidth = "none")
-  }
+  p <- p + ggplot2::guides(
+    color = if (show_color_legend) ggplot2::guide_legend(order = 1, nrow = 1) else "none",
+    linetype = if (show_linetype_legend) ggplot2::guide_legend(order = 2, nrow = 1) else "none",
+    size = "none",
+    linewidth = "none"
+  )
 
   p
 }
@@ -555,7 +576,7 @@ write_latex_table <- function(tbl, path,
                               label = "tab:results") {
   align <- 'lrrr|rr|rrr|rrr'
   header <- latex_escape(names(tbl))
-  rows <- apply(tbl, 1L, function(z) paste(latex_escape(z), collapse = " & "))
+  rows <- apply(tbl, 1L, function(z) paste(trimws(latex_escape(z)), collapse = " & "))
 
   lines <- c(
     "\\begin{table}[b]",
@@ -567,14 +588,16 @@ write_latex_table <- function(tbl, path,
     paste(header, collapse = " & "),
     "\\\\",
     "\\midrule",
-    paste0(rows, " \\\\"),
+    paste0(rows, "\\\\%"),
     "\\bottomrule",
     "\\end{tabular}",
     "\\end{table}"
   )
 
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
-  writeLines(lines, path, useBytes = TRUE)
+  con <- file(path, open = "wb")
+  on.exit(close(con), add = TRUE)
+  writeChar(paste0(paste(lines, collapse = "\n"), "\n"), con, eos = NULL, useBytes = TRUE)
   invisible(path)
 }
 
@@ -584,7 +607,7 @@ write_latex_table <- function(tbl, path,
 
 make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct) {
   passes <- df_m[df_m$pass_number > 0, , drop = FALSE]
-  if (nrow(passes) == 0L) return(empty_panel("No pass data"))
+  if (nrow(passes) == 0L) return(empty_panel("No sweep data"))
 
   passes$l2seg_label <- factor(passes$l2seg_label, levels = level_order)
   passes <- passes[order(passes$l2seg_label, passes$pass_number), , drop = FALSE]
@@ -593,7 +616,7 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
   summary$l2seg_label <- factor(summary$l2seg_label, levels = level_order)
   summary <- summary[order(summary$l2seg_label), , drop = FALSE]
 
-  col_names <- c("L2seg", "#", "hr", "Try", "Acc", "|S delta|", "Delta nm", "Transit", "Delta %")
+  col_names <- c("L2seg", "Sweep", "hr", "Try", "Acc", "|S delta|", "Delta nm", "Transit", "Delta %")
 
   out_rows <- list()
   row_fills <- character()
@@ -670,8 +693,8 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
 
   make_table_plot(
     tbl, row_fills,
-    title = "A - Pass statistics by L2seg",
-    subtitle = "per-pass rows plus bold summary rows; runtime (hr) - MIP solves - accepted moves - stations moved - transit",
+    title = "A - Sweep statistics by L2seg",
+    subtitle = "per-sweep rows plus bold summary rows; runtime (hr) - MIP solves - accepted moves - stations moved - transit",
     bold_cells = bold_cells,
     sep_after = sep_after,
     base_size = 7.4
@@ -682,7 +705,7 @@ make_combined_table_panel <- function(df, keep_methods, palette, tol_nm, tol_pct
   combined <- make_combined_summary_table(df, keep_methods, palette)
   summary <- combined$summary
 
-  col_names <- c("Method", "L2seg", "#", "hr", "MIP", "Acc", "|S delta|", "Delta nm", "Transit", "Delta %")
+  col_names <- c("Method", "L2seg", "Sweeps", "hr", "MIP", "Acc", "|S delta|", "Delta nm", "Transit", "Delta %")
   tbl <- data.frame(
     method  = as.character(summary$method_label),
     l2seg   = as.character(summary$l2seg_label),
@@ -724,7 +747,7 @@ make_combined_table_panel <- function(df, keep_methods, palette, tol_nm, tol_pct
   make_table_plot(
     tbl, fill_vec,
     title = "A - Method / L2seg summary",
-    subtitle = "passes \u00b7 runtime (hr) \u00b7 attempted \u00b7 accepted \u00b7
+    subtitle = "sweeps \u00b7 runtime (hr) \u00b7 attempted \u00b7 accepted \u00b7
     stations moved total/median/max \u00b7 transit improvement \u00b7 final transit",
     bold_cells = bold_cells,
     sep_after = sep_after,
@@ -749,16 +772,24 @@ make_common_panels <- function(df, mode, palette, tol_nm, tol_pct) {
       a = make_method_table_panel(df, levels_l2, palette, tol_nm, tol_pct),
       b = plot_line_panel(df, "transit_nm", "B - Transit distance by sweep",
                           "Transit (nm)", "series", "l2seg_label", palette,
-                          linetype_var = "l2seg_label", show_shape_legends = TRUE),
+                          linetype_var = "l2seg_label",
+                          show_color_legend = FALSE,
+                          show_linetype_legend = TRUE,
+                          show_size_legend = FALSE,
+                          show_linewidth_legend = FALSE),
       c = plot_line_panel(df[!is.na(df$rel_improvement_pct), , drop = FALSE],
                           "rel_improvement_pct", "C - Relative improvement by sweep",
                           "Improvement (%)", "series", "l2seg_label", palette,
-                          linetype_var = "l2seg_label", show_shape_legends = FALSE),
+                          linetype_var = "l2seg_label",
+                          show_color_legend = FALSE,
+                          show_linetype_legend = FALSE,
+                          show_size_legend = TRUE,
+                          show_linewidth_legend = FALSE),
       d = plot_box_panel(changed, "l2seg_label", "stations_moved", "l2seg_label", palette,
-                         "D - Stations moved per pass", "Stations moved"),
+                         "D - Stations moved per sweep", "Stations moved"),
       e = plot_box_panel(changed[changed$boundary_attempts > 0, , drop = FALSE],
                          "l2seg_label", "boundary_attempts", "l2seg_label", palette,
-                         "E - Boundary attempts per pass", "Boundary attempts"),
+                         "E - Boundary attempts per sweep", "Boundary attempts"),
       f = plot_box_panel(df[!is.na(df$boundary_change_rate), , drop = FALSE],
                          "l2seg_label", "boundary_change_rate", "l2seg_label", palette,
                          "F - Boundary change rate", "Changes / attempts", y_percent = TRUE)
@@ -768,22 +799,31 @@ make_common_panels <- function(df, mode, palette, tol_nm, tol_pct) {
     df <- df[df$method %in% keep_methods, , drop = FALSE]
     df$method_label <- factor(df$method_label, levels = names(palette))
     df$plot_series  <- paste0(as.character(df$method_label), "__", df$l2seg_label)
+    l2seg_palette <- make_l2seg_palette(l2seg_levels_in(df))
     changed <- df[as.logical(df$changed) & df$pass_number > 0, , drop = FALSE]
 
     list(
       a = make_combined_table_panel(df, keep_methods, palette, tol_nm, tol_pct),
       b = plot_line_panel(df, "transit_nm", "B - Transit distance by sweep",
-                          "Transit (nm)", "plot_series", "method_label", palette,
-                          linetype_var = "l2seg_label", show_shape_legends = TRUE),
+                          "Transit (nm)", "plot_series", "l2seg_label", l2seg_palette,
+                          linetype_var = "method_label",
+                          show_color_legend = FALSE,
+                          show_linetype_legend = TRUE,
+                          show_size_legend = FALSE,
+                          show_linewidth_legend = FALSE),
       c = plot_line_panel(df[!is.na(df$rel_improvement_pct), , drop = FALSE],
                           "rel_improvement_pct", "C - Relative improvement by sweep",
-                          "Improvement (%)", "plot_series", "method_label", palette,
-                          linetype_var = "l2seg_label", show_shape_legends = FALSE),
+                          "Improvement (%)", "plot_series", "l2seg_label", l2seg_palette,
+                          linetype_var = "method_label",
+                          show_color_legend = TRUE,
+                          show_linetype_legend = FALSE,
+                          show_size_legend = FALSE,
+                          show_linewidth_legend = FALSE),
       d = plot_box_panel(changed, "method_label", "stations_moved", "method_label", palette,
-                         "D - Stations moved per pass", "Stations moved"),
+                         "D - Stations moved per sweep", "Stations moved"),
       e = plot_box_panel(changed[changed$boundary_attempts > 0, , drop = FALSE],
                          "method_label", "boundary_attempts", "method_label", palette,
-                         "E - Boundary attempts per pass", "Boundary attempts"),
+                         "E - Boundary attempts per sweep", "Boundary attempts"),
       f = plot_box_panel(df[!is.na(df$boundary_change_rate), , drop = FALSE],
                          "method_label", "boundary_change_rate", "method_label", palette,
                          "F - Boundary change rate", "Changes / attempts", y_percent = TRUE)
