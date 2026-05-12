@@ -30,6 +30,8 @@ BASELINE_TABLE_OUTPUT ?=
 REFINEMENT_TABLE_OUTPUT ?=
 L2SEG_UNIT ?= seconds
 L2SEG ?=
+SWEEP_FALLBACK ?= false
+SWEEP_FALLBACK_FLAG := $(if $(filter true 1 yes on,$(SWEEP_FALLBACK)),--enable-fallback,)
 L2SEG_VARIANTS ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*l2seg_variants:[[:space:]]*\\[([^]]*)\\].*/\\1/p' '$(abspath $(CONFIG_YAML))' | tr ',' ' '")
 L2SEG_DEFAULT_VALUE ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*2seg:[[:space:]]*([0-9]+).*/\\1/p' '$(abspath $(CONFIG_YAML))' | head -n 1")
 METHOD_RAW := $(or $(METHOD),nn)
@@ -109,7 +111,7 @@ refinement_l2seg: $(SEGMENT_TARGET_JSON)
 		fi; \
 		echo "Running $(METHOD_NAME) refinement L2SEG=$${limit}s -> $$out"; \
 		cd "$(BUILD_DIR)"; \
-		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(METHOD_NAME) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(METHOD_NAME)/segment.json" --output "$$out" --l2seg-limit "$$limit" 2>&1 | tee "$$log"'
+		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(METHOD_NAME) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(METHOD_NAME)/segment.json" --output "$$out" --l2seg-limit "$$limit" $(SWEEP_FALLBACK_FLAG) 2>&1 | tee "$$log"'
 
 prepare-routing-data: $(COUNTRY_DB)
 
@@ -181,7 +183,7 @@ define refinement_rule
 	@echo "Running $(2) refinement -> $$@"
 	@bash -lc 'set -euo pipefail; \
 		cd "$(BUILD_DIR)"; \
-		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "$$@" 2>&1 | tee "../sol/$(1)/refinement.log"'
+		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "$$@" $(SWEEP_FALLBACK_FLAG) 2>&1 | tee "../sol/$(1)/refinement.log"'
 endef
 
 $(eval $(call construction_rule,nn,NN))
@@ -208,7 +210,7 @@ define refinement_l2seg_rule
 	@echo "Running $(1) refinement L2SEG=$(2)s -> $$@"
 	@bash -lc 'set -euo pipefail; \
 		cd "$(BUILD_DIR)"; \
-		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "../sol/$(1)/refinement_$(2).json" --l2seg-limit $(2) 2>&1 | tee "../sol/$(1)/refinement_$(2).log"'
+		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "../sol/$(1)/refinement_$(2).json" --l2seg-limit $(2) $(SWEEP_FALLBACK_FLAG) 2>&1 | tee "../sol/$(1)/refinement_$(2).log"'
 endef
 
 $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
@@ -319,6 +321,7 @@ help:
 	@echo "  make -C src refinement METHOD=nn"
 	@echo "  make -C src refinement METHOD=noport"
 	@echo "  make -C src refinement_l2seg METHOD=nn L2SEG=60"
+	@echo "  make -C src refinement METHOD=nn SWEEP_FALLBACK=true"
 	@echo ""
 	@echo "Shortcuts"
 	@echo "  make -C src noport             # same as construction METHOD=noport"

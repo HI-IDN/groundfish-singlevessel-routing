@@ -30,6 +30,7 @@ init:
 sweep:
   # Iteration control
   max_iterations: 100                    # Maximum iterations per L2SEG sweep
+  fallback_enabled: false                # Optional donor-segment fallback; off by default for paper runs
   l2seg_variants: [ 10, 30, 60, 120, 180, 240, 300, 600 ] # Additional refinement limits, in seconds
 
 # Gurobi Solver Settings
