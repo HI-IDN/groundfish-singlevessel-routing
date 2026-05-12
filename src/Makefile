@@ -26,6 +26,7 @@ SOLUTION_DB ?= ../dat/solution.db
 METHOD ?=
 TABLE_FORMAT ?= tex
 TABLE_OUTPUT ?=
+BASELINE_TABLE_OUTPUT ?=
 L2SEG_UNIT ?= seconds
 L2SEG ?=
 L2SEG_VARIANTS ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*l2seg_variants:[[:space:]]*\\[([^]]*)\\].*/\\1/p' '$(abspath $(CONFIG_YAML))' | tr ',' ' '")
@@ -40,7 +41,7 @@ SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
 SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db sweep_table plot-survey-overview plot-waypoints plot-survey-multivessel plot-construction-segment plot-refinement plot-refinement-sweep plot-mip-solves plot experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db baseline_table sweep_table plot-survey-overview plot-waypoints plot-survey-multivessel plot-construction-segment plot-refinement plot-refinement-sweep plot-mip-solves plot experiments help
 
 all: build
 
@@ -230,6 +231,9 @@ sweep_table:
 		fi; \
 		Rscript "$${args[@]}"'
 
+baseline_table: solution_db
+	@cd .. && Rscript R/make_baseline_table.R $(if $(BASELINE_TABLE_OUTPUT),--output "$(BASELINE_TABLE_OUTPUT)",)
+
 solution_db:
 	@test -x "$(BUILD_DIR)/solution_db_export" || { \
 		echo "Missing $(BUILD_DIR)/solution_db_export."; \
@@ -317,6 +321,8 @@ help:
 	@echo "  make -C src fixedport          # same as construction METHOD=fixedport"
 	@echo ""
 	@echo "Tables"
+	@echo "  make -C src baseline_table"
+	@echo "  make -C src baseline_table BASELINE_TABLE_OUTPUT=../Paper/tables/tbl_baseline.tex"
 	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex"
 	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=tex TABLE_OUTPUT=../Paper/tables/tbl_mh_init_ci.tex"
 	@echo "  make -C src sweep_table METHOD=nn TABLE_FORMAT=md L2SEG_UNIT=minutes"
