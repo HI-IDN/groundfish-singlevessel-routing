@@ -6,10 +6,10 @@
 | --- | --- | --- | ---: | ---: |
 | NP-MIP | No-port directed TSP | `L_NP = 2 hrs` | 3562.57 | N/A |
 | C-MIP | Capacity-aware MIP | `L_cap = 12 hrs` | N/A | timeout |
-| MH-NN | MH with nearest-neighbor | `L_2seg = 1-8 min` | N/A | 6911.67 |
-| MH-CI | MH with cheapest-insertion | `L_2seg = 1-8 min` | 4377.20 | 5354.93 |
-| MH-GE | MH with greedy-edge | `L_2seg = 1-8 min` | 5027.03 | 5104.34 |
-| MH-noport | MH with NP-based initialization | `L_2seg = 1-8 min` | NP-MIP | 4762.17 |
+| MH-NN | MH with nearest-neighbor | `L_2seg = 10-600 s` | N/A | 6911.67 |
+| MH-CI | MH with cheapest-insertion | `L_2seg = 10-600 s` | 4377.20 | 5354.93 |
+| MH-GE | MH with greedy-edge | `L_2seg = 10-600 s` | 5027.03 | 5104.34 |
+| MH-noport | MH with NP-based initialization | `L_2seg = 10-600 s` | NP-MIP | 4762.17 |
 
 The four initialization strategies yield very different starting points. NN gives the weakest capacity-feasible baseline, while noport gives the strongest baseline at the cost of a separate no-port MIP solve.
 
@@ -17,8 +17,9 @@ The four initialization strategies yield very different starting points. NN give
 
 Two broad patterns emerge:
 
-1. Moderate two-segment limits, around 2 to 3 minutes, tend to perform best for a given initialization.
-2. Larger limits, 4 to 8 minutes, substantially increase runtime without giving systematic improvements in the final route.
+1. The experiment sweep uses capped two-segment limits only, up to 600 seconds.
+2. Moderate two-segment limits, around 2 to 3 minutes, tend to perform best for a given initialization.
+3. Larger limits substantially increase runtime, so the 600-second refinement is used as the detailed before/after/table example rather than running uncapped refinement.
 
 The practical implication is that many short local MIP solves are more effective than fewer long ones.
 
