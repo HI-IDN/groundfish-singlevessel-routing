@@ -44,7 +44,7 @@ SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
 SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db baseline_table refinement_table sweep_table plot-survey-overview plot-waypoints plot-survey-multivessel plot-construction-segment plot-refinement plot-refinement-example plot-refinement-sweep plot-mip-solves plot experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db baseline_table refinement_table sweep_table plot-survey-overview plot-waypoints plot-survey-multivessel plot-construction-segment plot-refinement plot-refinement-example plot-refinement-sweep plot-mip-solves plot camera-ready experiments help
 
 all: build
 
@@ -274,9 +274,12 @@ plot: solution_db
 	@cd .. && Rscript R/plot_survey_multivessel.R --output sol/survey/multivessel.png --skip_existing false
 	@cd .. && Rscript R/plot_construction_segment.R --method all --skip_existing false
 	@cd .. && Rscript R/plot_refinement.R --method all --l2seg all --skip_existing false
-	@cd .. && Rscript R/plot_refinement.R --method noport --l2seg 600 --camera_ready true --skip_existing false
 	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method true --skip_existing false
 	@cd .. && Rscript R/plot_mip_solves.R --output sol/mip_solves.png --skip_existing false
+
+camera-ready: solution_db
+	@cd .. && Rscript R/plot_refinement.R --method noport --l2seg 600 --camera_ready true --skip_existing false
+	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method false --camera_ready true --camera_ready_prefix sol/refinement_sweep --skip_existing true
 
 experiments: prepare-routing-data
 	@bash -lc 'set -euo pipefail; \
@@ -341,6 +344,7 @@ help:
 	@echo "  make -C src experiments          # runs L2SEG values from config/gsp_solver.yaml in order"
 	@echo "  make -C src solution_db          # rebuild dat/solution.db from sol/**/*.json"
 	@echo "  make -C src plot                  # rebuild solution DB, then run all static R plots"
+	@echo "  make -C src camera-ready          # overwrite camera-ready TikZ/TeX exports"
 	@echo "  make -C src plot-survey-overview  # station catch overview"
 	@echo "  make -C src plot-waypoints        # waypoints and ports sanity check"
 	@echo "  make -C src plot-survey-multivessel"

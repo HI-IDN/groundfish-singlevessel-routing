@@ -39,7 +39,9 @@ parse_args <- function(args) {
     # method/L2seg setting has replicated independent runs or comparable samples.
     # For percentages this is percentage points; for transit nm this is nm.
     highlight_tol_pct = "0.2",
-    highlight_tol_nm  = "1.0"
+    highlight_tol_nm  = "1.0",
+    camera_ready      = "false",
+    camera_ready_prefix = "sol/refinement_sweep"
   )
   i <- 1L
   while (i <= length(args)) {
@@ -788,6 +790,99 @@ assemble_method_layout <- function(panels, title) {
   add_header(body, title)
 }
 
+set1_palette <- function(labels) {
+  colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3",
+              "#FF7F00", "#FFFF33", "#A65628", "#F781BF")
+  stats::setNames(rep(colors, length.out = length(labels)), labels)
+}
+
+camera_ready_line_theme <- function() {
+  ggplot2::theme_bw(base_size = 9) +
+    ggplot2::theme(
+      legend.position = "bottom",
+      legend.title = ggplot2::element_blank(),
+      legend.key.width = grid::unit(0.9, "lines"),
+      panel.grid.minor = ggplot2::element_blank(),
+      plot.title = ggplot2::element_text(face = "bold", size = 10)
+    )
+}
+
+make_camera_ready_method_plot <- function(df) {
+  method_levels <- vapply(methods_present_in(df), label_method, character(1L))
+  df$method_label <- factor(df$method_label, levels = method_levels)
+
+  ggplot2::ggplot(
+    df,
+    ggplot2::aes(
+      x = pass_number,
+      y = transit_nm,
+      color = method_label,
+      group = series
+    )
+  ) +
+    ggplot2::geom_line(linewidth = 0.55, alpha = 0.72, na.rm = TRUE) +
+    ggplot2::geom_point(size = 1.15, alpha = 0.78, na.rm = TRUE) +
+    ggplot2::scale_color_manual(values = set1_palette(method_levels)) +
+    ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
+    ggplot2::labs(
+      title = "A \u2014 Transit distance by sweep",
+      x = "Pass",
+      y = "Transit (nm)"
+    ) +
+    camera_ready_line_theme()
+}
+
+make_camera_ready_l2seg_plot <- function(df) {
+  l2seg_levels <- l2seg_levels_in(df)
+  df$l2seg_label <- factor(df$l2seg_label, levels = l2seg_levels)
+
+  ggplot2::ggplot(
+    df[!is.na(df$rel_improvement_pct), , drop = FALSE],
+    ggplot2::aes(
+      x = pass_number,
+      y = rel_improvement_pct,
+      color = l2seg_label,
+      group = series
+    )
+  ) +
+    ggplot2::geom_line(linewidth = 0.55, alpha = 0.72, na.rm = TRUE) +
+    ggplot2::geom_point(size = 1.15, alpha = 0.78, na.rm = TRUE) +
+    ggplot2::scale_color_manual(values = set1_palette(l2seg_levels)) +
+    ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
+    ggplot2::labs(
+      title = "B \u2014 Relative improvement by sweep",
+      x = "Pass",
+      y = "Improvement (%)"
+    ) +
+    camera_ready_line_theme()
+}
+
+save_camera_ready_sweep_panels <- function(prefix, df) {
+  dir.create(dirname(prefix), showWarnings = FALSE, recursive = TRUE)
+  output_a <- paste0(prefix, "_A_transit.png")
+  output_b <- paste0(prefix, "_B_improvement.png")
+
+  ggplot2::ggsave(
+    output_a,
+    make_camera_ready_method_plot(df),
+    width = 5.2,
+    height = 3.2,
+    dpi = 300,
+    bg = "white"
+  )
+  ggplot2::ggsave(
+    output_b,
+    make_camera_ready_l2seg_plot(df),
+    width = 5.2,
+    height = 3.2,
+    dpi = 300,
+    bg = "white"
+  )
+
+  message("Wrote ", output_a)
+  message("Wrote ", output_b)
+}
+
 # ---------------------------------------------------------------------------
 # Public plot functions
 # ---------------------------------------------------------------------------
@@ -798,6 +893,13 @@ make_combined_plot <- function(df, tol_nm, tol_pct) {
   panels <- make_common_panels(df, mode = "combined", palette = palette,
                                tol_nm = tol_nm, tol_pct = tol_pct)
   assemble_combined_layout(panels, "Refinement Sweep Summary \u2014 All Methods")
+}
+
+make_combined_panels <- function(df, tol_nm, tol_pct) {
+  keep_methods <- methods_present_in(df)
+  palette <- make_method_palette(keep_methods)
+  make_common_panels(df, mode = "combined", palette = palette,
+                     tol_nm = tol_nm, tol_pct = tol_pct)
 }
 
 make_method_plot <- function(df_m, method, tol_nm, tol_pct) {
@@ -835,8 +937,11 @@ main <- function() {
 
   message(sprintf("Loaded %d pass records across %d method(s)", nrow(df), length(methods_present)))
 
+  combined_panels <- NULL
+
   if (!parse_bool(opt$skip_existing) || !file.exists(opt$output)) {
-    combined <- make_combined_plot(df, tol_nm = tol_nm, tol_pct = tol_pct)
+    combined_panels <- make_combined_panels(df, tol_nm = tol_nm, tol_pct = tol_pct)
+    combined <- assemble_combined_layout(combined_panels, "Refinement Sweep Summary \u2014 All Methods")
     dir.create(dirname(opt$output), showWarnings = FALSE, recursive = TRUE)
     ggplot2::ggsave(opt$output, combined, width = 15, height = 10, dpi = 200, bg = "white")
     message("Wrote ", opt$output)
@@ -847,6 +952,10 @@ main <- function() {
     combined_tbl <- make_combined_summary_table(df, keep_methods, palette)$tbl
     write_latex_table(combined_tbl, tex_path)
     message("Wrote ", tex_path)
+  }
+
+  if (parse_bool(opt$camera_ready)) {
+    save_camera_ready_sweep_panels(opt$camera_ready_prefix, df)
   }
 
   if (parse_bool(opt$per_method)) {
