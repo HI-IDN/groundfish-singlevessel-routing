@@ -428,17 +428,32 @@ output_path_for_variant <- function(method, l2seg, output, variant_count) {
   file.path(output, method, sprintf("mh_phase1_%d.png", l2seg))
 }
 
+save_tikz_plot <- function(path, plot, width, height) {
+  if (!requireNamespace("tikzDevice", quietly = TRUE)) {
+    stop("Missing required R package for camera-ready TikZ panels: tikzDevice", call. = FALSE)
+  }
+
+  tikzDevice::tikz(
+    file = path,
+    width = width,
+    height = height,
+    standAlone = FALSE
+  )
+  on.exit(grDevices::dev.off(), add = TRUE)
+  print(plot)
+}
+
 save_camera_ready_panels <- function(output, p_a, p_b, p_c, table_data = NULL, palette = NULL) {
   base <- tools::file_path_sans_ext(output)
   dir.create(dirname(output), showWarnings = FALSE, recursive = TRUE)
-  output_a <- paste0(base, "_A_before.png")
-  output_b <- paste0(base, "_B_after.png")
+  output_a <- paste0(base, "_A_before.tikz")
+  output_b <- paste0(base, "_B_after.tikz")
   output_c <- paste0(base, "_C_table.tex")
 
-  ggplot2::ggsave(output_a, p_a+ggplot2::ggtitle(NULL,NULL),
-                  width = 4.2, height = 2.7, dpi = 300, bg = "white")
-  ggplot2::ggsave(output_b, p_b+ggplot2::ggtitle(NULL,NULL),
-                  width = 4.2, height = 2.7, dpi = 300, bg = "white")
+  save_tikz_plot(output_a, p_a + ggplot2::ggtitle(NULL, NULL),
+                 width = 4.2, height = 2.7)
+  save_tikz_plot(output_b, p_b + ggplot2::ggtitle(NULL, NULL),
+                 width = 4.2, height = 2.7)
 
   if (!is.null(table_data) && !is.null(palette)) {
     write_segment_comparison_latex(
