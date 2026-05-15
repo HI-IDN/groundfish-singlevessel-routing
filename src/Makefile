@@ -44,7 +44,7 @@ SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
 SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db baseline_table refinement_table sweep_table plot-survey-overview plot-waypoints plot-survey-multivessel plot-construction-segment plot-refinement plot-refinement-sweep plot-mip-solves plot experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db baseline_table refinement_table sweep_table plot-survey-overview plot-waypoints plot-survey-multivessel plot-construction-segment plot-refinement plot-refinement-example plot-refinement-sweep plot-mip-solves plot experiments help
 
 all: build
 
@@ -222,10 +222,6 @@ EXPERIMENT_L2SEG_TARGETS = $(foreach l,$(L2SEG_VARIANTS),\
   $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
     ../sol/$(m)/refinement_$(l).json))
 
-# Default (uncapped) targets
-EXPERIMENT_DEFAULT_TARGETS = $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
-  ../sol/$(m)/refinement.json)
-
 sweep_table:
 	@bash -lc 'set -euo pipefail; cd ..; \
 		args=(R/make_sweep_table.R --input-dir "sol/$(METHOD_NAME)" --format "$(TABLE_FORMAT)" --l2seg-unit "$(L2SEG_UNIT)" --warn-missing); \
@@ -263,6 +259,9 @@ plot-construction-segment: solution_db
 plot-refinement: solution_db
 	@cd .. && Rscript R/plot_refinement.R --method all --l2seg all --skip_existing false
 
+plot-refinement-example: solution_db
+	@cd .. && Rscript R/plot_refinement.R --method noport --l2seg 600 --camera_ready true --skip_existing false
+
 plot-refinement-sweep: solution_db
 	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method true --skip_existing false
 
@@ -275,20 +274,18 @@ plot: solution_db
 	@cd .. && Rscript R/plot_survey_multivessel.R --output sol/survey/multivessel.png --skip_existing false
 	@cd .. && Rscript R/plot_construction_segment.R --method all --skip_existing false
 	@cd .. && Rscript R/plot_refinement.R --method all --l2seg all --skip_existing false
+	@cd .. && Rscript R/plot_refinement.R --method noport --l2seg 600 --camera_ready true --skip_existing false
 	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method true --skip_existing false
 	@cd .. && Rscript R/plot_mip_solves.R --output sol/mip_solves.png --skip_existing false
 
 experiments: prepare-routing-data
 	@bash -lc 'set -euo pipefail; \
+		cd "$(CURDIR)"; \
 		for l in $(L2SEG_VARIANTS); do \
 			echo "Running all methods for L2SEG=$${l}s"; \
 			for m in $(EXPERIMENT_REFINEMENT_METHODS); do \
 				$(MAKE) -C . "../sol/$${m}/refinement_$${l}.json"; \
 			done; \
-		done; \
-		echo "Running default refinement targets"; \
-		for m in $(EXPERIMENT_REFINEMENT_METHODS); do \
-			$(MAKE) -C . "../sol/$${m}/refinement.json"; \
 		done'
 	@echo "All experiments up to date."
 
@@ -349,6 +346,7 @@ help:
 	@echo "  make -C src plot-survey-multivessel"
 	@echo "  make -C src plot-construction-segment"
 	@echo "  make -C src plot-refinement"
+	@echo "  make -C src plot-refinement-example"
 	@echo "  make -C src plot-refinement-sweep"
 	@echo "  make -C src plot-mip-solves"
 	@echo "  make -C src clean"
