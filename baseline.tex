@@ -1,0 +1,36 @@
+\begin{table}[b]
+\centering
+\caption{
+Variant notation, baseline initialization distances, and runtime.
+}
+\label{tab:variant-notation}
+
+{\fontsize{6.5}{6.2}\selectfont
+\setlength{\tabcolsep}{4pt}
+
+\begin{tabular}[t]{llllr}
+\toprule
+Notation & Variant & \multicolumn{2}{c}{Distance (nm)} & Runtime\\
+\cmidrule(lr){3-4}
+ &  & no port & with port & \\
+\midrule
+NP-MIP & No-port directed TSP & 3552.03 & \multicolumn{1}{c}{\textemdash} & 3.5 h \\
+C-MIP & Capacity-aware MIP & \multicolumn{1}{c}{\textemdash} & timeout$^\dagger$ & 2 days \\
+MH-NN & MH with nearest-neighbor & \multicolumn{1}{c}{\textemdash} & 5500.29 & 0.9 min \\
+MH-CI & MH with cheapest-insertion & 4848.69 & 5172.83 & 1.1 min \\
+MH-GE & MH with greedy-edge & 5138.75 & 4858.97 & 2.3 min \\
+MH-OPT & MH with NP-based initialization & 3552.03$^\ast$ & 4335.18 & 1.5 min \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.15em}
+
+\tiny
+\begin{tabular}{@{}l@{}}
+\textemdash{} variant does not entail a corresponding no-port or with-port solution. \\
+$^\ast$ Uses the NP-MIP ordering as initialization. \\
+$^\dagger$ No feasible solution found before timeout.
+\end{tabular}
+
+}
+\end{table}

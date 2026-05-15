@@ -1,9 +1,8 @@
 #!/usr/bin/env Rscript
 # make_baseline_table.R
 #
-# Builds the LaTeX table for construction and segmentation baseline transit
-# distances from dat/solution.db, plus a short summary of segment/refinement
-# MIP runtimes.
+# Builds the LaTeX table for variant notation, construction/segmentation
+# baseline transit distances, and runtimes.
 #
 # Run from the project root:
 #   Rscript R/make_baseline_table.R
@@ -23,14 +22,14 @@ load_required_packages <- function(pkgs) {
   }
 }
 
-load_required_packages(c("dplyr", "knitr", "tibble"))
+load_required_packages(c("tibble"))
 
 parse_args <- function(args) {
   out <- list(
     gsp_db = "dat/gsp.db",
     solution_db = "dat/solution.db",
     config = "config/gsp_solver.yaml",
-    output = NULL
+    output = "baseline.tex"
   )
 
   i <- 1L
@@ -49,20 +48,22 @@ parse_args <- function(args) {
 }
 
 format_runtime <- function(seconds) {
-  ifelse(
-    is.na(seconds),
-    "---",
-    ifelse(
-      seconds >= 7200,
-      sprintf("%.1f h", seconds / 3600),
-      sprintf("%.1f min", seconds / 60)
-    )
-  )
+  if (is.na(seconds)) return("---")
+  if (seconds >= 7200) return(sprintf("%.1f h", seconds / 3600))
+  sprintf("%.1f min", seconds / 60)
 }
 
-format_timeout_runtime <- function(seconds) {
+format_duration <- function(seconds) {
   if (is.na(seconds)) return("---")
-  if (seconds %% 3600 == 0) return(sprintf("%.0f h", seconds / 3600))
+  if (seconds %% (7 * 24 * 3600) == 0 && seconds >= 7 * 24 * 3600) {
+    value <- seconds / (7 * 24 * 3600)
+    return(sprintf("%d %s", value, if (value == 1) "week" else "weeks"))
+  }
+  if (seconds %% (24 * 3600) == 0 && seconds >= 24 * 3600) {
+    value <- seconds / (24 * 3600)
+    return(sprintf("%d %s", value, if (value == 1) "day" else "days"))
+  }
+  if (seconds %% 3600 == 0 && seconds >= 3600) return(sprintf("%.0f h", seconds / 3600))
   sprintf("%.1f min", seconds / 60)
 }
 
@@ -71,7 +72,7 @@ format_distance <- function(value) {
   sprintf("%.2f", value)
 }
 
-read_config_timeout_seconds <- function(path, key) {
+read_config_number <- function(path, key) {
   if (!file.exists(path)) {
     warning(sprintf("Missing solver config: %s", path))
     return(NA_real_)
@@ -80,7 +81,7 @@ read_config_timeout_seconds <- function(path, key) {
   lines <- readLines(path, warn = FALSE)
   match <- grep(sprintf("^\\s*%s:\\s*[0-9]+", key), lines, value = TRUE)
   if (length(match) == 0L) {
-    warning(sprintf("Missing timeout key '%s' in %s", key, path))
+    warning(sprintf("Missing numeric key '%s' in %s", key, path))
     return(NA_real_)
   }
 
@@ -146,62 +147,15 @@ runtime_for_phases <- function(con, method, phases) {
   format_runtime(sum(values, na.rm = TRUE))
 }
 
-station_towing_distance <- function(con) {
-  run_id <- final_run_id(con, "noport", "construction")
-  if (is.na(run_id)) return(NA_real_)
-
-  rows <- db_read(con, "
-    SELECT total_nm - transit_nm AS haul_nm
-    FROM solution.distance
-    WHERE run_id = ?
-      AND segment IS NULL
-  ", list(run_id))
-
-  if (nrow(rows) == 0L || is.na(rows$haul_nm[[1]])) return(NA_real_)
-  as.numeric(rows$haul_nm[[1]])
-}
-
-phase_runtime_summary <- function(con) {
-  df <- db_read(con, "
-    SELECT
-      CASE
-        WHEN phase_code = 'S' THEN 'segment'
-        WHEN phase_code = 'R' THEN 'refinement'
-      END AS source,
-      runtime_seconds
-    FROM solution.mip_solves
-    WHERE (phase_code = 'S' AND segment_model = '1seg')
-       OR (phase_code = 'R' AND segment_model = '2seg')
-  ")
-
-  if (nrow(df) == 0L) return(character(0))
-
-  df %>%
-    filter(source %in% c("segment", "refinement")) %>%
-    mutate(source = factor(source, levels = c("segment", "refinement"))) %>%
-    group_by(source) %>%
-    summarise(
-      n = n(),
-      mean_s = mean(runtime_seconds, na.rm = TRUE),
-      max_s = max(runtime_seconds, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(
-      label = dplyr::case_when(
-        source == "segment" ~ "Single-segment post-optimization",
-        source == "refinement" ~ "Two-segment refinement",
-        TRUE ~ as.character(source)
-      ),
-      summary = sprintf(
-        "%s subproblems: $n=%d$, mean %.1f s, max %.1f s",
-        label, n, mean_s, max_s
-      )
-    ) %>%
-    pull(summary)
+latex_distance <- function(value, suffix = "") {
+  if (is.na(value)) return("\\multicolumn{1}{c}{\\textemdash}")
+  paste0(format_distance(value), suffix)
 }
 
 build_table <- function(con, config_path) {
-  cmip_timeout <- format_timeout_runtime(read_config_timeout_seconds(config_path, "Xseg"))
+  cmip_timeout <- format_duration(read_config_number(config_path, "global_time_limit_seconds"))
+
+  np_mip_distance <- run_transit_distance(con, "noport", "construction")
 
   runtime_rows <- tibble::tribble(
     ~method,     ~Runtime,
@@ -214,19 +168,66 @@ build_table <- function(con, config_path) {
   )
 
   method_rows <- tibble::tribble(
-    ~method,     ~Notation, ~Variant,                        ~"No port",                      ~"With port",
-    "noport",    "NP-MIP",  "No-port directed TSP",           format_distance(run_transit_distance(con, "noport", "construction")), "---",
-    "fixedport", "C-MIP",   "Capacity-aware MIP",             "---",                          "timeout",
-    "nn",        "MH-NN",   "MH with nearest-neighbor",       "---",                          format_distance(run_transit_distance(con, "nn", "segmentation")),
-    "ci",        "MH-CI",   "MH with cheapest-insertion",     format_distance(run_transit_distance(con, "ci", "construction")),     format_distance(run_transit_distance(con, "ci", "segmentation")),
-    "ge",        "MH-GE",   "MH with greedy-edge",            format_distance(run_transit_distance(con, "ge", "construction")),     format_distance(run_transit_distance(con, "ge", "segmentation")),
-    "noport_mh", "MH-OPT",  "MH with NP-based initialization", "(NP-MIP)",                     format_distance(run_transit_distance(con, "noport", "segmentation"))
+    ~method,     ~Notation, ~Variant,                        ~no_port,                                ~with_port,
+    "noport",    "NP-MIP",  "No-port directed TSP",           latex_distance(np_mip_distance),         "\\multicolumn{1}{c}{\\textemdash}",
+    "fixedport", "C-MIP",   "Capacity-aware MIP",             "\\multicolumn{1}{c}{\\textemdash}",      "timeout$^\\dagger$",
+    "nn",        "MH-NN",   "MH with nearest-neighbor",       "\\multicolumn{1}{c}{\\textemdash}",      latex_distance(run_transit_distance(con, "nn", "segmentation")),
+    "ci",        "MH-CI",   "MH with cheapest-insertion",     latex_distance(run_transit_distance(con, "ci", "construction")), latex_distance(run_transit_distance(con, "ci", "segmentation")),
+    "ge",        "MH-GE",   "MH with greedy-edge",            latex_distance(run_transit_distance(con, "ge", "construction")), latex_distance(run_transit_distance(con, "ge", "segmentation")),
+    "noport_mh", "MH-OPT",  "MH with NP-based initialization", latex_distance(np_mip_distance, "$^\\ast$"), latex_distance(run_transit_distance(con, "noport", "segmentation"))
   )
 
-  method_rows %>%
-    left_join(runtime_rows, by = "method") %>%
-    mutate(Runtime = ifelse(is.na(Runtime), "---", Runtime)) %>%
-    select(Notation, Variant, "No port", "With port", Runtime)
+  rows <- merge(method_rows, runtime_rows, by = "method", all.x = TRUE, sort = FALSE)
+  rows$Runtime[is.na(rows$Runtime)] <- "---"
+  rows$Runtime[rows$method == "fixedport"] <- cmip_timeout
+  rows[match(method_rows$method, rows$method), ]
+}
+
+render_baseline_latex <- function(rows) {
+  row_lines <- apply(rows, 1L, function(row) {
+    sprintf(
+      "%s & %s & %s & %s & %s \\\\",
+      row[["Notation"]],
+      row[["Variant"]],
+      row[["no_port"]],
+      row[["with_port"]],
+      row[["Runtime"]]
+    )
+  })
+
+  c(
+    "\\begin{table}[b]",
+    "\\centering",
+    "\\caption{",
+    "Variant notation, baseline initialization distances, and runtime.",
+    "}",
+    "\\label{tab:variant-notation}",
+    "",
+    "{\\fontsize{6.5}{6.2}\\selectfont",
+    "\\setlength{\\tabcolsep}{4pt}",
+    "",
+    "\\begin{tabular}[t]{llllr}",
+    "\\toprule",
+    "Notation & Variant & \\multicolumn{2}{c}{Distance (nm)} & Runtime\\\\",
+    "\\cmidrule(lr){3-4}",
+    " &  & no port & with port & \\\\",
+    "\\midrule",
+    row_lines,
+    "\\bottomrule",
+    "\\end{tabular}",
+    "",
+    "\\vspace{0.15em}",
+    "",
+    "\\tiny",
+    "\\begin{tabular}{@{}l@{}}",
+    "\\textemdash{} variant does not entail a corresponding no-port or with-port solution. \\\\",
+    "$^\\ast$ Uses the NP-MIP ordering as initialization. \\\\",
+    "$^\\dagger$ No feasible solution found before timeout.",
+    "\\end{tabular}",
+    "",
+    "}",
+    "\\end{table}"
+  )
 }
 
 main <- function() {
@@ -234,36 +235,13 @@ main <- function() {
   con <- connect_gsp_db(opt$gsp_db, opt$solution_db)
   on.exit(DBI::dbDisconnect(con), add = TRUE)
 
-  table_tbl <- build_table(con, opt$config)
-  runtime_summary <- phase_runtime_summary(con)
-  station_distance <- format_distance(station_towing_distance(con))
-
-  latex_table <- knitr::kable(
-    table_tbl,
-    format = "latex",
-    booktabs = TRUE,
-    escape = FALSE,
-    linesep = "",
-    label = "construction-segmentation-baselines",
-    caption = "Construction and segmentation baseline transit distances and total runtime.
-  The no-port column gives the underlying construction route, and the with-port column gives the
-  corresponding capacity-feasible port segmentation.
-  All distance entries exclude the common station towing distance."
-  )
-
-  text <- paste0(
-    latex_table,
-    "\n\n\\noindent ",
-    sprintf(
-      "The common station towing distance is %s nm; table distances report transit distance only. ",
-      station_distance
-    ),
-    paste(runtime_summary, collapse = "; "),
-    ".\n"
-  )
+  text <- paste(render_baseline_latex(build_table(con, opt$config)), collapse = "\n")
 
   if (!is.null(opt$output) && nzchar(opt$output)) {
-    dir.create(dirname(opt$output), recursive = TRUE, showWarnings = FALSE)
+    output_dir <- dirname(opt$output)
+    if (!identical(output_dir, ".")) {
+      dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    }
     writeLines(text, opt$output, useBytes = TRUE)
     message("Wrote ", opt$output)
   } else {
