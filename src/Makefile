@@ -279,7 +279,7 @@ plot: solution_db
 
 camera-ready: solution_db
 	@cd .. && Rscript R/plot_refinement.R --method noport --l2seg 600 --camera_ready true --skip_existing false
-	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method false --camera_ready true --camera_ready_prefix sol/refinement_sweep --skip_existing true
+	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method false --camera_ready true --skip_existing true
 
 experiments: prepare-routing-data
 	@bash -lc 'set -euo pipefail; \

@@ -4,8 +4,8 @@
 # DB-based refinement sweep plots.
 #
 # Produces:
-#   1. Combined plot    — colour = method, linetype = L2seg
-#   2. Per-method plots — colour/group = L2seg, with table panel A spanning both rows
+#   1. Combined plot    - colour = method, linetype = L2seg
+#   2. Per-method plots - colour/group = L2seg, with table panel A spanning both rows
 #
 # Usage from project root:
 #   Rscript R/plot_refinement_sweep.R
@@ -34,14 +34,13 @@ parse_args <- function(args) {
     output        = "sol/refinement_sweep.png",
     per_method    = "true",
     skip_existing = "false",
+    camera_ready  = "false",
     # Practical tie rule for table highlighting.
     # A formal alpha=0.05 significance rule is not valid here unless each
     # method/L2seg setting has replicated independent runs or comparable samples.
     # For percentages this is percentage points; for transit nm this is nm.
     highlight_tol_pct = "0.2",
-    highlight_tol_nm  = "1.0",
-    camera_ready      = "false",
-    camera_ready_prefix = "sol/refinement_sweep"
+    highlight_tol_nm  = "1.0"
   )
   i <- 1L
   while (i <= length(args)) {
@@ -86,14 +85,14 @@ parse_l2seg_filter <- function(x) {
 # Labels / palettes
 # ---------------------------------------------------------------------------
 
-method_order  <- c("noport", "nn", "ge", "ci", "fixedport")
+method_order  <- c("nn", "ci", "ge", "noport", "fixedport")
 method_labels <- c(noport = "MH-OPT", nn = "MH-NN", ge = "MH-GE",
                    ci = "MH-CI", fixedport = "Fixed-port")
 
 # Used only when methods are the visual groups.
-method_colors <- c(noport = "#355070", nn = "#6D597A",
-                   ge = "#B56576", ci = "#E56B6F",
-                   fixedport = "#EAAC8B")
+method_colors <- c(noport = "#0072B2", nn = "#D55E00",
+                   ge = "#009E73", ci = "#CC79A7",
+                   fixedport = "#E69F00")
 
 # Used only when L2seg values are the visual groups.
 # Deliberately different from method_colors to avoid implying the same meaning.
@@ -101,7 +100,7 @@ l2seg_colors <- c("#264653", "#2A9D8F", "#8AB17D", "#E9C46A",
                   "#F4A261", "#E76F51", "#A44A3F", "#6D597A")
 
 l2seg_label <- function(x) {
-  if (is.na(x)) "∞" else sprintf("%d", as.integer(x))
+  if (is.na(x)) "Inf" else sprintf("%d", as.integer(x))
 }
 
 label_method <- function(method) {
@@ -157,6 +156,7 @@ read_sweep_data <- function(con, methods = NULL, l2seg_filter = NULL) {
       rp.runtime_seconds               AS pass_runtime,
       COALESCE(rp.boundary_attempts, 0) AS boundary_attempts,
       COALESCE(rp.boundary_changes,  0) AS boundary_changes,
+      r.n_segments,
       d.transit_nm
     FROM solution.refinement_passes rp
     JOIN solution.runs r ON r.run_id = rp.solution_run_id
@@ -185,6 +185,7 @@ add_derived <- function(df) {
     NA_real_,
     100 * (df$init_transit - df$transit_nm) / df$init_transit
   )
+  df$abs_improvement_nm <- df$init_transit - df$transit_nm
 
   df$pass_improvement_nm <- ave(
     df$transit_nm, df$series,
@@ -208,13 +209,10 @@ add_derived <- function(df) {
   )
 
   # Used for line width in panels B/C.
-  df$boundary_ratio <- ifelse(
-    df$boundary_attempts > 0,
-    df$boundary_changes / df$boundary_attempts,
-    NA_real_
-  )
+  df$boundary_attempt_linewidth <- df$boundary_attempts
 
   df$l2seg_label   <- vapply(df$l2seg, l2seg_label, character(1L))
+  df$l2seg_label <- factor(df$l2seg_label, levels = l2seg_levels_in(df))
   df$method_label  <- vapply(df$method, label_method, character(1L))
   df
 }
@@ -241,39 +239,92 @@ empty_panel <- function(label, size = 10) {
   cowplot::ggdraw() + cowplot::draw_label(label, size = size)
 }
 
+integer_legend_breaks <- function(x) {
+  finite_x <- x[is.finite(x)]
+  if (length(finite_x) == 0L) return(NULL)
+  b <- unique(round(scales::breaks_pretty(n = 4)(finite_x)))
+  b <- b[b >= min(finite_x) & b <= max(finite_x)]
+  if (length(b) == 0L) b <- unique(round(range(finite_x)))
+  b
+}
+
 plot_line_panel <- function(df, y, title, ylab, group_var, color_var,
                             palette, linetype_var = NULL,
-                            show_shape_legends = TRUE) {
-  aes_args <- list(
+                            show_color_legend = FALSE,
+                            show_linetype_legend = FALSE,
+                            show_size_legend = TRUE,
+                            show_linewidth_legend = TRUE) {
+  df <- df[order(df[[group_var]], df$pass_number), , drop = FALSE]
+  df$prev_pass_number <- ave(df$pass_number, df[[group_var]],
+                             FUN = function(x) c(NA_real_, head(x, -1L)))
+  df$prev_y <- ave(df[[y]], df[[group_var]],
+                   FUN = function(x) c(NA_real_, head(x, -1L)))
+  segment_df <- df[
+    !is.na(df$prev_pass_number) & !is.na(df$prev_y) & !is.na(df[[y]]),
+    , drop = FALSE
+  ]
+
+  point_aes_args <- list(
     x = quote(pass_number),
     y = as.name(y),
     color = as.name(color_var),
-    group = as.name(group_var),
-    size = quote(stations_moved),
-    linewidth = quote(boundary_ratio)
+    group = as.name(group_var)
   )
+  segment_aes_args <- list(
+    x = quote(prev_pass_number),
+    xend = quote(pass_number),
+    y = quote(prev_y),
+    yend = as.name(y),
+    color = as.name(color_var),
+    group = as.name(group_var)
+  )
+  if (!is.null(linetype_var)) {
+    segment_aes_args$linetype <- as.name(linetype_var)
+  }
 
-  # Linewidth varies along the line, so keep all lines solid.
-  p <- ggplot2::ggplot(df, do.call(ggplot2::aes, aes_args)) +
-    ggplot2::geom_line(na.rm = TRUE) +
-    ggplot2::geom_point(na.rm = TRUE) +
-    ggplot2::scale_color_manual(values = palette) +
-    ggplot2::scale_size_continuous(name = "Stations moved", range = c(1.0, 3.2)) +
-    ggplot2::scale_linewidth_continuous(name = "Accepted / Attempts", range = c(0.35, 1.25)) +
+  p <- ggplot2::ggplot(df, do.call(ggplot2::aes, point_aes_args)) +
+    ggplot2::geom_segment(
+      data = segment_df,
+      mapping = do.call(ggplot2::aes, segment_aes_args),
+      inherit.aes = FALSE,
+      linewidth = 0.7,
+      lineend = "round",
+      na.rm = TRUE
+    ) +
+    ggplot2::geom_point(size = 2.0, na.rm = TRUE) +
+    ggplot2::scale_color_manual(
+      name = if (identical(color_var, "l2seg_label")) expression(L["2seg"]) else "Method",
+      values = palette
+    ) +
     ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
-    ggplot2::labs(title = title, x = "Pass", y = ylab) +
-    ggplot2::guides(color="none")+
+    ggplot2::labs(title = title, x = "Sweep", y = ylab) +
     ggplot2::theme(
       panel.grid.minor = ggplot2::element_blank(),
       legend.position = "bottom",
-      legend.box = "horizontal"
+      legend.box = "vertical",
+      legend.direction = "horizontal"
     )
 
-  if (!show_shape_legends) {
-    p <- p + ggplot2::guides(size = "none")
-  } else {
-    p <- p + ggplot2::guides(linewidth = "none")
+  if (!is.null(linetype_var)) {
+    if (is.factor(df[[linetype_var]])) {
+      lt_levels <- levels(df[[linetype_var]])[levels(df[[linetype_var]]) %in% as.character(df[[linetype_var]])]
+    } else {
+      lt_levels <- unique(as.character(df[[linetype_var]]))
+    }
+    lt_values <- rep(c("solid", "dashed", "dotted", "dotdash", "longdash", "twodash"),
+                     length.out = length(lt_levels))
+    p <- p + ggplot2::scale_linetype_manual(
+      name = if (identical(linetype_var, "method_label")) "Method" else expression(L["2seg"]),
+      values = stats::setNames(lt_values, lt_levels)
+    )
   }
+
+  p <- p + ggplot2::guides(
+    color = if (show_color_legend) ggplot2::guide_legend(order = 1, nrow = 1) else "none",
+    linetype = if (show_linetype_legend) ggplot2::guide_legend(order = 2, nrow = 1) else "none",
+    size = "none",
+    linewidth = "none"
+  )
 
   p
 }
@@ -391,8 +442,8 @@ find_best_cells <- function(summary_df, col_names, tol_nm, tol_pct) {
   bold <- data.frame(row = integer(), col = integer(), colour = character())
 
   transit_col <- match("Transit", col_names)
-  dnm_col     <- match("Δnm", col_names)
-  dpct_col    <- match("Δ%", col_names)
+  dnm_col     <- match("Delta nm", col_names)
+  dpct_col    <- match("Delta %", col_names)
 
   if (!is.na(transit_col) && "final_transit" %in% names(summary_df)) {
     best_nm <- min(summary_df$final_transit, na.rm = TRUE)
@@ -433,8 +484,8 @@ find_table_best_cells <- function(tbl, col_names, rows = seq_len(nrow(tbl)), col
   }
 
   out <- rbind(out, add_best("Transit", "min"))
-  out <- rbind(out, add_best("Δnm", "max"))
-  out <- rbind(out, add_best("Δ%", "max"))
+  out <- rbind(out, add_best("Delta nm", "max"))
+  out <- rbind(out, add_best("Delta %", "max"))
   out
 }
 
@@ -525,7 +576,7 @@ write_latex_table <- function(tbl, path,
                               label = "tab:results") {
   align <- 'lrrr|rr|rrr|rrr'
   header <- latex_escape(names(tbl))
-  rows <- apply(tbl, 1L, function(z) paste(latex_escape(z), collapse = " & "))
+  rows <- apply(tbl, 1L, function(z) paste(trimws(latex_escape(z)), collapse = " & "))
 
   lines <- c(
     "\\begin{table}[b]",
@@ -537,14 +588,16 @@ write_latex_table <- function(tbl, path,
     paste(header, collapse = " & "),
     "\\\\",
     "\\midrule",
-    paste0(rows, " \\\\"),
+    paste0(rows, "\\\\%"),
     "\\bottomrule",
     "\\end{tabular}",
     "\\end{table}"
   )
 
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
-  writeLines(lines, path, useBytes = TRUE)
+  con <- file(path, open = "wb")
+  on.exit(close(con), add = TRUE)
+  writeChar(paste0(paste(lines, collapse = "\n"), "\n"), con, eos = NULL, useBytes = TRUE)
   invisible(path)
 }
 
@@ -554,7 +607,7 @@ write_latex_table <- function(tbl, path,
 
 make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct) {
   passes <- df_m[df_m$pass_number > 0, , drop = FALSE]
-  if (nrow(passes) == 0L) return(empty_panel("No pass data"))
+  if (nrow(passes) == 0L) return(empty_panel("No sweep data"))
 
   passes$l2seg_label <- factor(passes$l2seg_label, levels = level_order)
   passes <- passes[order(passes$l2seg_label, passes$pass_number), , drop = FALSE]
@@ -563,7 +616,7 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
   summary$l2seg_label <- factor(summary$l2seg_label, levels = level_order)
   summary <- summary[order(summary$l2seg_label), , drop = FALSE]
 
-  col_names <- c("L2seg", "#", "hr", "Try", "Acc", "|SΔ|", "Δnm", "Transit", "Δ%")
+  col_names <- c("L2seg", "Sweep", "hr", "Try", "Acc", "|S delta|", "Delta nm", "Transit", "Delta %")
 
   out_rows <- list()
   row_fills <- character()
@@ -582,13 +635,13 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
       row_df <- data.frame(
         l2seg   = lv,
         pass    = as.character(r$pass_number),
-        rt      = if (is.na(r$pass_runtime)) "—" else sprintf("%.2f", r$pass_runtime / 3600),
+        rt      = if (is.na(r$pass_runtime)) "-" else sprintf("%.2f", r$pass_runtime / 3600),
         b_try     = as.character(r$boundary_attempts),
         b_acc     = as.character(r$boundary_changes),
         smov    = as.character(r$stations_moved),
-        transit = if (is.na(r$transit_nm)) "—" else sprintf("%.1f", r$transit_nm),
-        dnm     = if (is.na(r$pass_improvement_nm)) "—" else sprintf("%.0f", r$pass_improvement_nm),
-        dpct    = if (is.na(r$pass_improvement_pct)) "—" else sprintf("%.1f", r$pass_improvement_pct),
+        transit = if (is.na(r$transit_nm)) "-" else sprintf("%.1f", r$transit_nm),
+        dnm     = if (is.na(r$pass_improvement_nm)) "-" else sprintf("%.0f", r$pass_improvement_nm),
+        dpct    = if (is.na(r$pass_improvement_pct)) "-" else sprintf("%.1f", r$pass_improvement_pct),
         stringsAsFactors = FALSE
       )
       names(row_df) <- col_names
@@ -601,7 +654,7 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
       row_idx <- row_idx + 1L
       summary_df <- data.frame(
         l2seg   = lv,
-        pass    = "Σ",
+        pass    = "Sum",
         rt      = sprintf("%.2f", s$runtime_hr),
         b_try     = as.character(s$b_try),
         b_acc     = as.character(s$b_acc),
@@ -640,8 +693,8 @@ make_method_table_panel <- function(df_m, level_order, palette, tol_nm, tol_pct)
 
   make_table_plot(
     tbl, row_fills,
-    title = "A — Pass statistics by L2seg",
-    subtitle = "per-pass rows plus bold summary rows; runtime (hr) · MIP solves · accepted moves · stations moved · transit",
+    title = "A - Sweep statistics by L2seg",
+    subtitle = "per-sweep rows plus bold summary rows; runtime (hr) - MIP solves - accepted moves - stations moved - transit",
     bold_cells = bold_cells,
     sep_after = sep_after,
     base_size = 7.4
@@ -652,7 +705,7 @@ make_combined_table_panel <- function(df, keep_methods, palette, tol_nm, tol_pct
   combined <- make_combined_summary_table(df, keep_methods, palette)
   summary <- combined$summary
 
-  col_names <- c("Method", "L2seg", "#", "hr", "MIP", "Acc", "|SΔ|", "Δnm", "Transit", "Δ%")
+  col_names <- c("Method", "L2seg", "Sweeps", "hr", "MIP", "Acc", "|S delta|", "Delta nm", "Transit", "Delta %")
   tbl <- data.frame(
     method  = as.character(summary$method_label),
     l2seg   = as.character(summary$l2seg_label),
@@ -693,8 +746,8 @@ make_combined_table_panel <- function(df, keep_methods, palette, tol_nm, tol_pct
 
   make_table_plot(
     tbl, fill_vec,
-    title = "A — Method / L2seg summary",
-    subtitle = "passes \u00b7 runtime (hr) \u00b7 attempted \u00b7 accepted \u00b7
+    title = "A - Method / L2seg summary",
+    subtitle = "sweeps \u00b7 runtime (hr) \u00b7 attempted \u00b7 accepted \u00b7
     stations moved total/median/max \u00b7 transit improvement \u00b7 final transit",
     bold_cells = bold_cells,
     sep_after = sep_after,
@@ -717,44 +770,63 @@ make_common_panels <- function(df, mode, palette, tol_nm, tol_pct) {
 
     list(
       a = make_method_table_panel(df, levels_l2, palette, tol_nm, tol_pct),
-      b = plot_line_panel(df, "transit_nm", "B — Transit distance by sweep", "Transit (nm)",
-                          "series", "l2seg_label", palette, show_shape_legends = TRUE),
+      b = plot_line_panel(df, "transit_nm", "B - Transit distance by sweep",
+                          "Transit (nm)", "series", "l2seg_label", palette,
+                          linetype_var = "l2seg_label",
+                          show_color_legend = FALSE,
+                          show_linetype_legend = TRUE,
+                          show_size_legend = FALSE,
+                          show_linewidth_legend = FALSE),
       c = plot_line_panel(df[!is.na(df$rel_improvement_pct), , drop = FALSE],
-                          "rel_improvement_pct", "C — Relative improvement by sweep", "Improvement (%)",
-                          "series", "l2seg_label", palette, show_shape_legends = FALSE),
+                          "rel_improvement_pct", "C - Relative improvement by sweep",
+                          "Improvement (%)", "series", "l2seg_label", palette,
+                          linetype_var = "l2seg_label",
+                          show_color_legend = FALSE,
+                          show_linetype_legend = FALSE,
+                          show_size_legend = TRUE,
+                          show_linewidth_legend = FALSE),
       d = plot_box_panel(changed, "l2seg_label", "stations_moved", "l2seg_label", palette,
-                         "D \u2014 Stations moved per pass", "Stations moved"),
+                         "D - Stations moved per sweep", "Stations moved"),
       e = plot_box_panel(changed[changed$boundary_attempts > 0, , drop = FALSE],
                          "l2seg_label", "boundary_attempts", "l2seg_label", palette,
-                         "E \u2014 Boundary attempts per pass", "Boundary attempts"),
+                         "E - Boundary attempts per sweep", "Boundary attempts"),
       f = plot_box_panel(df[!is.na(df$boundary_change_rate), , drop = FALSE],
                          "l2seg_label", "boundary_change_rate", "l2seg_label", palette,
-                         "F \u2014 Boundary change rate", "Changes / attempts", y_percent = TRUE)
+                         "F - Boundary change rate", "Changes / attempts", y_percent = TRUE)
     )
   } else {
     keep_methods <- methods_present_in(df)
     df <- df[df$method %in% keep_methods, , drop = FALSE]
     df$method_label <- factor(df$method_label, levels = names(palette))
     df$plot_series  <- paste0(as.character(df$method_label), "__", df$l2seg_label)
+    l2seg_palette <- make_l2seg_palette(l2seg_levels_in(df))
     changed <- df[as.logical(df$changed) & df$pass_number > 0, , drop = FALSE]
 
     list(
       a = make_combined_table_panel(df, keep_methods, palette, tol_nm, tol_pct),
-      b = plot_line_panel(df, "transit_nm", "B — Transit distance by sweep", "Transit (nm)",
-                          "plot_series", "method_label", palette,
-                          show_shape_legends = TRUE),
+      b = plot_line_panel(df, "transit_nm", "B - Transit distance by sweep",
+                          "Transit (nm)", "plot_series", "l2seg_label", l2seg_palette,
+                          linetype_var = "method_label",
+                          show_color_legend = FALSE,
+                          show_linetype_legend = TRUE,
+                          show_size_legend = FALSE,
+                          show_linewidth_legend = FALSE),
       c = plot_line_panel(df[!is.na(df$rel_improvement_pct), , drop = FALSE],
-                          "rel_improvement_pct", "C — Relative improvement by sweep", "Improvement (%)",
-                          "plot_series", "method_label", palette,
-                          show_shape_legends = FALSE),
+                          "rel_improvement_pct", "C - Relative improvement by sweep",
+                          "Improvement (%)", "plot_series", "l2seg_label", l2seg_palette,
+                          linetype_var = "method_label",
+                          show_color_legend = TRUE,
+                          show_linetype_legend = FALSE,
+                          show_size_legend = FALSE,
+                          show_linewidth_legend = FALSE),
       d = plot_box_panel(changed, "method_label", "stations_moved", "method_label", palette,
-                         "D \u2014 Stations moved per pass", "Stations moved"),
+                         "D - Stations moved per sweep", "Stations moved"),
       e = plot_box_panel(changed[changed$boundary_attempts > 0, , drop = FALSE],
                          "method_label", "boundary_attempts", "method_label", palette,
-                         "E \u2014 Boundary attempts per pass", "Boundary attempts"),
+                         "E - Boundary attempts per sweep", "Boundary attempts"),
       f = plot_box_panel(df[!is.na(df$boundary_change_rate), , drop = FALSE],
                          "method_label", "boundary_change_rate", "method_label", palette,
-                         "F \u2014 Boundary change rate", "Changes / attempts", y_percent = TRUE)
+                         "F - Boundary change rate", "Changes / attempts", y_percent = TRUE)
     )
   }
 }
@@ -790,99 +862,6 @@ assemble_method_layout <- function(panels, title) {
   add_header(body, title)
 }
 
-set1_palette <- function(labels) {
-  colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3",
-              "#FF7F00", "#FFFF33", "#A65628", "#F781BF")
-  stats::setNames(rep(colors, length.out = length(labels)), labels)
-}
-
-camera_ready_line_theme <- function() {
-  ggplot2::theme_bw(base_size = 9) +
-    ggplot2::theme(
-      legend.position = "bottom",
-      legend.title = ggplot2::element_blank(),
-      legend.key.width = grid::unit(0.9, "lines"),
-      panel.grid.minor = ggplot2::element_blank(),
-      plot.title = ggplot2::element_text(face = "bold", size = 10)
-    )
-}
-
-make_camera_ready_method_plot <- function(df) {
-  method_levels <- vapply(methods_present_in(df), label_method, character(1L))
-  df$method_label <- factor(df$method_label, levels = method_levels)
-
-  ggplot2::ggplot(
-    df,
-    ggplot2::aes(
-      x = pass_number,
-      y = transit_nm,
-      color = method_label,
-      group = series
-    )
-  ) +
-    ggplot2::geom_line(linewidth = 0.55, alpha = 0.72, na.rm = TRUE) +
-    ggplot2::geom_point(size = 1.15, alpha = 0.78, na.rm = TRUE) +
-    ggplot2::scale_color_manual(values = set1_palette(method_levels)) +
-    ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
-    ggplot2::labs(
-      title = "A \u2014 Transit distance by sweep",
-      x = "Pass",
-      y = "Transit (nm)"
-    ) +
-    camera_ready_line_theme()
-}
-
-make_camera_ready_l2seg_plot <- function(df) {
-  l2seg_levels <- l2seg_levels_in(df)
-  df$l2seg_label <- factor(df$l2seg_label, levels = l2seg_levels)
-
-  ggplot2::ggplot(
-    df[!is.na(df$rel_improvement_pct), , drop = FALSE],
-    ggplot2::aes(
-      x = pass_number,
-      y = rel_improvement_pct,
-      color = l2seg_label,
-      group = series
-    )
-  ) +
-    ggplot2::geom_line(linewidth = 0.55, alpha = 0.72, na.rm = TRUE) +
-    ggplot2::geom_point(size = 1.15, alpha = 0.78, na.rm = TRUE) +
-    ggplot2::scale_color_manual(values = set1_palette(l2seg_levels)) +
-    ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
-    ggplot2::labs(
-      title = "B \u2014 Relative improvement by sweep",
-      x = "Pass",
-      y = "Improvement (%)"
-    ) +
-    camera_ready_line_theme()
-}
-
-save_camera_ready_sweep_panels <- function(prefix, df) {
-  dir.create(dirname(prefix), showWarnings = FALSE, recursive = TRUE)
-  output_a <- paste0(prefix, "_A_transit.png")
-  output_b <- paste0(prefix, "_B_improvement.png")
-
-  ggplot2::ggsave(
-    output_a,
-    make_camera_ready_method_plot(df),
-    width = 5.2,
-    height = 3.2,
-    dpi = 300,
-    bg = "white"
-  )
-  ggplot2::ggsave(
-    output_b,
-    make_camera_ready_l2seg_plot(df),
-    width = 5.2,
-    height = 3.2,
-    dpi = 300,
-    bg = "white"
-  )
-
-  message("Wrote ", output_a)
-  message("Wrote ", output_b)
-}
-
 # ---------------------------------------------------------------------------
 # Public plot functions
 # ---------------------------------------------------------------------------
@@ -895,19 +874,37 @@ make_combined_plot <- function(df, tol_nm, tol_pct) {
   assemble_combined_layout(panels, "Refinement Sweep Summary \u2014 All Methods")
 }
 
-make_combined_panels <- function(df, tol_nm, tol_pct) {
-  keep_methods <- methods_present_in(df)
-  palette <- make_method_palette(keep_methods)
-  make_common_panels(df, mode = "combined", palette = palette,
-                     tol_nm = tol_nm, tol_pct = tol_pct)
-}
-
 make_method_plot <- function(df_m, method, tol_nm, tol_pct) {
   levels_l2 <- l2seg_levels_in(df_m)
   palette <- make_l2seg_palette(levels_l2)
   panels <- make_common_panels(df_m, mode = "method", palette = palette,
                                tol_nm = tol_nm, tol_pct = tol_pct)
   assemble_method_layout(panels, sprintf("Refinement Sweep Summary \u2014 %s", label_method(method)))
+}
+
+camera_ready_panel <- function(plot) {
+  plot + ggplot2::labs(title = NULL, subtitle = NULL)
+}
+
+save_camera_ready_sweep <- function(output, panels, table_tbl,
+                                    caption = "Refinement sweep outcomes.",
+                                    label = "tab:refinement-sweep") {
+  base <- tools::file_path_sans_ext(output)
+  dir.create(dirname(output), showWarnings = FALSE, recursive = TRUE)
+
+  output_a <- paste0(base, "_A_transit.png")
+  output_b <- paste0(base, "_B_relative.png")
+  output_c <- paste0(base, "_C_table.tex")
+
+  ggplot2::ggsave(output_a, camera_ready_panel(panels$b),
+                  width = 6.4, height = 4.0, dpi = 300, bg = "white")
+  ggplot2::ggsave(output_b, camera_ready_panel(panels$c),
+                  width = 6.4, height = 4.0, dpi = 300, bg = "white")
+  write_latex_table(table_tbl, output_c, caption = caption, label = label)
+
+  message("Wrote ", output_a)
+  message("Wrote ", output_b)
+  message("Wrote ", output_c)
 }
 
 # ---------------------------------------------------------------------------
@@ -922,6 +919,8 @@ main <- function() {
   l2seg_arg   <- parse_l2seg_filter(opt$l2seg)
   tol_pct     <- parse_num(opt$highlight_tol_pct, "--highlight_tol_pct")
   tol_nm      <- parse_num(opt$highlight_tol_nm,  "--highlight_tol_nm")
+  skip_existing <- parse_bool(opt$skip_existing)
+  camera_ready <- parse_bool(opt$camera_ready)
 
   con <- connect_gsp_db(opt$gsp_db, opt$solution_db)
   on.exit(DBI::dbDisconnect(con), add = TRUE)
@@ -937,41 +936,47 @@ main <- function() {
 
   message(sprintf("Loaded %d pass records across %d method(s)", nrow(df), length(methods_present)))
 
-  combined_panels <- NULL
+  keep_methods <- methods_present_in(df)
+  method_palette <- make_method_palette(keep_methods)
+  combined_tbl <- make_combined_summary_table(df, keep_methods, method_palette)$tbl
 
-  if (!parse_bool(opt$skip_existing) || !file.exists(opt$output)) {
-    combined_panels <- make_combined_panels(df, tol_nm = tol_nm, tol_pct = tol_pct)
+  if (!skip_existing || !file.exists(opt$output) || camera_ready) {
+    combined_panels <- make_common_panels(df, mode = "combined", palette = method_palette,
+                                          tol_nm = tol_nm, tol_pct = tol_pct)
+  }
+
+  if (!skip_existing || !file.exists(opt$output)) {
     combined <- assemble_combined_layout(combined_panels, "Refinement Sweep Summary \u2014 All Methods")
     dir.create(dirname(opt$output), showWarnings = FALSE, recursive = TRUE)
     ggplot2::ggsave(opt$output, combined, width = 15, height = 10, dpi = 200, bg = "white")
     message("Wrote ", opt$output)
-
-    tex_path <- file.path(dirname(opt$output), "refinement_sweep.tex")
-    keep_methods <- methods_present_in(df)
-    palette <- make_method_palette(keep_methods)
-    combined_tbl <- make_combined_summary_table(df, keep_methods, palette)$tbl
-    write_latex_table(combined_tbl, tex_path)
-    message("Wrote ", tex_path)
   }
 
-  if (parse_bool(opt$camera_ready)) {
-    save_camera_ready_sweep_panels(opt$camera_ready_prefix, df)
+  if (camera_ready) {
+    save_camera_ready_sweep(opt$output, combined_panels, combined_tbl)
   }
 
   if (parse_bool(opt$per_method)) {
     for (m in methods_present) {
       out_path <- file.path("sol", m, "refinement_sweep.png")
-      if (parse_bool(opt$skip_existing) && file.exists(out_path)) {
+      if (skip_existing && file.exists(out_path)) {
         message("Skipping (exists): ", out_path)
         next
       }
       df_m <- df[df$method == m, , drop = FALSE]
       if (nrow(df_m) == 0L) next
 
-      p <- make_method_plot(df_m, m, tol_nm = tol_nm, tol_pct = tol_pct)
-      dir.create(dirname(out_path), showWarnings = FALSE, recursive = TRUE)
-      ggplot2::ggsave(out_path, p, width = 15, height = 10, dpi = 200, bg = "white")
-      message("Wrote ", out_path)
+      levels_l2 <- l2seg_levels_in(df_m)
+      l2_palette <- make_l2seg_palette(levels_l2)
+      method_panels <- make_common_panels(df_m, mode = "method", palette = l2_palette,
+                                          tol_nm = tol_nm, tol_pct = tol_pct)
+
+      if (!skip_existing || !file.exists(out_path)) {
+        p <- assemble_method_layout(method_panels, sprintf("Refinement Sweep Summary \u2014 %s", label_method(m)))
+        dir.create(dirname(out_path), showWarnings = FALSE, recursive = TRUE)
+        ggplot2::ggsave(out_path, p, width = 15, height = 10, dpi = 200, bg = "white")
+        message("Wrote ", out_path)
+      }
     }
   }
 
