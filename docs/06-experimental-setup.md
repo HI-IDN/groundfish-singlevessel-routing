@@ -59,8 +59,11 @@ produce a feasible solution. By contrast:
 The study therefore evaluates:
 
 ```text
-L_2seg in {1, 2, 3, 4, 5, 6, 7, 8} minutes
+L_2seg in {10, 30, 60, 120, 180, 240, 300, 600} seconds
 ```
+
+The experiment target runs only these capped two-segment limits; the uncapped default refinement is
+not part of the experiment sweep.
 
 ## Matheuristic settings
 

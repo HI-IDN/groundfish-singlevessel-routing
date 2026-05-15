@@ -30,6 +30,8 @@ BASELINE_TABLE_OUTPUT ?=
 REFINEMENT_TABLE_OUTPUT ?=
 L2SEG_UNIT ?= seconds
 L2SEG ?=
+SWEEP_FALLBACK ?= false
+SWEEP_FALLBACK_FLAG := $(if $(filter true 1 yes on,$(SWEEP_FALLBACK)),--enable-fallback,)
 L2SEG_VARIANTS ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*l2seg_variants:[[:space:]]*\\[([^]]*)\\].*/\\1/p' '$(abspath $(CONFIG_YAML))' | tr ',' ' '")
 L2SEG_DEFAULT_VALUE ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*2seg:[[:space:]]*([0-9]+).*/\\1/p' '$(abspath $(CONFIG_YAML))' | head -n 1")
 METHOD_RAW := $(or $(METHOD),nn)
@@ -42,7 +44,7 @@ SURVEY_DAT = ../dat/survey2023spring.dat
 SURVEY_MULTIVESSEL_JSON = ../sol/survey/multivessel.json
 SURVEY_BOAT_JSONS = $(SURVEY_MULTIVESSEL_JSON)
 
-.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db baseline_table refinement_table sweep_table plot-survey-overview plot-waypoints plot-survey-multivessel plot-construction-segment plot-refinement plot-refinement-sweep plot-mip-solves plot experiments help
+.PHONY: all clean config build prepare-routing-data preprocessing survey export_survey fixedport_candidates fixedport construction segment refinement refinement_l2seg noport solution_db baseline_table refinement_table sweep_table plot-survey-overview plot-waypoints plot-survey-multivessel plot-construction-segment plot-refinement plot-refinement-example plot-refinement-sweep plot-mip-solves plot camera-ready experiments help
 
 all: build
 
@@ -109,7 +111,7 @@ refinement_l2seg: $(SEGMENT_TARGET_JSON)
 		fi; \
 		echo "Running $(METHOD_NAME) refinement L2SEG=$${limit}s -> $$out"; \
 		cd "$(BUILD_DIR)"; \
-		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(METHOD_NAME) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(METHOD_NAME)/segment.json" --output "$$out" --l2seg-limit "$$limit" 2>&1 | tee "$$log"'
+		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(METHOD_NAME) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(METHOD_NAME)/segment.json" --output "$$out" --l2seg-limit "$$limit" $(SWEEP_FALLBACK_FLAG) 2>&1 | tee "$$log"'
 
 prepare-routing-data: $(COUNTRY_DB)
 
@@ -181,7 +183,7 @@ define refinement_rule
 	@echo "Running $(2) refinement -> $$@"
 	@bash -lc 'set -euo pipefail; \
 		cd "$(BUILD_DIR)"; \
-		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "$$@" 2>&1 | tee "../sol/$(1)/refinement.log"'
+		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "$$@" $(SWEEP_FALLBACK_FLAG) 2>&1 | tee "../sol/$(1)/refinement.log"'
 endef
 
 $(eval $(call construction_rule,nn,NN))
@@ -208,7 +210,7 @@ define refinement_l2seg_rule
 	@echo "Running $(1) refinement L2SEG=$(2)s -> $$@"
 	@bash -lc 'set -euo pipefail; \
 		cd "$(BUILD_DIR)"; \
-		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "../sol/$(1)/refinement_$(2).json" --l2seg-limit $(2) 2>&1 | tee "../sol/$(1)/refinement_$(2).log"'
+		PATH="$$GUROBI_HOME/bin:$$PATH" ./gsp_gurobi --mode refinement --strategy $(1) --database "$(COUNTRY_DB)" --config "$(CONFIG_YAML)" --input "../sol/$(1)/segment.json" --output "../sol/$(1)/refinement_$(2).json" --l2seg-limit $(2) $(SWEEP_FALLBACK_FLAG) 2>&1 | tee "../sol/$(1)/refinement_$(2).log"'
 endef
 
 $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
@@ -219,10 +221,6 @@ $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
 EXPERIMENT_L2SEG_TARGETS = $(foreach l,$(L2SEG_VARIANTS),\
   $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
     ../sol/$(m)/refinement_$(l).json))
-
-# Default (uncapped) targets
-EXPERIMENT_DEFAULT_TARGETS = $(foreach m,$(EXPERIMENT_REFINEMENT_METHODS),\
-  ../sol/$(m)/refinement.json)
 
 sweep_table:
 	@bash -lc 'set -euo pipefail; cd ..; \
@@ -261,6 +259,9 @@ plot-construction-segment: solution_db
 plot-refinement: solution_db
 	@cd .. && Rscript R/plot_refinement.R --method all --l2seg all --skip_existing false
 
+plot-refinement-example: solution_db
+	@cd .. && Rscript R/plot_refinement.R --method noport --l2seg 600 --camera_ready true --skip_existing false
+
 plot-refinement-sweep: solution_db
 	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method true --skip_existing false
 
@@ -276,17 +277,18 @@ plot: solution_db
 	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method true --skip_existing false
 	@cd .. && Rscript R/plot_mip_solves.R --output sol/mip_solves.png --skip_existing false
 
+camera-ready: solution_db
+	@cd .. && Rscript R/plot_refinement.R --method noport --l2seg 600 --camera_ready true --skip_existing false
+	@cd .. && Rscript R/plot_refinement_sweep.R --method all --l2seg all --output sol/refinement_sweep.png --per_method false --camera_ready true --skip_existing true
+
 experiments: prepare-routing-data
 	@bash -lc 'set -euo pipefail; \
+		cd "$(CURDIR)"; \
 		for l in $(L2SEG_VARIANTS); do \
 			echo "Running all methods for L2SEG=$${l}s"; \
 			for m in $(EXPERIMENT_REFINEMENT_METHODS); do \
 				$(MAKE) -C . "../sol/$${m}/refinement_$${l}.json"; \
 			done; \
-		done; \
-		echo "Running default refinement targets"; \
-		for m in $(EXPERIMENT_REFINEMENT_METHODS); do \
-			$(MAKE) -C . "../sol/$${m}/refinement.json"; \
 		done'
 	@echo "All experiments up to date."
 
@@ -319,6 +321,7 @@ help:
 	@echo "  make -C src refinement METHOD=nn"
 	@echo "  make -C src refinement METHOD=noport"
 	@echo "  make -C src refinement_l2seg METHOD=nn L2SEG=60"
+	@echo "  make -C src refinement METHOD=nn SWEEP_FALLBACK=true"
 	@echo ""
 	@echo "Shortcuts"
 	@echo "  make -C src noport             # same as construction METHOD=noport"
@@ -341,11 +344,13 @@ help:
 	@echo "  make -C src experiments          # runs L2SEG values from config/gsp_solver.yaml in order"
 	@echo "  make -C src solution_db          # rebuild dat/solution.db from sol/**/*.json"
 	@echo "  make -C src plot                  # rebuild solution DB, then run all static R plots"
+	@echo "  make -C src camera-ready          # overwrite camera-ready TikZ/TeX exports"
 	@echo "  make -C src plot-survey-overview  # station catch overview"
 	@echo "  make -C src plot-waypoints        # waypoints and ports sanity check"
 	@echo "  make -C src plot-survey-multivessel"
 	@echo "  make -C src plot-construction-segment"
 	@echo "  make -C src plot-refinement"
+	@echo "  make -C src plot-refinement-example"
 	@echo "  make -C src plot-refinement-sweep"
 	@echo "  make -C src plot-mip-solves"
 	@echo "  make -C src clean"

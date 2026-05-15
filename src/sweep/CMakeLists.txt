@@ -10,6 +10,7 @@ add_executable(gsp
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/mip_report.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/sql_utils.c
     gsp_sweep_mode.c
+    gsp_sweep_fallback.c
 )
 
 set_target_properties(gsp PROPERTIES
@@ -34,6 +35,7 @@ if(GUROBI_INCLUDE_DIR AND GUROBI_LIBRARY_DIR)
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/mip_report.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../common/sql_utils.c
         gsp_sweep_mode.c
+        gsp_sweep_fallback.c
         ${GSP_MIP_FIXEDPORT_SOURCE}
         ${GSP_MIP_ENDPAIRED_SOURCE}
         ${GSP_MIP_SHARED_SOURCES}

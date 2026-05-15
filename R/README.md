@@ -26,5 +26,5 @@ plotting scripts listed below.
 ## Dependencies
 
 ```r
-install.packages(c("ggplot2", "dplyr", "tibble", "DBI", "RSQLite", "jsonlite", "knitr", "cowplot"))
+install.packages(c("ggplot2", "dplyr", "tibble", "DBI", "RSQLite", "jsonlite", "knitr", "cowplot", "tikzDevice"))
 ```

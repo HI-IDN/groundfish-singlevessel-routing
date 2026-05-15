@@ -12,6 +12,7 @@
 #include "../include/mip_report.h"
 #include "../init/init_utils.h"
 #include "../init/segment_postopt.h"
+#include "gsp_sweep_fallback.h"
 
 #ifdef HAVE_GUROBI
 #include <gurobi_c.h>
@@ -50,6 +51,7 @@ typedef struct {
     int l2seg_time_limit_seconds;
     int global_time_limit_seconds;
     int max_iterations;
+    int enable_fallback;
 } sweep_config_t;
 
 typedef struct {
@@ -57,6 +59,7 @@ typedef struct {
     int l2seg_time_limit_seconds;
     int global_time_limit_seconds;
     int max_iterations;
+    int enable_fallback;
 } sweep_metadata_extra_t;
 
 static int count_segment_station_changes(const gsp_route_segment_t *before,
@@ -70,7 +73,8 @@ static void write_sweep_metadata_extra(FILE *fp, const char *indent, const void 
     fprintf(fp, "%s  \"l1seg_time_limit_seconds\": %d,\n", base, extra->l1seg_time_limit_seconds);
     fprintf(fp, "%s  \"l2seg_time_limit_seconds\": %d,\n", base, extra->l2seg_time_limit_seconds);
     fprintf(fp, "%s  \"global_time_limit_seconds\": %d,\n", base, extra->global_time_limit_seconds);
-    fprintf(fp, "%s  \"max_iterations\": %d", base, extra->max_iterations);
+    fprintf(fp, "%s  \"max_iterations\": %d,\n", base, extra->max_iterations);
+    fprintf(fp, "%s  \"fallback_enabled\": %s", base, extra->enable_fallback ? "true" : "false");
 }
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
@@ -272,6 +276,24 @@ static int read_int_after_colon(const char *line, int default_value) {
     return atoi(p);
 }
 
+static int read_bool_after_colon(const char *line, int default_value) {
+    const char *p = strchr(line, ':');
+    char value[32];
+    int i = 0;
+    if (!p) return default_value;
+    p++;
+    while (*p && isspace((unsigned char)*p)) p++;
+    while (*p && !isspace((unsigned char)*p) && *p != '#' && i < (int)sizeof(value) - 1) {
+        value[i++] = (char)tolower((unsigned char)*p++);
+    }
+    value[i] = '\0';
+    if (strcmp(value, "1") == 0 || strcmp(value, "true") == 0 ||
+        strcmp(value, "yes") == 0 || strcmp(value, "on") == 0) return 1;
+    if (strcmp(value, "0") == 0 || strcmp(value, "false") == 0 ||
+        strcmp(value, "no") == 0 || strcmp(value, "off") == 0) return 0;
+    return default_value;
+}
+
 static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *cfg) {
     FILE *fp;
     char line[MAX_LINE];
@@ -282,6 +304,7 @@ static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *c
     cfg->l2seg_time_limit_seconds = 0;
     cfg->global_time_limit_seconds = 0;
     cfg->max_iterations = 0;
+    cfg->enable_fallback = 0;
 
     fp = fopen(yaml_path, "r");
     if (!fp) return;
@@ -306,6 +329,8 @@ static void read_sweep_config_from_yaml(const char *yaml_path, sweep_config_t *c
 
         if (section == 1 && strncmp(trim, "max_iterations:", 15) == 0) {
             cfg->max_iterations = read_int_after_colon(trim, cfg->max_iterations);
+        } else if (section == 1 && strncmp(trim, "fallback_enabled:", 17) == 0) {
+            cfg->enable_fallback = read_bool_after_colon(trim, cfg->enable_fallback);
         }
     }
 
@@ -1384,154 +1409,6 @@ static int append_mip_detail_checked(gsp_mip_solve_detail_t **solve_details,
                                        solve_detail_capacity, detail);
 }
 
-static int copy_route_segment_local(const gsp_route_segment_t *src, gsp_route_segment_t *dst) {
-    if (!src || !dst) return 0;
-    memset(dst, 0, sizeof(*dst));
-    *dst = *src;
-    dst->signed_station_ids = NULL;
-    if (src->count > 0) {
-        dst->signed_station_ids = (int*)malloc((size_t)src->count * sizeof(int));
-        if (!dst->signed_station_ids) return 0;
-        memcpy(dst->signed_station_ids, src->signed_station_ids, (size_t)src->count * sizeof(int));
-    }
-    return 1;
-}
-
-static int copy_segment_with_extra_station(const gsp_route_segment_t *src,
-                                           int signed_station_id,
-                                           gsp_route_segment_t *dst) {
-    if (!copy_route_segment_local(src, dst)) return 0;
-    if (signed_station_id != 0) {
-        int *tmp = (int*)realloc(dst->signed_station_ids,
-                                (size_t)(dst->count + 1) * sizeof(int));
-        if (!tmp) {
-            free(dst->signed_station_ids);
-            memset(dst, 0, sizeof(*dst));
-            return 0;
-        }
-        dst->signed_station_ids = tmp;
-        dst->signed_station_ids[dst->count++] = signed_station_id;
-        dst->capacity = dst->count;
-    }
-    return 1;
-}
-
-static int copy_segment_without_station(const gsp_route_segment_t *src,
-                                        int remove_pos,
-                                        gsp_route_segment_t *dst) {
-    int k = 0;
-    if (!src || !dst || remove_pos < 0 || remove_pos >= src->count || src->count <= 1) return 0;
-    memset(dst, 0, sizeof(*dst));
-    *dst = *src;
-    dst->count = src->count - 1;
-    dst->capacity = dst->count;
-    dst->signed_station_ids = (int*)malloc((size_t)dst->count * sizeof(int));
-    if (!dst->signed_station_ids) return 0;
-    for (int i = 0; i < src->count; i++) {
-        if (i == remove_pos) continue;
-        dst->signed_station_ids[k++] = src->signed_station_ids[i];
-    }
-    return 1;
-}
-
-static double station_to_loc_distance(const nn_instance_t *inst, int signed_station_id, int loc_id) {
-    int station_idx = find_station_index(inst, abs(signed_station_id));
-    double d1, d2;
-    if (station_idx < 0) return 1e100;
-    if (!inst->distances || loc_id < 0 || loc_id >= inst->max_loc_id) return 1e100;
-    d1 = (inst->nodes[station_idx].start_loc_id >= 0 &&
-          inst->nodes[station_idx].start_loc_id < inst->max_loc_id &&
-          inst->distances[inst->nodes[station_idx].start_loc_id])
-        ? inst->distances[inst->nodes[station_idx].start_loc_id][loc_id] : 0.0;
-    d2 = (inst->nodes[station_idx].end_loc_id >= 0 &&
-          inst->nodes[station_idx].end_loc_id < inst->max_loc_id &&
-          inst->distances[inst->nodes[station_idx].end_loc_id])
-        ? inst->distances[inst->nodes[station_idx].end_loc_id][loc_id] : 0.0;
-    if (d1 <= 0.0) return d2;
-    if (d2 <= 0.0) return d1;
-    return (d1 < d2) ? d1 : d2;
-}
-
-static double station_to_segment_pointset_distance(const nn_instance_t *inst,
-                                                   int signed_station_id,
-                                                   const gsp_route_segment_t *segment) {
-    double best = 1e100;
-    if (!inst || !segment) return best;
-    {
-        double d = station_to_loc_distance(inst, signed_station_id, segment->start_loc_id);
-        if (d < best) best = d;
-        d = station_to_loc_distance(inst, signed_station_id, segment->end_loc_id);
-        if (d < best) best = d;
-    }
-    for (int i = 0; i < segment->count; i++) {
-        int station_idx = find_station_index(inst, abs(segment->signed_station_ids[i]));
-        double d;
-        if (station_idx < 0) continue;
-        d = station_to_loc_distance(inst, signed_station_id, inst->nodes[station_idx].start_loc_id);
-        if (d < best) best = d;
-        d = station_to_loc_distance(inst, signed_station_id, inst->nodes[station_idx].end_loc_id);
-        if (d < best) best = d;
-    }
-    return best;
-}
-
-static int select_fallback_donor(const nn_instance_t *inst,
-                                 const gsp_boat_t *boat,
-                                 const gsp_route_segment_t *segments,
-                                 int segment_count,
-                                 int left_idx,
-                                 int right_idx,
-                                 int boundary_loc_id,
-                                 int *out_donor_idx,
-                                 int *out_station_pos,
-                                 int *out_nearer_left) {
-    double best_score = 1e100;
-    int best_donor = -1;
-    int best_pos = -1;
-    int best_left = 1;
-
-    if (!inst || !boat || !segments || segment_count <= 2) return 0;
-    for (int s = 0; s < segment_count; s++) {
-        int left_prev = (left_idx - 1 + segment_count) % segment_count;
-        int right_next = (right_idx + 1) % segment_count;
-        if (s == left_idx || s == right_idx) continue;
-        if (s == left_prev || s == right_next) continue;
-        if (segments[s].count <= 1) continue;
-        for (int i = 0; i < segments[s].count; i++) {
-            int signed_id = segments[s].signed_station_ids[i];
-            int amount = station_amount(inst, abs(signed_id));
-            int left_feasible = ((double)(segments[left_idx].catch_amount + amount) <= boat->boat_capacity);
-            int right_feasible = ((double)(segments[right_idx].catch_amount + amount) <= boat->boat_capacity);
-            double to_left;
-            double to_right;
-            double to_boundary;
-            int nearer_left;
-            double score;
-            if (!left_feasible && !right_feasible) continue;
-            to_left = station_to_segment_pointset_distance(inst, signed_id, &segments[left_idx]);
-            to_right = station_to_segment_pointset_distance(inst, signed_id, &segments[right_idx]);
-            if (left_feasible && right_feasible) nearer_left = (to_left <= to_right);
-            else nearer_left = left_feasible;
-            to_boundary = station_to_loc_distance(inst, signed_id, boundary_loc_id);
-            score = to_boundary;
-            if (to_left < score) score = to_left;
-            if (to_right < score) score = to_right;
-            if (score < best_score) {
-                best_score = score;
-                best_donor = s;
-                best_pos = i;
-                best_left = nearer_left;
-            }
-        }
-    }
-
-    if (best_donor < 0) return 0;
-    if (out_donor_idx) *out_donor_idx = best_donor;
-    if (out_station_pos) *out_station_pos = best_pos;
-    if (out_nearer_left) *out_nearer_left = best_left;
-    return 1;
-}
-
 static int optimize_boundary_candidate(GRBenv *env,
                                        const nn_instance_t *inst,
                                        const gsp_boat_t *boat,
@@ -1760,6 +1637,7 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_b
                              int pass_index,
                              double l1seg_time_limit_seconds,
                              double l2seg_time_limit_seconds,
+                             int enable_fallback,
                              int *changed_donor_index,
                              double *changed_donor_before_distance) {
     gsp_route_segment_t *left = &segments[left_idx];
@@ -1799,85 +1677,17 @@ static int optimize_boundary(GRBenv *env, const nn_instance_t *inst, const gsp_b
         free(best_right_ids);
     }
 
-    {
-        int donor_idx = -1, donor_pos = -1, nearer_left = 1;
-        int donor_signed_id = 0;
-        gsp_route_segment_t fallback_left = {0};
-        gsp_route_segment_t fallback_right = {0};
-        gsp_route_segment_t fallback_donor = {0};
-        int *fallback_left_ids = NULL, *fallback_right_ids = NULL;
-        int fallback_left_count = 0, fallback_right_count = 0;
-        int fallback_left_catch = 0, fallback_right_catch = 0;
-        double fallback_left_dist = 0.0, fallback_right_dist = 0.0;
-        double fallback_current_total;
-        int accepted = 0;
+    if (!enable_fallback) return 0;
 
-        if (!select_fallback_donor(inst, boat, segments, segment_count, left_idx, right_idx,
-                                   boundary_loc_id, &donor_idx, &donor_pos, &nearer_left)) {
-            return 0;
-        }
-        donor_signed_id = segments[donor_idx].signed_station_ids[donor_pos];
-        if (!copy_segment_with_extra_station(left, nearer_left ? donor_signed_id : 0, &fallback_left)) goto fallback_cleanup;
-        if (!copy_segment_with_extra_station(right, nearer_left ? 0 : donor_signed_id, &fallback_right)) goto fallback_cleanup;
-        if (!copy_segment_without_station(&segments[donor_idx], donor_pos, &fallback_donor)) goto fallback_cleanup;
-
-        if (!optimize_boundary_candidate(env, inst, boat, &fallback_left, &fallback_right,
-                                         boundary_index, left_idx + 1, right_idx + 1,
-                                         boundary_loc_id, 1, pass_index,
-                                         l1seg_time_limit_seconds, l2seg_time_limit_seconds,
-                                         solve_count, solve_details, solve_detail_count,
-                                         solve_detail_capacity,
-                                         &fallback_left_ids, &fallback_left_count,
-                                         &fallback_left_catch, &fallback_left_dist,
-                                         &fallback_right_ids, &fallback_right_count,
-                                         &fallback_right_catch, &fallback_right_dist)) {
-            goto fallback_cleanup;
-        }
-        if (!reoptimize_candidate_segment(env, inst, &segments[donor_idx], &fallback_donor,
-                                          pass_index, boundary_index, donor_idx + 1,
-                                          l1seg_time_limit_seconds, solve_count,
-                                          solve_details, solve_detail_count,
-                                          solve_detail_capacity)) {
-            goto fallback_cleanup;
-        }
-
-        fallback_current_total = current_total + segments[donor_idx].distance_nm;
-        if (fallback_left_dist + fallback_right_dist + fallback_donor.distance_nm + SWEEP_EPS < fallback_current_total) {
-            double donor_before_distance = segments[donor_idx].distance_nm;
-            free(left->signed_station_ids);
-            free(right->signed_station_ids);
-            free(segments[donor_idx].signed_station_ids);
-            left->signed_station_ids = fallback_left_ids;
-            right->signed_station_ids = fallback_right_ids;
-            segments[donor_idx].signed_station_ids = fallback_donor.signed_station_ids;
-            fallback_left_ids = NULL;
-            fallback_right_ids = NULL;
-            fallback_donor.signed_station_ids = NULL;
-            left->count = fallback_left_count;
-            right->count = fallback_right_count;
-            left->capacity = fallback_left_count;
-            right->capacity = fallback_right_count;
-            segments[donor_idx].count = fallback_donor.count;
-            segments[donor_idx].capacity = fallback_donor.count;
-            left->catch_amount = fallback_left_catch;
-            right->catch_amount = fallback_right_catch;
-            segments[donor_idx].catch_amount = fallback_donor.catch_amount;
-            left->distance_nm = fallback_left_dist;
-            right->distance_nm = fallback_right_dist;
-            segments[donor_idx].distance_nm = fallback_donor.distance_nm;
-            if (changed_donor_index) *changed_donor_index = donor_idx;
-            if (changed_donor_before_distance) *changed_donor_before_distance = donor_before_distance;
-            accepted = 1;
-        }
-
-fallback_cleanup:
-        free(fallback_left.signed_station_ids);
-        free(fallback_right.signed_station_ids);
-        free(fallback_donor.signed_station_ids);
-        free(fallback_left_ids);
-        free(fallback_right_ids);
-        return accepted;
-    }
+    return gsp_sweep_try_donor_fallback(env, inst, boat, segments, segment_count,
+                                        left_idx, right_idx,
+                                        boundary_index, boundary_loc_id, pass_index,
+                                        l1seg_time_limit_seconds, l2seg_time_limit_seconds,
+                                        solve_count, solve_details, solve_detail_count,
+                                        solve_detail_capacity,
+                                        optimize_boundary_candidate,
+                                        reoptimize_candidate_segment,
+                                        changed_donor_index, changed_donor_before_distance);
 }
 #endif
 
@@ -2343,7 +2153,8 @@ static int write_sweep_json(const char *output_path,
             cfg ? cfg->l1seg_time_limit_seconds : 0,
             cfg ? cfg->l2seg_time_limit_seconds : 0,
             cfg ? cfg->global_time_limit_seconds : 0,
-            cfg ? cfg->max_iterations : 0
+            cfg ? cfg->max_iterations : 0,
+            cfg ? cfg->enable_fallback : 0
         };
         metadata.solver_version = "refinement_1.0";
         metadata.mode_name = "refinement";
@@ -2450,7 +2261,9 @@ static void parse_sweep_args(int argc, char **argv,
                              const char **config, const char **input,
                              const char **output, int *time_limit,
                              int *l1seg_time_limit,
-                             int *l2seg_time_limit, int *debug_mode) {
+                             int *l2seg_time_limit,
+                             int *enable_fallback_override,
+                             int *debug_mode) {
     *strategy = NULL;
     *database = NULL;
     *config = NULL;
@@ -2459,11 +2272,20 @@ static void parse_sweep_args(int argc, char **argv,
     *time_limit = 0;
     *l1seg_time_limit = -1;
     *l2seg_time_limit = -1;
+    *enable_fallback_override = -1;
     *debug_mode = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--debug") == 0) {
             *debug_mode = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--enable-fallback") == 0) {
+            *enable_fallback_override = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--disable-fallback") == 0) {
+            *enable_fallback_override = 0;
             continue;
         }
         if (i >= argc - 1) break;
@@ -2480,7 +2302,8 @@ static void parse_sweep_args(int argc, char **argv,
 
 int mode_refinement(int argc, char **argv) {
     const char *strategy = NULL, *database = NULL, *config = NULL, *input = NULL, *output = NULL;
-    int time_limit = 0, l1seg_time_limit = -1, l2seg_time_limit = -1, debug_mode = 0;
+    int time_limit = 0, l1seg_time_limit = -1, l2seg_time_limit = -1;
+    int enable_fallback_override = -1, debug_mode = 0;
     sqlite3 *db = NULL;
     nn_instance_t inst = {0};
     gsp_boat_t boat;
@@ -2503,7 +2326,8 @@ int mode_refinement(int argc, char **argv) {
     printf("GSP Solver - Refinement\n");
     printf("============================================================\n\n");
     parse_sweep_args(argc, argv, &strategy, &database, &config, &input, &output,
-                     &time_limit, &l1seg_time_limit, &l2seg_time_limit, &debug_mode);
+                     &time_limit, &l1seg_time_limit, &l2seg_time_limit,
+                     &enable_fallback_override, &debug_mode);
     if (!strategy || !database || !config || !input || !output) {
         fprintf(stderr, "ERROR: sweep requires --strategy, --database, --config, --input, and --output\n");
         goto cleanup;
@@ -2514,6 +2338,9 @@ int mode_refinement(int argc, char **argv) {
     }
     if (l2seg_time_limit >= 0) {
         sweep_cfg.l2seg_time_limit_seconds = l2seg_time_limit;
+    }
+    if (enable_fallback_override >= 0) {
+        sweep_cfg.enable_fallback = enable_fallback_override;
     }
 #ifndef HAVE_GUROBI
     fprintf(stderr, "ERROR: sweep mode requires Gurobi support at build time\n");
@@ -2539,10 +2366,11 @@ int mode_refinement(int argc, char **argv) {
     }
     printf("Loaded segmented input: %d segments, %.2f nm total\n",
            segment_count, input_total_distance_nm);
-    printf("Sweep parameters: l1seg_time_limit=%d l2seg_time_limit=%d max_iterations=%d global_time_limit=%d time_limit=%d\n",
+    printf("Sweep parameters: l1seg_time_limit=%d l2seg_time_limit=%d max_iterations=%d global_time_limit=%d time_limit=%d fallback_enabled=%s\n",
            sweep_cfg.l1seg_time_limit_seconds,
            sweep_cfg.l2seg_time_limit_seconds,
-           sweep_cfg.max_iterations, sweep_cfg.global_time_limit_seconds, time_limit);
+           sweep_cfg.max_iterations, sweep_cfg.global_time_limit_seconds, time_limit,
+           sweep_cfg.enable_fallback ? "true" : "false");
     fflush(stdout);
 
     {
@@ -2750,6 +2578,7 @@ int mode_refinement(int argc, char **argv) {
                                       pass_index,
                                       boundary_l1_time_limit_seconds,
                                       boundary_l2_time_limit_seconds,
+                                      sweep_cfg.enable_fallback,
                                       &changed_donor_idx,
                                       &changed_donor_before_distance)) {
                     int station_changes = count_segment_station_changes(&left_before, &segments[b]) +
