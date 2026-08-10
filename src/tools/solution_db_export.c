@@ -74,7 +74,7 @@ static int path_contains(const char *path, const char *needle) {
 }
 
 static int method_from_path(const char *path, char *out, size_t out_sz) {
-    const char *methods[] = {"noport", "fixedport", "nn", "ge", "ci"};
+    const char *methods[] = {"noport", "fixedport", "nn", "ge", "ci", "lkh"};
     for (size_t i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
         char pat1[64], pat2[64];
         snprintf(pat1, sizeof(pat1), "/%s/", methods[i]);

@@ -34,7 +34,7 @@ parse_args <- function(args) {
 }
 
 valid_methods <- function() {
-  c("nn", "ge", "ci", "noport", "fixedport")
+  c("nn", "ge", "ci", "noport", "fixedport", "lkh")
 }
 
 parse_bool <- function(x) {
@@ -78,6 +78,7 @@ method_label <- function(method) {
     ci = "Cheapest Insertion",
     noport = "No-Port",
     fixedport = "Fixed-Port",
+    lkh = "LKH (Auckland)",
     method
   )
 }
@@ -89,6 +90,7 @@ method_code_label <- function(method) {
     ci = "MH-CI",
     noport = "MH-OPT",
     fixedport = "C-MIP",
+    lkh = "LKH",
     method
   )
 }
@@ -100,6 +102,7 @@ method_initialisation_label <- function(method) {
     ci = "cheapest insertion initialisation",
     noport = "no-port initialisation",
     fixedport = "fixed-port initialisation",
+    lkh = "LKH construction (Adams & Walker)",
     method_label(method)
   )
 }

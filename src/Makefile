@@ -36,8 +36,8 @@ L2SEG_VARIANTS ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*l2seg_variants:[[:
 L2SEG_DEFAULT_VALUE ?= $(shell bash -lc "sed -n -E 's/^[[:space:]]*2seg:[[:space:]]*([0-9]+).*/\\1/p' '$(abspath $(CONFIG_YAML))' | head -n 1")
 METHOD_RAW := $(or $(METHOD),nn)
 METHOD_NAME := $(if $(filter gi,$(METHOD_RAW)),ge,$(METHOD_RAW))
-VALID_METHODS := nn ge ci noport fixedport
-VALID_REFINEMENT_METHODS := nn ge ci noport
+VALID_METHODS := nn ge ci noport fixedport lkh
+VALID_REFINEMENT_METHODS := nn ge ci noport lkh
 EXPERIMENT_REFINEMENT_METHODS := noport nn ge ci
 FIXEDPORT_CANDIDATE_JSON = ../sol/fixedport/candidate_ports.json
 SURVEY_DAT = ../dat/survey2023spring.dat
@@ -199,6 +199,16 @@ $(eval $(call refinement_rule,nn,NN))
 $(eval $(call refinement_rule,ge,GE))
 $(eval $(call refinement_rule,ci,CI))
 $(eval $(call refinement_rule,noport,noport))
+
+# --- LKH external baseline (Adams & Walker, Auckland) -----------------------
+# construction.json is produced by the Python converter from construction_raw.json
+# (an external LKH-3 solution), not a MIP. segment/refinement then run as usual.
+../sol/lkh/construction.json: ../sol/lkh/construction_raw.json $(COUNTRY_DB)
+	@echo "Converting external LKH construction -> $@"
+	@bash -lc 'cd "$(CURDIR)/.." && python tools/convert_lkh_construction.py'
+
+$(eval $(call segment_from_construction_rule,lkh,LKH))
+$(eval $(call refinement_rule,lkh,LKH))
 
 # ---------------------------------------------------------------------------
 # Per-L2SEG refinement file rules (one real file target per method × l2seg)
